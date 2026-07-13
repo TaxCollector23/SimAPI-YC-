@@ -1,0 +1,88 @@
+---
+title: "Validation Rules"
+description: "The 287 deterministic checks and how they combine into a verdict."
+icon: "ruler-combined"
+---
+
+SimAPI's deterministic engine runs **53 validation layers** totaling **287
+checks** across **21 simulation domains**. Only warnings and failures are
+surfaced; passing checks are counted but not listed.
+
+## Layer categories
+
+<AccordionGroup>
+  <Accordion title="Input quality" icon="clipboard-check">
+    Dataset non-empty, sufficient trials, no duplicate rows, column completeness,
+    variance and mode-collapse detection, subnormal-value checks.
+  </Accordion>
+  <Accordion title="Plausibility bounds" icon="arrows-left-right-to-line">
+    Every quantity is range-checked against domain-specific physical bounds
+    (e.g. drag coefficient ∈ [0.0005, 3.5], Mach ∈ [0, 0.99]).
+  </Accordion>
+  <Accordion title="Conservation & dimensional" icon="scale-balanced">
+    Mass/energy balance, dimensional consistency, and unit-conversion artifacts.
+  </Accordion>
+  <Accordion title="Cross-variable physics" icon="diagram-project">
+    Relationships between quantities — e.g. Reynolds number vs. velocity and
+    viscosity, lift-to-drag consistency, Mach vs. velocity.
+  </Accordion>
+  <Accordion title="Statistical & numerical" icon="chart-line">
+    Distribution shape, outlier detection, stationarity, multicollinearity,
+    autocorrelation, and numerical-stability signals.
+  </Accordion>
+  <Accordion title="Domain-specific" icon="atom">
+    Dedicated layers for aerodynamics, structural, thermodynamics, robotics,
+    combustion, acoustics, electromagnetics, nuclear, plasma, and more.
+  </Accordion>
+</AccordionGroup>
+
+## How the verdict is computed
+
+<Steps>
+  <Step title="Run all layers">
+    Each layer emits `PhysicsCheck` results tagged `passed`, `warning`, or `failed`.
+  </Step>
+  <Step title="Exclude bad trials">
+    Trials that violate hard bounds are excluded, producing an `exclusion_rate`.
+  </Step>
+  <Step title="Aggregate">
+    Any failure or `exclusion_rate > 0.5` → **failed**. Any warning or
+    `exclusion_rate > 0.2` → **warning**. Otherwise **passed**.
+  </Step>
+  <Step title="Set training_ready">
+    `true` when not failed, at least 10 valid trials remain, and exclusion rate < 0.5.
+  </Step>
+</Steps>
+
+## Supported domains
+
+<CardGroup cols={3}>
+  <Card title="Aerodynamics" />
+  <Card title="Fluid dynamics" />
+  <Card title="Structural" />
+  <Card title="Thermodynamics" />
+  <Card title="Robotics" />
+  <Card title="Combustion" />
+  <Card title="Acoustics" />
+  <Card title="Electromagnetics" />
+  <Card title="Geomechanics" />
+  <Card title="Biomechanics" />
+  <Card title="Nuclear" />
+  <Card title="Plasma" />
+  <Card title="Chemical" />
+  <Card title="Hydrodynamics" />
+  <Card title="Meteorology" />
+  <Card title="Astrophysics" />
+  <Card title="Materials" />
+  <Card title="Tribology" />
+  <Card title="Aeroelasticity" />
+  <Card title="Cryogenics" />
+  <Card title="Multiphysics" />
+</CardGroup>
+
+## Custom rules
+
+<Note>
+  Enterprise plans can register custom validators and organization-specific rules
+  through the plugin engine. See [Enterprise](/enterprise).
+</Note>

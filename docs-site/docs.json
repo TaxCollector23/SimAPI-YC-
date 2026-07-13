@@ -1,0 +1,112 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "SimAPI",
+  "description": "The CI/CD layer for engineering simulations. Automatically validate CFD, FEA, robotics, and multiphysics simulations via API.",
+  "colors": {
+    "primary": "#3b82f6",
+    "light": "#22d3ee",
+    "dark": "#0a0b10"
+  },
+  "favicon": "/favicon.svg",
+  "appearance": {
+    "default": "dark"
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "https://simapi.dev"
+  },
+  "navbar": {
+    "links": [
+      { "label": "Dashboard", "href": "https://simapi.dev/contact" },
+      { "label": "GitHub", "href": "https://github.com/TaxCollector23/SimAPI-" }
+    ],
+    "primary": {
+      "type": "button",
+      "label": "Get API Key",
+      "href": "https://simapi.dev/contact"
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "icon": "rocket",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation",
+              "authentication",
+              "rate-limits"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "icon": "book-open",
+            "pages": [
+              "concepts/validation-rules",
+              "concepts/simulation-formats",
+              "concepts/error-codes"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "icon": "plug",
+            "pages": [
+              "cicd/github-actions",
+              "cicd/docker"
+            ]
+          },
+          {
+            "group": "Resources",
+            "icon": "life-ring",
+            "pages": [
+              "security",
+              "enterprise",
+              "faq",
+              "changelog",
+              "roadmap"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["api-reference/introduction"]
+          },
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api-reference/validate",
+              "api-reference/upload",
+              "api-reference/jobs",
+              "api-reference/health"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "SDKs",
+        "groups": [
+          {
+            "group": "Libraries",
+            "pages": ["sdks/python", "sdks/cli"]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/TaxCollector23/SimAPI-",
+      "website": "https://simapi.dev"
+    }
+  }
+}

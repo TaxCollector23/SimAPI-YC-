@@ -1,0 +1,88 @@
+---
+title: "Jobs & AI Polling"
+description: "Fetch results and poll the async AI layer."
+icon: "list-check"
+---
+
+Validation results are stored under a `job_id`. The deterministic report is
+available immediately; the AI report is polled separately.
+
+## Get a job
+
+```http
+GET /v1/job/{job_id}
+```
+
+Returns the full physics report plus an `ai_running` flag.
+
+<RequestExample>
+
+```bash cURL
+curl https://api.simapi.dev/v1/job/3f9ca12b \
+  -H "X-API-Key: $SIMAPI_API_KEY"
+```
+
+</RequestExample>
+
+## Poll for the AI result
+
+```http
+GET /v1/job/{job_id}/ai
+```
+
+<ResponseField name="ai_running" type="boolean">Whether the AI pass is still in flight.</ResponseField>
+<ResponseField name="ai_status" type="string">`pending` · `disabled` · `passed` · `warning` · `failed` · `error`.</ResponseField>
+<ResponseField name="ai" type="object">The AI report once ready: summary, findings, anomaly score, recommendations.</ResponseField>
+
+<CodeGroup>
+
+```python Python
+import time, requests
+
+def wait_for_ai(job_id, headers, timeout=30):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = requests.get(f"https://api.simapi.dev/v1/job/{job_id}/ai", headers=headers).json()
+        if not r["ai_running"] and r["ai_status"] != "pending":
+            return r["ai"]
+        time.sleep(1)
+    return None
+```
+
+```bash cURL
+curl https://api.simapi.dev/v1/job/3f9ca12b/ai -H "X-API-Key: $SIMAPI_API_KEY"
+```
+
+</CodeGroup>
+
+<ResponseExample>
+
+```json AI ready
+{
+  "job_id": "3f9ca12b",
+  "ai_running": false,
+  "ai_status": "warning",
+  "ai": {
+    "anomaly_score": 0.31,
+    "dataset_summary": "Physically valid but operating near the stall boundary…",
+    "findings": [ { "severity": "warning", "category": "ml_quality", "title": "Narrow regime" } ],
+    "recommendations": ["Broaden the angle-of-attack sweep"]
+  }
+}
+```
+
+</ResponseExample>
+
+## List jobs
+
+```http
+GET /v1/jobs?limit=50&offset=0
+```
+
+Returns recent jobs newest-first with a `pagination` block. See
+[pagination](/api-reference/introduction#pagination).
+
+<Note>
+  Jobs are retained transiently (default TTL 1&nbsp;hour, `SIMAPI_JOB_TTL_SECONDS`).
+  Persist reports you need long-term on your side or via the reports export.
+</Note>

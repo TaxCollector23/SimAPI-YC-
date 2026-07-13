@@ -19,6 +19,14 @@ venv/
 htmlcov/
 coverage.xml
 
+# Node / Next.js (web + docs)
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
+
 # OS / editor
 .DS_Store
 .idea/

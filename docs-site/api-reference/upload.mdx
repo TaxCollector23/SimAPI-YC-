@@ -1,0 +1,61 @@
+---
+title: "Validate Upload"
+description: "Validate an uploaded simulation file."
+icon: "file-arrow-up"
+api: "POST https://api.simapi.dev/v1/validate/upload"
+---
+
+Accepts a multipart file upload (CSV, JSON, VTK, NumPy, or OpenFOAM) and validates
+it exactly like [`/v1/validate`](/api-reference/validate).
+
+## Form fields
+
+<ParamField body="file" type="file" required>
+  The simulation output file. Format is auto-detected from the extension.
+</ParamField>
+<ParamField body="simulation_type" type="string" default="aerodynamics">
+  Physics domain.
+</ParamField>
+<ParamField body="conditions" type="string" default="{}">
+  JSON-encoded conditions object.
+</ParamField>
+<ParamField body="run_ai" type="string" default="true">
+  `"true"` or `"false"`.
+</ParamField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://api.simapi.dev/v1/validate/upload \
+  -H "X-API-Key: $SIMAPI_API_KEY" \
+  -F "file=@cfd_output.csv" \
+  -F "simulation_type=aerodynamics" \
+  -F 'conditions={"velocity":15.0}'
+```
+
+```python Python
+import requests
+with open("cfd_output.csv", "rb") as f:
+    r = requests.post(
+        "https://api.simapi.dev/v1/validate/upload",
+        headers={"X-API-Key": KEY},
+        files={"file": f},
+        data={"simulation_type": "aerodynamics", "conditions": '{"velocity":15.0}'},
+    )
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{ "status": "warning", "trials_submitted": 200, "trials_excluded": 4,
+  "columns_renamed": { "Cd": "drag_coefficient" }, "ai_status": "pending" }
+```
+
+</ResponseExample>
+
+<Warning>
+  Uploads are capped at 100&nbsp;MB by default (`SIMAPI_MAX_UPLOAD_BYTES`).
+  Larger datasets should be split or streamed as JSON batches.
+</Warning>

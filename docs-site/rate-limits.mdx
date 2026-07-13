@@ -1,0 +1,66 @@
+---
+title: "Rate Limits"
+description: "How rate limiting works and how to handle it gracefully."
+icon: "gauge"
+---
+
+SimAPI enforces a **token-bucket** rate limit per caller. The bucket refills at a
+sustained rate (requests per minute) with a burst capacity for short spikes.
+
+## Defaults
+
+| Plan | Sustained (RPM) | Burst |
+| ---- | --------------- | ----- |
+| Developer | 60 | 20 |
+| Startup | 600 | 100 |
+| Enterprise | Custom | Custom |
+
+## When you hit the limit
+
+Requests over budget return `429` with a `Retry-After` header:
+
+```json
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "Rate limit exceeded. Slow down and retry.",
+    "details": { "retry_after_seconds": 1.4 },
+    "request_id": "3f9c...a12"
+  }
+}
+```
+
+## Handling it well
+
+<Tip>
+  Respect the `Retry-After` header and use exponential backoff with jitter.
+</Tip>
+
+```python
+import time, requests
+
+def validate_with_retry(payload, headers, max_attempts=5):
+    delay = 0.5
+    for attempt in range(max_attempts):
+        r = requests.post("https://api.simapi.dev/v1/validate", json=payload, headers=headers)
+        if r.status_code != 429:
+            return r
+        wait = float(r.headers.get("Retry-After", delay))
+        time.sleep(wait + delay)   # honor server hint + backoff
+        delay *= 2
+    r.raise_for_status()
+```
+
+<Note>
+  For high-throughput batch workloads, use [batch validation](/api-reference/validate)
+  to submit many trials in a single request rather than one request per trial.
+</Note>
+
+## Self-hosted tuning
+
+<ParamField path="SIMAPI_RATE_LIMIT_RPM" type="integer" default="120">
+  Sustained requests per minute per caller.
+</ParamField>
+<ParamField path="SIMAPI_RATE_LIMIT_BURST" type="integer" default="20">
+  Bucket capacity — how large a burst is permitted above the sustained rate.
+</ParamField>

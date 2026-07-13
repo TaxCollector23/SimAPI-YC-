@@ -1,0 +1,30 @@
+---
+title: "Changelog"
+description: "What's new in SimAPI."
+icon: "clock-rotate-left"
+---
+
+<Update label="v3.1.0" description="Production hardening">
+  **No breaking changes to the response schema.**
+
+  **Security**
+  - Removed a hardcoded model-provider key; all secrets now come from the
+    environment. Added API-key auth with constant-time comparison and a
+    per-caller token-bucket rate limiter. Added gitleaks secret scanning.
+
+  **Added**
+  - 12-factor configuration, structured JSON logging with request-id correlation,
+    a consistent error contract with stable codes, `GET /v1/metrics` (Prometheus),
+    offset pagination on `GET /v1/jobs`, job-store TTL, and payload limits.
+  - Dockerfile (multi-stage, non-root, health-checked), compose, Makefile, CI,
+    pre-commit, and a full test suite.
+
+  **Fixed**
+  - SDK contract bugs (field names and stat parsing), NaN-safe serialization, and
+    graceful AI degradation when no key is configured.
+</Update>
+
+<Update label="v3.0.0" description="Initial dual-layer validator">
+  - 287 physics checks across 21 domains plus an async LLM reasoning layer.
+  - FastAPI server, Python SDK, and demo dashboard.
+</Update>

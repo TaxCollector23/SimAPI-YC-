@@ -1,0 +1,56 @@
+---
+title: "Docker"
+description: "Run SimAPI as a container in any pipeline."
+icon: "docker"
+---
+
+SimAPI ships as a small, non-root, health-checked image — ideal for private
+deployments and self-hosted CI.
+
+## Pull or build
+
+```bash
+# Build from source
+git clone https://github.com/TaxCollector23/SimAPI-.git && cd SimAPI-
+docker build -t simapi:latest .
+```
+
+## Run
+
+```bash
+docker run -d -p 8000:8000 \
+  -e SIMAPI_REQUIRE_AUTH=true \
+  -e SIMAPI_API_KEYS="sk_live_your_key" \
+  -e SIMAPI_OPENROUTER_API_KEY="..." \
+  --name simapi simapi:latest
+```
+
+## Compose
+
+```yaml docker-compose.yml
+services:
+  api:
+    image: simapi:latest
+    ports: ["8000:8000"]
+    env_file: [.env]
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+```
+
+## Validate against the container
+
+```bash
+export SIMAPI_BASE_URL="http://localhost:8000"
+export SIMAPI_API_KEY="sk_live_your_key"
+simapi validate run.csv --type aerodynamics
+```
+
+<Note>
+  The container health check hits `/v1/health`. Point your orchestrator's probes
+  at the same path.
+</Note>

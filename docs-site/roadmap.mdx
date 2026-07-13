@@ -1,0 +1,50 @@
+---
+title: "Roadmap"
+description: "Where SimAPI is headed."
+icon: "map"
+---
+
+We build in the open. Priorities below are ordered by impact on SimAPI's role as
+the validation layer for engineering simulation.
+
+## In progress
+
+<CardGroup cols={2}>
+  <Card title="Durable job queue" icon="database">
+    Redis-backed queue and persistent storage so results survive restarts and
+    scale across replicas.
+  </Card>
+  <Card title="Baseline & regression detection" icon="chart-line">
+    First-class baselines and automatic flagging when a run drifts.
+  </Card>
+</CardGroup>
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Organizations & RBAC" icon="users">
+    Orgs, projects, roles, and permissions.
+  </Card>
+  <Card title="Usage dashboard & billing" icon="credit-card">
+    Real-time usage, quotas, and self-serve billing.
+  </Card>
+  <Card title="Webhooks" icon="webhook">
+    Push validation events to your systems.
+  </Card>
+  <Card title="JS / TS SDKs" icon="js">
+    First-class JavaScript and TypeScript clients from one OpenAPI spec.
+  </Card>
+</CardGroup>
+
+## Exploring
+
+- Custom-rule plugin marketplace
+- OpenTelemetry distributed tracing
+- Benchmark mode and trend analysis
+- Signed-URL artifact storage with PDF/CSV report export
+
+<Note>
+  Have a request? Open an issue on
+  [GitHub](https://github.com/TaxCollector23/SimAPI-) or
+  [tell us](https://simapi.dev/contact).
+</Note>

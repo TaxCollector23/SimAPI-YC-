@@ -1,0 +1,72 @@
+---
+title: "Introduction"
+description: "The CI/CD layer for engineering simulations."
+icon: "hand-wave"
+---
+
+<img
+  className="rounded-2xl border border-white/10"
+  src="/images/hero.svg"
+  alt="SimAPI validation pipeline"
+/>
+
+## What is SimAPI?
+
+Engineering teams trust software because software has **automated testing**.
+Engineering simulations have had no equivalent — until now.
+
+**SimAPI automatically validates CFD, FEA, robotics, multiphysics, and scientific
+simulations** before they reach production, design review, or machine-learning
+pipelines. Point it at simulation output and it returns a trustworthy verdict in
+milliseconds.
+
+<CardGroup cols={2}>
+  <Card title="Deterministic physics engine" icon="cpu">
+    287 rule-based checks across 21 domains: plausibility bounds, conservation
+    laws, dimensional analysis, cross-variable and statistical consistency.
+  </Card>
+  <Card title="AI reasoning layer" icon="sparkles">
+    An optional second pass reasons over full distributions to catch what rules
+    miss — magnitude realism, provenance artifacts, and ML-readiness.
+  </Card>
+  <Card title="API-first" icon="code">
+    Consistent schemas, stable error codes, request-ID correlation, and
+    pagination. Everything is an endpoint.
+  </Card>
+  <Card title="Enterprise-ready" icon="shield-check">
+    API keys, rate limiting, audit logs, SSO, and private / air-gapped
+    deployment for regulated teams.
+  </Card>
+</CardGroup>
+
+## How it works
+
+<Steps>
+  <Step title="Submit simulation output">
+    Send trials as JSON, or upload a CSV, VTK, NumPy, or OpenFOAM file. Column
+    aliases are normalized automatically.
+  </Step>
+  <Step title="Deterministic validation runs synchronously">
+    287 physics and statistical checks execute in under 30&nbsp;ms and return a
+    `status` of `passed`, `warning`, or `failed`.
+  </Step>
+  <Step title="AI analysis runs asynchronously">
+    The reasoning layer is polled separately so your pipeline never blocks.
+  </Step>
+  <Step title="Gate on the result">
+    Branch your CI/CD, design review, or ML pipeline on the verdict.
+  </Step>
+</Steps>
+
+## Think of it as
+
+<CardGroup cols={3}>
+  <Card title="GitHub Actions">for simulations</Card>
+  <Card title="Stripe">for simulation validation</Card>
+  <Card title="Cloudflare">for engineering trust</Card>
+</CardGroup>
+
+<Note>
+  New here? The [Quickstart](/quickstart) gets you from zero to your first
+  validated dataset in about three minutes.
+</Note>

@@ -1,0 +1,110 @@
+---
+title: "Validate"
+description: "Validate a batch of simulation trials."
+icon: "circle-check"
+api: "POST https://api.simapi.dev/v1/validate"
+---
+
+Runs the deterministic physics engine synchronously and kicks off the async AI
+layer (unless disabled). Returns a full validation report.
+
+## Authentication
+
+`X-API-Key: sk_live_...` — see [Authentication](/authentication).
+
+## Body
+
+<ParamField body="data" type="array" required>
+  Trials as a list of records (objects of numeric fields). Column aliases are
+  normalized automatically.
+</ParamField>
+<ParamField body="simulation_type" type="string" default="aerodynamics">
+  Physics domain to validate against. One of the 21 supported
+  [domains](/concepts/validation-rules).
+</ParamField>
+<ParamField body="conditions" type="object">
+  Input boundary conditions, e.g. `{ "velocity": 15.0, "altitude": 120.0 }`.
+</ParamField>
+<ParamField body="job_id" type="string">
+  Optional caller-supplied tracking id. Generated if omitted.
+</ParamField>
+<ParamField body="run_ai" type="boolean" default="true">
+  Run the async AI reasoning layer. Set `false` to skip it.
+</ParamField>
+
+## Response
+
+<ResponseField name="status" type="string">`passed` · `warning` · `failed`.</ResponseField>
+<ResponseField name="confidence" type="string">`high` · `medium` · `low`.</ResponseField>
+<ResponseField name="trials_submitted" type="integer">Rows received.</ResponseField>
+<ResponseField name="trials_valid" type="integer">Rows that passed hard checks.</ResponseField>
+<ResponseField name="trials_excluded" type="integer">Rows excluded.</ResponseField>
+<ResponseField name="exclusion_rate" type="number">Fraction excluded (0–1).</ResponseField>
+<ResponseField name="training_ready" type="boolean">Safe for ML training.</ResponseField>
+<ResponseField name="all_checks" type="integer">Total checks run (287).</ResponseField>
+<ResponseField name="issues" type="array">Surfaced warnings + failures.</ResponseField>
+<ResponseField name="statistics" type="object">Per-column summary stats.</ResponseField>
+<ResponseField name="ai_status" type="string">`pending` · `disabled` · `passed` · `warning` · `failed`.</ResponseField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://api.simapi.dev/v1/validate \
+  -H "X-API-Key: $SIMAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "simulation_type": "aerodynamics",
+    "conditions": { "velocity": 15.0 },
+    "data": [{ "cd": 0.312, "cl": 0.847, "re": 415000 }]
+  }'
+```
+
+```python Python
+import simapi
+result = simapi.validate(data=rows, simulation_type="aerodynamics",
+                         conditions={"velocity": 15.0})
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "job_id": "3f9ca12b",
+  "status": "passed",
+  "confidence": "high",
+  "trials_submitted": 1,
+  "trials_valid": 1,
+  "trials_excluded": 0,
+  "training_ready": true,
+  "all_checks": 287,
+  "issues": [],
+  "processing_ms": 22.7,
+  "ai_status": "pending"
+}
+```
+
+```json 413
+{ "error": { "code": "payload_too_large", "message": "Request exceeds the maximum of 1000000 rows.", "request_id": "…" } }
+```
+
+</ResponseExample>
+
+## Status codes
+
+| Code | Meaning |
+| ---- | ------- |
+| `200` | Validation ran (check `status` for the verdict) |
+| `401` | Missing / invalid key |
+| `413` | Too many rows |
+| `422` | Body failed schema validation |
+| `429` | Rate limited |
+
+## Performance
+
+<Note>
+  The deterministic layer typically returns in **under 30&nbsp;ms**. The AI layer
+  runs in the background — poll [`/v1/job/{id}/ai`](/api-reference/jobs) rather
+  than blocking on it.
+</Note>

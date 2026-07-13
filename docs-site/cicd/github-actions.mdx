@@ -1,0 +1,75 @@
+---
+title: "GitHub Actions"
+description: "Gate merges and deploys on simulation validation."
+icon: "github"
+---
+
+Treat simulation validation like a test suite: fail the build when a run is
+physically invalid.
+
+## Add your key
+
+Store your key as a repository secret named `SIMAPI_API_KEY`
+(**Settings → Secrets and variables → Actions**).
+
+## Workflow
+
+```yaml .github/workflows/validate.yml
+name: Validate simulations
+
+on:
+  pull_request:
+    paths: ["simulations/**"]
+
+jobs:
+  simapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install SimAPI CLI
+        run: pip install simapi
+
+      - name: Validate CFD outputs
+        env:
+          SIMAPI_API_KEY: ${{ secrets.SIMAPI_API_KEY }}
+        run: |
+          for f in simulations/*.csv; do
+            echo "Validating $f"
+            simapi validate "$f" --type aerodynamics --fail-on warning
+          done
+```
+
+<Check>
+  The job fails if any run returns `warning` or `failed`, blocking the merge
+  until the simulation is fixed.
+</Check>
+
+## Post results as a PR comment
+
+```yaml
+      - name: Validate and capture report
+        id: sim
+        env:
+          SIMAPI_API_KEY: ${{ secrets.SIMAPI_API_KEY }}
+        run: |
+          simapi validate simulations/run.csv --type aerodynamics --json > report.json
+          echo "status=$(jq -r .status report.json)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const r = require('./report.json');
+            github.rest.issues.createComment({
+              ...context.repo, issue_number: context.issue.number,
+              body: `**SimAPI:** \`${r.status}\` · ${r.trials_valid}/${r.trials_submitted} valid · ${r.all_checks} checks`
+            });
+```
+
+<Tip>
+  Only validate changed files to keep CI fast — scope the trigger with `paths`
+  and iterate over `git diff` output.
+</Tip>

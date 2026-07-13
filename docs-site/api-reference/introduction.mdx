@@ -1,0 +1,60 @@
+---
+title: "API Reference"
+description: "Base URL, conventions, versioning, and pagination."
+icon: "code"
+---
+
+## Base URL
+
+```
+https://api.simapi.dev
+```
+
+All endpoints are versioned under `/v1`. Breaking changes ship under a new
+version; the response schema within a version is additive-only.
+
+## Conventions
+
+<CardGroup cols={2}>
+  <Card title="Auth" icon="key">
+    Every endpoint except `/v1/health` and `/v1/metrics` requires an
+    [API key](/authentication).
+  </Card>
+  <Card title="Content type" icon="brackets-curly">
+    Request and response bodies are JSON, except file upload (multipart) and
+    metrics (Prometheus text).
+  </Card>
+  <Card title="Request IDs" icon="fingerprint">
+    Every response carries an `X-Request-ID`. Send your own to correlate traces.
+  </Card>
+  <Card title="Errors" icon="triangle-exclamation">
+    A single [error envelope](/concepts/error-codes) with stable codes.
+  </Card>
+</CardGroup>
+
+## Endpoints
+
+| Method | Path | Description |
+| ------ | ---- | ----------- |
+| `POST` | [`/v1/validate`](/api-reference/validate) | Validate a JSON batch of trials |
+| `POST` | [`/v1/validate/upload`](/api-reference/upload) | Validate an uploaded file |
+| `POST` | `/v1/validate/physics-only` | Physics checks only (skip AI) |
+| `GET`  | [`/v1/job/{id}`](/api-reference/jobs) | Fetch a job's physics result |
+| `GET`  | [`/v1/job/{id}/ai`](/api-reference/jobs) | Poll for the async AI result |
+| `GET`  | `/v1/jobs` | List recent jobs (paginated) |
+| `GET`  | [`/v1/health`](/api-reference/health) | Liveness + service facts |
+| `GET`  | `/v1/metrics` | Prometheus metrics |
+
+## Pagination
+
+List endpoints use offset pagination and return a `pagination` block:
+
+```json
+{
+  "jobs": [ ... ],
+  "pagination": { "total": 128, "limit": 50, "offset": 0, "returned": 50 }
+}
+```
+
+<ParamField query="limit" type="integer" default="50">Page size (1–500).</ParamField>
+<ParamField query="offset" type="integer" default="0">Rows to skip.</ParamField>

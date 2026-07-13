@@ -1,0 +1,122 @@
+---
+title: "Quickstart"
+description: "Validate your first simulation in three minutes."
+icon: "rocket"
+---
+
+## 1. Get an API key
+
+Request a key from the [dashboard](https://simapi.dev/contact). Keep it secret —
+treat it like a password.
+
+<Warning>
+  Never commit API keys to source control. Load them from an environment
+  variable (`SIMAPI_API_KEY`) instead.
+</Warning>
+
+## 2. Make your first request
+
+<CodeGroup>
+
+```bash cURL
+curl -X POST https://api.simapi.dev/v1/validate \
+  -H "X-API-Key: $SIMAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "simulation_type": "aerodynamics",
+    "conditions": { "velocity": 15.0, "altitude": 120.0 },
+    "data": [
+      { "cd": 0.312, "cl": 0.847, "re": 415000, "ma": 0.044 },
+      { "cd": 0.315, "cl": 0.851, "re": 418000, "ma": 0.044 }
+    ]
+  }'
+```
+
+```python Python
+import simapi
+
+result = simapi.validate(
+    data="cfd_output.csv",
+    simulation_type="aerodynamics",
+    conditions={"velocity": 15.0, "altitude": 120.0},
+)
+
+print(result.status)          # "passed"
+print(result.training_ready)  # True
+print(result.summary())
+```
+
+```javascript JavaScript
+import { SimAPI } from "@simapi/sdk";
+
+const client = new SimAPI({ apiKey: process.env.SIMAPI_API_KEY });
+
+const result = await client.validate({
+  data: cfdRun,
+  simulationType: "aerodynamics",
+  conditions: { velocity: 15.0, altitude: 120.0 },
+});
+
+console.log(result.status); // "passed"
+```
+
+</CodeGroup>
+
+## 3. Read the response
+
+```json
+{
+  "job_id": "3f9ca12b",
+  "status": "passed",
+  "confidence": "high",
+  "trials_submitted": 2,
+  "trials_valid": 2,
+  "trials_excluded": 0,
+  "training_ready": true,
+  "all_checks": 287,
+  "passed": 287,
+  "warnings": 0,
+  "failed": 0,
+  "processing_ms": 23.4,
+  "ai_status": "pending"
+}
+```
+
+<ResponseField name="status" type="string">
+  Overall verdict: `passed`, `warning`, or `failed`.
+</ResponseField>
+<ResponseField name="training_ready" type="boolean">
+  Whether the valid trials are safe to use for ML training.
+</ResponseField>
+<ResponseField name="ai_status" type="string">
+  `pending` while the async AI layer runs; poll [`/v1/job/{id}/ai`](/api-reference/jobs).
+</ResponseField>
+
+## 4. Try the broken case
+
+Swap one row for an out-of-bounds value and watch the verdict flip:
+
+```json
+{ "cd": 999.0, "cl": 0.847, "re": 415000 }
+```
+
+```json Response
+{
+  "status": "failed",
+  "confidence": "low",
+  "trials_excluded": 1,
+  "training_ready": false,
+  "issues": [
+    {
+      "name": "plausibility_drag_coefficient",
+      "status": "failed",
+      "detail": "trial 0: drag_coefficient=999.0 outside [0.0005, 3.5]"
+    }
+  ]
+}
+```
+
+<Check>
+  That's it — you're validating simulations. Next, wire it into
+  [CI/CD](/cicd/github-actions) or explore the [Python SDK](/sdks/python).
+</Check>

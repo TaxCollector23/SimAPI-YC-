@@ -1,0 +1,63 @@
+---
+title: "Error Codes"
+description: "Stable, machine-readable error codes and how to handle them."
+icon: "triangle-exclamation"
+---
+
+Every error returns the same envelope so clients can branch on a stable `code`
+rather than parsing messages:
+
+```json
+{
+  "error": {
+    "code": "rate_limited",
+    "message": "Rate limit exceeded. Slow down and retry.",
+    "details": { "retry_after_seconds": 1.4 },
+    "request_id": "3f9c...a12"
+  }
+}
+```
+
+<ResponseField name="code" type="string">
+  Stable, documented identifier. Branch on this — it never changes meaning.
+</ResponseField>
+<ResponseField name="message" type="string">
+  Human-readable summary. Safe to log; do not parse programmatically.
+</ResponseField>
+<ResponseField name="request_id" type="string">
+  Correlates with server logs. Include it in support requests.
+</ResponseField>
+
+## Reference
+
+| HTTP | `code` | Meaning | Action |
+| ---- | ------ | ------- | ------ |
+| 400 | `bad_request` | Malformed input | Fix the request |
+| 400 | `unsupported_format` | Unknown `simulation_type` or file format | Check allowed values in `details` |
+| 401 | `unauthorized` | Missing / invalid API key | Provide a valid key |
+| 403 | `forbidden` | Key lacks permission | Check plan / scope |
+| 404 | `not_found` | Job or resource missing | Verify the id |
+| 413 | `payload_too_large` | Too many rows or bytes | Split into batches |
+| 422 | `validation_failed` | Schema violation | Inspect `details.errors` |
+| 429 | `rate_limited` | Over rate budget | Back off, honor `Retry-After` |
+| 500 | `internal_error` | Unexpected server error | Retry; contact support with `request_id` |
+
+<Note>
+  A `422 validation_failed` is about the **request schema** — not your simulation.
+  A simulation that fails physics checks still returns `200` with
+  `"status": "failed"`.
+</Note>
+
+## Handling pattern
+
+```python
+r = requests.post(url, json=payload, headers=headers)
+if r.status_code >= 400:
+    err = r.json()["error"]
+    if err["code"] == "rate_limited":
+        backoff(r.headers.get("Retry-After"))
+    elif err["code"] == "unauthorized":
+        raise RuntimeError("Check SIMAPI_API_KEY")
+    else:
+        log.error("SimAPI %s: %s (req=%s)", err["code"], err["message"], err["request_id"])
+```

@@ -1,0 +1,47 @@
+---
+title: "FAQ"
+description: "Common questions about SimAPI."
+icon: "circle-question"
+---
+
+<AccordionGroup>
+  <Accordion title="What exactly does SimAPI validate?">
+    Two layers. A deterministic engine runs 287 physics and statistical checks —
+    plausibility bounds, conservation laws, dimensional and cross-variable
+    consistency, outlier and distribution analysis — across 21 domains. An
+    optional AI layer then reasons over full distributions to catch subtler
+    issues the rules can't encode.
+  </Accordion>
+  <Accordion title="Which simulation formats and tools are supported?">
+    CSV, JSON, VTK, NumPy, and OpenFOAM output, with automatic column-alias
+    normalization for ANSYS, OpenFOAM, STAR-CCM+, Fluent, COMSOL, SU2, and
+    Abaqus. See [Simulation Formats](/concepts/simulation-formats).
+  </Accordion>
+  <Accordion title="How fast is it?">
+    The deterministic layer returns in under 30&nbsp;ms for typical runs. The AI
+    layer runs asynchronously and is polled separately, so your pipeline never
+    blocks on it.
+  </Accordion>
+  <Accordion title="Do I have to send data to your servers?">
+    No. Enterprise plans support private, in-VPC, and fully air-gapped deployments
+    so proprietary data never leaves your infrastructure.
+  </Accordion>
+  <Accordion title="Is the AI layer required?">
+    No — it's fully optional. Without an AI key configured, the deterministic
+    engine runs identically and the AI section reports as `disabled`.
+  </Accordion>
+  <Accordion title="What happens to invalid trials?">
+    They're excluded with a per-trial reason and severity. The response reports an
+    exclusion rate and a `training_ready` flag so you know instantly whether the
+    dataset is safe for ML.
+  </Accordion>
+  <Accordion title="How does it fit into CI/CD?">
+    Call the API from any pipeline step and branch on the returned status. See
+    [GitHub Actions](/cicd/github-actions).
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  Didn't find your answer? [Reach out](https://simapi.dev/contact) — we read every
+  message.
+</Note>

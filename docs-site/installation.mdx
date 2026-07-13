@@ -1,0 +1,85 @@
+---
+title: "Installation"
+description: "Run SimAPI locally or install a client SDK."
+icon: "download"
+---
+
+There are two things you might install: the **client SDK** (to call a hosted or
+self-hosted API) and the **SimAPI server** itself (for local development or a
+private deployment).
+
+## Client SDK
+
+<CodeGroup>
+
+```bash Python
+pip install simapi
+```
+
+```bash JavaScript / TypeScript
+npm install @simapi/sdk
+```
+
+</CodeGroup>
+
+Point the SDK at your API and provide a key via environment variables:
+
+```bash
+export SIMAPI_BASE_URL="https://api.simapi.dev"
+export SIMAPI_API_KEY="sk_live_..."
+```
+
+## Run the server locally
+
+<Steps>
+  <Step title="Clone and install">
+    ```bash
+    git clone https://github.com/TaxCollector23/SimAPI-.git
+    cd SimAPI-
+    python -m venv .venv && source .venv/bin/activate
+    pip install -r requirements.txt
+    ```
+  </Step>
+  <Step title="Configure">
+    ```bash
+    cp .env.example .env
+    # Optional: set SIMAPI_OPENROUTER_API_KEY to enable the AI layer
+    ```
+  </Step>
+  <Step title="Launch">
+    ```bash
+    python launch.py   # API on :8000, docs at /docs, dashboard opens
+    ```
+  </Step>
+</Steps>
+
+## Run with Docker
+
+<CodeGroup>
+
+```bash Docker
+docker build -t simapi:latest .
+docker run -p 8000:8000 --env-file .env simapi:latest
+```
+
+```bash Docker Compose
+docker compose up --build
+```
+
+</CodeGroup>
+
+<Note>
+  The image is multi-stage, runs as a non-root user, and ships a health check
+  hitting `/v1/health`. See [Enterprise](/enterprise) for private-deployment
+  guidance.
+</Note>
+
+## Verify
+
+```bash
+curl http://localhost:8000/v1/health
+```
+
+```json
+{ "status": "ok", "version": "3.1.0", "domains": 21, "ai_enabled": false }
+```

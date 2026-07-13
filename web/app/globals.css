@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-ink-950 text-white/80 antialiased;
+  background-image:
+    radial-gradient(50% 40% at 50% -8%, rgba(59, 130, 246, 0.16), transparent 60%),
+    radial-gradient(38% 30% at 88% 6%, rgba(139, 92, 246, 0.12), transparent 55%);
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(59, 130, 246, 0.35);
+  color: #fff;
+}
+
+/* Thin, quiet scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.18);
+  background-clip: content-box;
+}
+
+@layer components {
+  .container-tight {
+    @apply mx-auto w-full max-w-6xl px-6;
+  }
+
+  /* Glass panel used sparingly for elevated surfaces */
+  .glass {
+    @apply border border-white/10 bg-white/[0.03] backdrop-blur-xl;
+  }
+
+  .card {
+    @apply rounded-2xl border border-white/[0.08] bg-ink-900/60 backdrop-blur-sm;
+  }
+
+  .hairline {
+    @apply border-white/[0.08];
+  }
+
+  .text-gradient {
+    @apply bg-accent-gradient bg-clip-text text-transparent;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium
+      transition-all duration-200 focus-visible:outline-none focus-visible:ring-2
+      focus-visible:ring-accent-blue/60 disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-white text-ink-950 hover:bg-white/90 hover:shadow-[0_8px_30px_rgba(255,255,255,0.15)];
+  }
+  .btn-ghost {
+    @apply btn border border-white/[0.12] bg-white/[0.02] text-white/90 hover:border-white/25 hover:bg-white/[0.05];
+  }
+  .btn-accent {
+    @apply btn bg-accent-gradient text-white shadow-[0_8px_30px_rgba(59,130,246,0.35)] hover:brightness-110;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03]
+      px-3 py-1 text-xs font-medium uppercase tracking-[0.14em] text-white/[0.55];
+  }
+
+  /* Engineering grid backdrop */
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(circle at 50% 40%, black 30%, transparent 78%);
+  }
+}
+
+@layer utilities {
+  .shadow-glow {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 20px 60px -20px rgba(59, 130, 246, 0.4);
+  }
+  .divider {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+  }
+}

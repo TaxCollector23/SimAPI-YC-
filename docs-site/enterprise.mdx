@@ -1,0 +1,60 @@
+---
+title: "Enterprise"
+description: "Private deployment, SSO, audit logs, and custom validators."
+icon: "building"
+---
+
+SimAPI is designed to run inside your infrastructure so proprietary simulation
+data never leaves your control.
+
+<CardGroup cols={2}>
+  <Card title="Private deployment" icon="server">
+    Deploy the container in your VPC, on-prem, or fully air-gapped. No data
+    egress required.
+  </Card>
+  <Card title="SSO" icon="user-lock">
+    SAML and OIDC single sign-on for dashboard and admin access.
+  </Card>
+  <Card title="Audit logs" icon="scroll">
+    Immutable records of every validation, key use, and configuration change.
+  </Card>
+  <Card title="Custom validators" icon="puzzle-piece">
+    Register organization-specific rules and validators through the plugin engine.
+  </Card>
+</CardGroup>
+
+## Custom validation rules
+
+Enterprise plans can extend the engine with domain rules unique to your
+organization — proprietary bounds, internal conservation constraints, or
+company-standard acceptance criteria — evaluated alongside the built-in 287
+checks.
+
+```python
+from simapi.plugins import validator, Check
+
+@validator(domain="aerodynamics")
+def internal_drag_ceiling(df, conditions):
+    limit = conditions.get("program_cd_ceiling", 0.45)
+    over = (df["drag_coefficient"] > limit).sum()
+    return Check(
+        name="program_drag_ceiling",
+        ok=over == 0,
+        detail=f"{over} trials exceed program Cd ceiling {limit}",
+        severity="failed",
+    )
+```
+
+## Deployment support
+
+<Steps>
+  <Step title="Architecture review">We map SimAPI onto your existing pipeline and infra.</Step>
+  <Step title="Deploy">Container, Helm chart, or Terraform module in your environment.</Step>
+  <Step title="Integrate">Wire into your CI/CD, data lake, and ML pipelines.</Step>
+  <Step title="Onboard">Rule authoring, dashboards, and team training.</Step>
+</Steps>
+
+<Note>
+  Enterprise agreements include a formal SLA and dedicated support. [Talk to
+  us](https://simapi.dev/contact).
+</Note>

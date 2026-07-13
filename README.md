@@ -162,6 +162,16 @@ docker run -p 8000:8000 --env-file .env simapi:latest
 - **Kubernetes** — use `/v1/health` for liveness/readiness probes and the
   Prometheus endpoint for HPA signals.
 
+## Repository layout
+
+| Path | What |
+| ---- | ---- |
+| `api/` · `core/` · `sdk/` | Production FastAPI service, validation engine, Python SDK |
+| `tests/` | Pytest suite (API contract + unit) |
+| `web/` | Marketing site — Next.js 15 + Tailwind + Framer Motion (interactive demo & API playground) |
+| `docs-site/` | Mintlify developer documentation |
+| `dashboard/` | Static demo dashboard |
+
 ## Development
 
 ```bash
@@ -170,6 +180,12 @@ make test       # run the suite
 make cov        # coverage report
 make lint       # ruff
 make typecheck  # mypy
+
+# Marketing site
+cd web && npm install && npm run dev        # http://localhost:3000
+
+# Docs (Mintlify)
+cd docs-site && mint dev                     # http://localhost:3000
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow and how to add a new

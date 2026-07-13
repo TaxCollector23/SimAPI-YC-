@@ -1,0 +1,47 @@
+---
+title: "Security"
+description: "How SimAPI handles secrets, data, and hardening."
+icon: "shield-halved"
+---
+
+## Secrets
+
+No secrets live in the codebase. All credentials are read from the environment
+(see [`.env.example`](https://github.com/TaxCollector23/SimAPI-/blob/main/.env.example)).
+CI runs [gitleaks](https://github.com/gitleaks/gitleaks) on every push and a
+`detect-private-key` pre-commit hook runs locally.
+
+<Warning>
+  The pre-1.0 history contained a hardcoded model-provider key. It has been
+  removed and must be treated as compromised — **rotate it** if it was ever live.
+</Warning>
+
+## Data handling
+
+<CardGroup cols={2}>
+  <Card title="Transient jobs" icon="clock">
+    Results are retained transiently to support polling and reports, then evicted
+    on a configurable TTL.
+  </Card>
+  <Card title="AI layer isolation" icon="robot">
+    The optional AI pass sends de-identified statistical summaries — never raw
+    proprietary geometry — and can be disabled entirely.
+  </Card>
+</CardGroup>
+
+## Production hardening checklist
+
+<Steps>
+  <Step title="Require auth">Set `SIMAPI_REQUIRE_AUTH=true` and provision `SIMAPI_API_KEYS`.</Step>
+  <Step title="Lock down CORS">Restrict `SIMAPI_CORS_ORIGINS` to known origins.</Step>
+  <Step title="Terminate TLS">At your load balancer or ingress.</Step>
+  <Step title="Ship logs">Keep `SIMAPI_LOG_JSON=true` and forward to a central store.</Step>
+  <Step title="Rate limit">Use the built-in limiter (or a shared Redis limiter for multi-replica).</Step>
+</Steps>
+
+## Reporting a vulnerability
+
+Email `security@simapi.dev` with a description, reproduction, and impact. Do not
+open a public issue. We acknowledge within 48 hours and target a fix within 7
+days for high-severity issues. See the full
+[security policy](https://github.com/TaxCollector23/SimAPI-/blob/main/SECURITY.md).

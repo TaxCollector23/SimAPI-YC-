@@ -1,0 +1,72 @@
+---
+title: "Authentication"
+description: "Authenticate requests with API keys."
+icon: "key"
+---
+
+SimAPI authenticates every request with an **API key**. Keys are compared in
+constant time to prevent timing attacks.
+
+## Providing your key
+
+Send the key in the `X-API-Key` header (preferred) or as a bearer token:
+
+<CodeGroup>
+
+```bash X-API-Key
+curl https://api.simapi.dev/v1/validate \
+  -H "X-API-Key: sk_live_..."
+```
+
+```bash Bearer
+curl https://api.simapi.dev/v1/validate \
+  -H "Authorization: Bearer sk_live_..."
+```
+
+</CodeGroup>
+
+The SDKs read `SIMAPI_API_KEY` from the environment automatically:
+
+```python
+import os, simapi
+os.environ["SIMAPI_API_KEY"] = "sk_live_..."   # or set it in your shell
+simapi.demo()
+```
+
+## Key types
+
+| Prefix | Environment | Use |
+| ------ | ----------- | --- |
+| `sk_live_` | Production | Real validations, billed |
+| `sk_test_` | Sandbox | Free, rate-limited, no billing |
+
+## Errors
+
+A missing or invalid key returns `401` with the standard error envelope:
+
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Missing or invalid API key. Provide it via the X-API-Key header.",
+    "request_id": "3f9c...a12"
+  }
+}
+```
+
+<Warning>
+  Treat keys like passwords. Rotate immediately if one is exposed, and never
+  embed them in client-side code or commit them to git. CI runs secret scanning
+  to help catch accidental commits.
+</Warning>
+
+## Self-hosted auth
+
+When self-hosting, auth is controlled by environment variables:
+
+<ParamField path="SIMAPI_REQUIRE_AUTH" type="boolean" default="false">
+  Enforce API-key auth. Set to `true` in production.
+</ParamField>
+<ParamField path="SIMAPI_API_KEYS" type="string">
+  Comma-separated list of accepted keys.
+</ParamField>

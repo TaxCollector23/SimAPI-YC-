@@ -1,0 +1,59 @@
+---
+title: "Health & Metrics"
+description: "Liveness and Prometheus metrics endpoints."
+icon: "heart-pulse"
+---
+
+Both endpoints are **unauthenticated** so orchestrators and scrapers can reach
+them without credentials.
+
+## Health
+
+```http
+GET /v1/health
+```
+
+<ResponseExample>
+
+```json 200
+{
+  "status": "ok",
+  "version": "3.1.0",
+  "environment": "production",
+  "physics_checks": "280+",
+  "domains": 21,
+  "ai_enabled": true,
+  "ai_model": "anthropic/claude-3.5-haiku",
+  "jobs_processed": 10482,
+  "avg_physics_ms": 24.1
+}
+```
+
+</ResponseExample>
+
+<Tip>
+  Use this path for Kubernetes liveness and readiness probes and container
+  health checks.
+</Tip>
+
+## Metrics
+
+```http
+GET /v1/metrics
+```
+
+Prometheus text exposition — request counts, error counts by code, latency, and
+uptime.
+
+```text
+# HELP simapi_http_requests_total Total HTTP requests.
+# TYPE simapi_http_requests_total counter
+simapi_http_requests_total{method="POST",path="/v1/validate",status="200"} 8123
+simapi_request_latency_ms_avg 24.6
+simapi_uptime_seconds 91827.4
+```
+
+<Note>
+  Scrape `/v1/metrics` with Prometheus and drive autoscaling (HPA) or alerting
+  off request rate and latency.
+</Note>

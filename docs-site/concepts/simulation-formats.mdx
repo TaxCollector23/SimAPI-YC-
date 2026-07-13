@@ -1,0 +1,76 @@
+---
+title: "Simulation Formats"
+description: "Supported input formats and automatic column normalization."
+icon: "file-import"
+---
+
+SimAPI ingests the formats your solver already produces. Format is auto-detected
+from the payload or file extension.
+
+<CardGroup cols={2}>
+  <Card title="JSON" icon="brackets-curly">
+    A list of trial objects, or an object with a `trials` / `results` / `data` key.
+  </Card>
+  <Card title="CSV" icon="table">
+    One row per trial; headers become column names.
+  </Card>
+  <Card title="VTK" icon="cube">
+    Legacy VTK scalar fields are parsed into columns.
+  </Card>
+  <Card title="NumPy" icon="calculator">
+    `.npy` / `.npz` arrays are reshaped into a tabular form.
+  </Card>
+  <Card title="OpenFOAM" icon="wind">
+    `postProcessing` output is parsed from its whitespace format.
+  </Card>
+</CardGroup>
+
+## Column-alias normalization
+
+You don't need to rename columns. SimAPI maps hundreds of common conventions from
+ANSYS, OpenFOAM, STAR-CCM+, Fluent, COMSOL, SU2, and Abaqus to canonical names
+before validation runs.
+
+<CodeGroup>
+
+```text Your columns
+Cd, Cl, Re, p, U
+```
+
+```text Normalized
+drag_coefficient, lift_coefficient, reynolds_number, pressure, velocity
+```
+
+</CodeGroup>
+
+The response reports exactly what was renamed:
+
+```json
+{
+  "columns_renamed": {
+    "Cd": "drag_coefficient",
+    "Cl": "lift_coefficient",
+    "Re": "reynolds_number"
+  }
+}
+```
+
+<Tip>
+  Non-numeric columns are dropped automatically; validation operates on numeric
+  quantities. Pass units in your `conditions` block, not in column values.
+</Tip>
+
+## Uploading a file
+
+```bash
+curl -X POST https://api.simapi.dev/v1/validate/upload \
+  -H "X-API-Key: $SIMAPI_API_KEY" \
+  -F "file=@cfd_output.csv" \
+  -F "simulation_type=aerodynamics" \
+  -F 'conditions={"velocity":15.0}'
+```
+
+<Warning>
+  Uploads are capped (default 100&nbsp;MB) and JSON payloads by row count.
+  Exceeding a limit returns `413 payload_too_large`.
+</Warning>

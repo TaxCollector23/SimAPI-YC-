@@ -1,0 +1,65 @@
+---
+title: "CLI"
+description: "Validate simulations from the terminal and CI."
+icon: "terminal"
+---
+
+The SimAPI CLI wraps the API for quick local checks and CI gates.
+
+## Install
+
+```bash
+pip install simapi           # installs the `simapi` command
+```
+
+## Authenticate
+
+```bash
+export SIMAPI_API_KEY="sk_live_..."
+```
+
+## Commands
+
+<CodeGroup>
+
+```bash Validate a file
+simapi validate cfd_output.csv \
+  --type aerodynamics \
+  --conditions '{"velocity": 15.0}'
+```
+
+```bash Physics only
+simapi validate run.json --type structural --no-ai
+```
+
+```bash Exit-code gate (for CI)
+simapi validate run.csv --type aerodynamics --fail-on warning
+# exit 0 = passed, 1 = warning/failed
+```
+
+</CodeGroup>
+
+## Output
+
+```text
+SimAPI Validation Report
+────────────────────────────────────────
+Status:          PASSED
+Confidence:      HIGH
+Trials:          196/200 valid (2.0% excluded)
+Training ready:  YES
+Processing time: 23.4ms
+
+Physics Checks (287): 287 passed
+```
+
+## JSON output
+
+```bash
+simapi validate run.csv --type aerodynamics --json | jq .status
+```
+
+<Tip>
+  Use `--fail-on` to turn a validation verdict into a CI exit code — the
+  foundation for [gating your pipeline](/cicd/github-actions).
+</Tip>
