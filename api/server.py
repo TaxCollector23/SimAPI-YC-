@@ -1,0 +1,511 @@
+"""
+SimAPI v3 — REST API Server.
+
+Validation flow:
+  * Physics result is computed synchronously and returned immediately.
+  * The AI reasoning layer runs asynchronously and is polled via
+    ``GET /v1/job/{id}/ai``.
+  * Column aliases are normalized during ingestion before any validation runs,
+    and trial exclusions are de-duplicated before serialization.
+
+Production concerns (auth, rate limiting, request correlation, structured
+logging, metrics, a consistent error contract, and CORS) are layered on via
+middleware and dependencies without altering the validation semantics, so the
+public response schema remains backward compatible.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import threading
+import time
+import uuid
+from typing import Any
+
+import numpy as np
+import pandas as pd
+from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from api.config import settings
+from api.errors import (
+    ErrorCode,
+    NotFoundError,
+    PayloadTooLargeError,
+    SimAPIError,
+    error_body,
+)
+from api.observability import log, metrics, request_id_ctx
+from api.security import authenticate, enforce_rate_limit
+from core.ai_validator import AI_ENABLED, validate_with_ai
+from core.ai_validator import MODEL as AI_MODEL
+from core.ai_validator import report_to_dict as ai_dict
+from core.ingestion import DataIngester
+from core.physics_validator import PhysicsValidator, SimulationType
+
+API_VERSION = "3.1.0"
+
+app = FastAPI(
+    title="SimAPI",
+    version=API_VERSION,
+    description=(
+        "The CI/CD layer for engineering simulations. Dual-layer validation: "
+        "280+ deterministic physics checks across 21 domains plus optional LLM "
+        "reasoning."
+    ),
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=False,
+)
+
+validator = PhysicsValidator()
+ingester = DataIngester()
+
+# Job store: {job_id: {physics: dict, ai_running: bool, ts: float}}
+JOBS: dict[str, dict[str, Any]] = {}
+_JOBS_LOCK = threading.Lock()
+
+
+# ── Request / response models ───────────────────────────────────────────────────
+class ValidateRequest(BaseModel):
+    """Payload for JSON validation requests."""
+
+    data: list[dict[str, Any]] = Field(..., description="Trials as a list of records.")
+    simulation_type: SimulationType = Field(
+        default=SimulationType.AERODYNAMICS, description="Physics domain to validate against."
+    )
+    conditions: dict[str, float] = Field(default_factory=dict, description="Input boundary conditions.")
+    job_id: str | None = Field(default=None, description="Optional caller-supplied tracking id.")
+    run_ai: bool = Field(default=True, description="Run the async AI reasoning layer.")
+
+
+# ── Middleware: correlation id, timing, structured access log, metrics ──────────
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    rid = request.headers.get("x-request-id") or uuid.uuid4().hex
+    token = request_id_ctx.set(rid)
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+        duration_ms = (time.perf_counter() - start) * 1000.0
+        response.headers["X-Request-ID"] = rid
+        response.headers["Server-Timing"] = f"app;dur={duration_ms:.1f}"
+        route = request.scope.get("route")
+        metrics.incr(
+            "http_requests_total",
+            method=request.method,
+            path=route.path if route else request.url.path,
+            status=str(response.status_code),
+        )
+        metrics.observe_latency(duration_ms)
+        log.info(
+            "request",
+            extra={
+                "ctx_method": request.method,
+                "ctx_path": request.url.path,
+                "ctx_status": response.status_code,
+                "ctx_duration_ms": round(duration_ms, 1),
+            },
+        )
+        return response
+    finally:
+        request_id_ctx.reset(token)
+
+
+# ── Exception handlers: single, consistent error envelope everywhere ────────────
+@app.exception_handler(SimAPIError)
+async def _handle_simapi_error(request: Request, exc: SimAPIError):
+    metrics.incr("errors_total", code=exc.code)
+    body = error_body(exc.code, exc.message, request_id=request_id_ctx.get(), details=exc.details)
+    headers = {}
+    if exc.code == ErrorCode.RATE_LIMITED:
+        headers["Retry-After"] = str(int(exc.details.get("retry_after_seconds", 1)) or 1)
+    return JSONResponse(status_code=exc.status_code, content=body, headers=headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def _handle_validation_error(request: Request, exc: RequestValidationError):
+    metrics.incr("errors_total", code=ErrorCode.VALIDATION_FAILED)
+    # ``exc.errors()`` may carry non-serializable objects (e.g. exception ctx);
+    # keep only the JSON-safe fields clients actually need.
+    errors = [
+        {"loc": list(e.get("loc", [])), "msg": str(e.get("msg", "")), "type": e.get("type", "")}
+        for e in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content=error_body(
+            ErrorCode.VALIDATION_FAILED,
+            "Request failed schema validation.",
+            request_id=request_id_ctx.get(),
+            details={"errors": errors},
+        ),
+    )
+
+
+@app.exception_handler(Exception)
+async def _handle_unexpected(request: Request, exc: Exception):
+    metrics.incr("errors_total", code=ErrorCode.INTERNAL)
+    log.exception("unhandled_exception")
+    message = str(exc) if not settings.is_production else "An internal error occurred."
+    return JSONResponse(
+        status_code=500,
+        content=error_body(ErrorCode.INTERNAL, message, request_id=request_id_ctx.get()),
+    )
+
+
+# ── Auth + rate-limit dependency ────────────────────────────────────────────────
+async def caller_identity(request: Request) -> str:
+    """Authenticate the request and enforce the caller's rate-limit budget."""
+    identity = authenticate(request)
+    enforce_rate_limit(identity)
+    return identity
+
+
+# ── Serialization ───────────────────────────────────────────────────────────────
+def _json_safe(value: Any) -> Any:
+    """Recursively replace non-finite floats (NaN/inf) with None.
+
+    Statistics such as the skewness of a constant column are legitimately NaN,
+    but JSON has no representation for them and strict encoders reject them.
+    """
+    if isinstance(value, float):
+        return value if np.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def _serialize(report, df: pd.DataFrame) -> dict[str, Any]:
+    """Serialize a physics report, de-duplicating exclusions by trial index."""
+    seen: set = set()
+    unique_excl: list[dict[str, Any]] = []
+    for e in report.exclusions:
+        key = (e.trial_index, e.reason[:40])
+        if key not in seen:
+            seen.add(key)
+            unique_excl.append({"trial_index": e.trial_index, "reason": e.reason, "severity": e.severity})
+
+    issues = [
+        {
+            "name": c.name,
+            "status": c.status.value if hasattr(c.status, "value") else str(c.status),
+            "description": c.description,
+            "detail": c.detail,
+            "value": c.value,
+            "category": c.category,
+        }
+        for c in report.issues
+    ]
+
+    stats = {
+        col: {
+            "mean": s.mean, "std": s.std, "median": s.median,
+            "p5": s.p5, "p95": s.p95, "min": s.min, "max": s.max,
+            "n": s.n, "skewness": s.skewness, "cv": s.cv,
+        }
+        for col, s in report.statistics.items()
+    }
+
+    renamed = df.attrs.get("simapi_renamed", {})
+
+    return _json_safe({
+        "job_id": report.job_id,
+        "status": report.overall_status.value,
+        "confidence": report.confidence.value,
+        "trials_submitted": report.trials_submitted,
+        "trials_valid": report.trials_valid,
+        "trials_excluded": report.trials_excluded,
+        "exclusion_rate": report.exclusion_rate,
+        "training_ready": report.training_ready,
+        "processing_ms": report.processing_time_ms,
+        "all_checks": report.all_checks_count,
+        "passed": report.passed_count,
+        "warnings": report.warning_count,
+        "failed": report.failed_count,
+        # ``issues`` is the canonical field; ``physics_checks`` is a stable alias
+        # kept for SDK/back-compat. Both point at the same surfaced checks.
+        "issues": issues,
+        "physics_checks": issues,
+        "exclusions": unique_excl,
+        "statistics": stats,
+        "checks_by_category": report.checks_by_category,
+        "provenance": report.provenance,
+        "columns_renamed": renamed,
+        "ai": None,
+        "ai_status": "pending",  # overwritten by the caller based on run_ai / AI availability
+    })
+
+
+def _prune_jobs() -> None:
+    """Evict expired or overflow jobs to bound memory (called under lock)."""
+    now = time.time()
+    expired = [jid for jid, s in JOBS.items() if now - s["ts"] > settings.job_ttl_seconds]
+    for jid in expired:
+        JOBS.pop(jid, None)
+    if len(JOBS) > settings.max_jobs:
+        for jid, _ in sorted(JOBS.items(), key=lambda x: x[1]["ts"])[: len(JOBS) - settings.max_jobs]:
+            JOBS.pop(jid, None)
+
+
+def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
+                  conditions: dict, physics_issues: list[dict]) -> None:
+    """Background worker: run the AI layer and fold its verdict into the job."""
+    try:
+        with _JOBS_LOCK:
+            if job_id in JOBS:
+                JOBS[job_id]["ai_running"] = True
+        ai_report = validate_with_ai(df, sim_type, conditions, physics_issues)
+        ai_data = ai_dict(ai_report)
+        with _JOBS_LOCK:
+            if job_id not in JOBS:
+                return
+            physics = JOBS[job_id]["physics"]
+            physics["ai"] = ai_data
+            physics["ai_status"] = ai_data["status"]
+            ai_sev = {"passed": 0, "warning": 1, "failed": 2, "error": 0, "disabled": 0}.get(ai_data["status"], 0)
+            ph_sev = {"passed": 0, "warning": 1, "failed": 2}.get(physics["status"], 0)
+            if ai_sev > ph_sev:
+                physics["status"] = ai_data["status"]
+                if ai_data.get("anomaly_score", 0) > 0.5:
+                    physics["training_ready"] = False
+        metrics.incr("ai_validations_total", status=ai_data["status"])
+    except Exception as e:  # noqa: BLE001 - defensive: worker must never crash silently
+        log.exception("ai_worker_failed")
+        with _JOBS_LOCK:
+            if job_id in JOBS:
+                JOBS[job_id]["physics"]["ai_status"] = "error"
+                JOBS[job_id]["physics"]["ai"] = {
+                    "error": str(e), "status": "error", "findings": [], "recommendations": [],
+                }
+    finally:
+        with _JOBS_LOCK:
+            if job_id in JOBS:
+                JOBS[job_id]["ai_running"] = False
+
+
+async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
+    if len(req.data) > settings.max_rows:
+        raise PayloadTooLargeError(
+            f"Request exceeds the maximum of {settings.max_rows} rows.",
+            details={"rows": len(req.data), "limit": settings.max_rows},
+        )
+
+    df, ingest_meta = ingester.ingest(req.data, format_hint="json")
+    # ``df.attrs`` is the pandas-sanctioned slot for user metadata (no warning).
+    df.attrs["simapi_renamed"] = ingest_meta.get("columns_renamed", {})
+
+    jid = req.job_id or uuid.uuid4().hex[:8]
+    physics = validator.validate(df, req.simulation_type, req.conditions, jid)
+    result = _serialize(physics, df)
+    result["columns_renamed"] = ingest_meta.get("columns_renamed", {})
+    result["ai_status"] = "pending" if (req.run_ai and AI_ENABLED) else "disabled"
+
+    with _JOBS_LOCK:
+        JOBS[jid] = {"physics": result, "ai_running": False, "ts": time.time()}
+        _prune_jobs()
+
+    metrics.incr("physics_validations_total", status=result["status"])
+
+    if req.run_ai and AI_ENABLED:
+        threading.Thread(
+            target=_run_ai_async,
+            args=(jid, df, req.simulation_type.value, req.conditions, result["issues"]),
+            daemon=True,
+        ).start()
+
+    return result
+
+
+# ── Health / metrics ─────────────────────────────────────────────────────────────
+@app.get("/v1/health", tags=["system"])
+async def health() -> dict[str, Any]:
+    """Liveness + basic service facts. Unauthenticated by design."""
+    return {
+        "status": "ok",
+        "version": API_VERSION,
+        "environment": settings.environment,
+        "physics_checks": "280+",
+        "domains": 21,
+        "ai_enabled": AI_ENABLED,
+        "ai_model": AI_MODEL,
+        "jobs_processed": validator.checks_run,
+        "avg_physics_ms": round(validator.total_processing_ms / max(validator.checks_run, 1), 1),
+    }
+
+
+@app.get("/v1/metrics", response_class=PlainTextResponse, tags=["system"])
+async def prometheus_metrics() -> str:
+    """Prometheus text-format metrics for scraping."""
+    return metrics.render()
+
+
+# ── Validation endpoints ─────────────────────────────────────────────────────────
+@app.post("/v1/validate", tags=["validation"])
+async def validate(req: ValidateRequest, _: str = Depends(caller_identity)):
+    return await _validate_core(req)
+
+
+@app.post("/v1/validate/upload", tags=["validation"])
+async def validate_upload(
+    file: UploadFile = File(...),
+    simulation_type: str = Form("aerodynamics"),
+    conditions: str = Form("{}"),
+    job_id: str = Form(""),
+    run_ai: str = Form("true"),
+    _: str = Depends(caller_identity),
+):
+    contents = await file.read()
+    if len(contents) > settings.max_upload_bytes:
+        raise PayloadTooLargeError(
+            f"Upload exceeds the maximum of {settings.max_upload_bytes} bytes.",
+            details={"bytes": len(contents), "limit": settings.max_upload_bytes},
+        )
+    try:
+        conditions_parsed = json.loads(conditions or "{}")
+    except json.JSONDecodeError as e:
+        raise SimAPIError(f"`conditions` must be valid JSON: {e}", code=ErrorCode.BAD_REQUEST) from e
+    try:
+        sim = SimulationType(simulation_type)
+    except ValueError as e:
+        raise SimAPIError(
+            f"Unknown simulation_type '{simulation_type}'.",
+            code=ErrorCode.UNSUPPORTED_FORMAT,
+            details={"allowed": [s.value for s in SimulationType]},
+        ) from e
+    df, _meta = ingester.ingest(contents, filename=file.filename)
+    req = ValidateRequest(
+        data=df.to_dict(orient="records"),
+        simulation_type=sim,
+        conditions=conditions_parsed,
+        job_id=job_id or uuid.uuid4().hex[:8],
+        run_ai=run_ai.lower() == "true",
+    )
+    return await _validate_core(req)
+
+
+@app.post("/v1/validate/physics-only", tags=["validation"])
+async def validate_physics_only(req: ValidateRequest, _: str = Depends(caller_identity)):
+    req.run_ai = False
+    return await _validate_core(req)
+
+
+@app.get("/v1/job/{job_id}", tags=["jobs"])
+async def get_job(job_id: str, _: str = Depends(caller_identity)):
+    with _JOBS_LOCK:
+        if job_id not in JOBS:
+            raise NotFoundError(f"Job {job_id} not found.")
+        result = JOBS[job_id]["physics"].copy()
+        result["ai_running"] = JOBS[job_id]["ai_running"]
+    return result
+
+
+@app.get("/v1/job/{job_id}/ai", tags=["jobs"])
+async def get_job_ai(job_id: str, _: str = Depends(caller_identity)):
+    """Poll for the AI result once it is ready."""
+    with _JOBS_LOCK:
+        if job_id not in JOBS:
+            raise NotFoundError(f"Job {job_id} not found.")
+        physics = JOBS[job_id]["physics"]
+        return {
+            "job_id": job_id,
+            "ai_running": JOBS[job_id]["ai_running"],
+            "ai_status": physics.get("ai_status", "pending"),
+            "ai": physics.get("ai"),
+        }
+
+
+@app.get("/v1/jobs", tags=["jobs"])
+async def list_jobs(
+    limit: int = Query(50, ge=1, le=500, description="Page size."),
+    offset: int = Query(0, ge=0, description="Number of jobs to skip."),
+    _: str = Depends(caller_identity),
+):
+    """List recent jobs, newest first, with cursor-free offset pagination."""
+    with _JOBS_LOCK:
+        ordered = sorted(JOBS.items(), key=lambda x: x[1]["ts"], reverse=True)
+        total = len(ordered)
+        page = ordered[offset : offset + limit]
+        jobs = [
+            {
+                "job_id": jid,
+                "ts": s["ts"],
+                "status": s["physics"]["status"],
+                "checks": s["physics"]["all_checks"],
+                "ai_status": s["physics"].get("ai_status", "pending"),
+                "ai_running": s["ai_running"],
+            }
+            for jid, s in page
+        ]
+    return {
+        "jobs": jobs,
+        "pagination": {"total": total, "limit": limit, "offset": offset, "returned": len(jobs)},
+    }
+
+
+@app.post("/v1/demo", tags=["validation"])
+async def demo(_: str = Depends(caller_identity)):
+    """Run a validation against synthetic aerodynamics data with seeded anomalies."""
+    np.random.seed(42)
+    n = 200
+    v = 15.0
+    Re_base = 1.225 * v * 0.5 / 1.81e-5
+    data = []
+    for i in range(n):
+        cd = 0.312 + np.random.normal(0, 0.018)
+        cl = 0.847 + np.random.normal(0, 0.031)
+        if i == 15:
+            cd = 999.0
+        if i == 42:
+            cd = float("nan")
+        if i == 87:
+            cl = -50.0
+        data.append({
+            "cd": cd, "cl": cl,
+            "re": float(Re_base * np.random.uniform(0.95, 1.05)),
+            "p": float(101325 + np.random.normal(0, 500)),
+            "v": 14.2 if i == 55 else v,
+            "ma": v / 343.0,
+        })
+    return await _validate_core(ValidateRequest(
+        data=data,
+        simulation_type=SimulationType.AERODYNAMICS,
+        conditions={"velocity": v, "altitude": 120.0},
+        job_id=f"demo_{uuid.uuid4().hex[:6]}",
+        run_ai=True,
+    ))
+
+
+@app.on_event("startup")
+async def _on_startup() -> None:
+    log.info(
+        "startup",
+        extra={
+            "ctx_version": API_VERSION,
+            "ctx_environment": settings.environment,
+            "ctx_ai_enabled": AI_ENABLED,
+            "ctx_auth_required": settings.require_auth or bool(settings.api_keys),
+        },
+    )
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("server:app", host=settings.host, port=settings.port, reload=True)

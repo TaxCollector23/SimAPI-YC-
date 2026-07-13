@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>SimAPI v3 — Physics Validation</title>
+<style>
+:root{--bg:#060810;--s1:#0d1120;--s2:#131928;--border:#1e2a45;--border2:#2a3a5c;--ink:#d8e2f5;--dim:#5a6a8a;--muted:#8a9ab8;--blue:#1a8fff;--green:#00e676;--amber:#ffab00;--red:#ff4444;--teal:#00e5ff;--purple:#b39dff;--mono:'Fira Code',monospace;--ui:-apple-system,'Inter',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--ui);font-size:13px;min-height:100vh;display:grid;grid-template-rows:52px 1fr 140px;grid-template-columns:340px 1fr;gap:0}
+header{grid-column:1/-1;background:var(--s1);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px}
+.logo{font-family:var(--mono);font-size:17px;font-weight:700;color:var(--blue);letter-spacing:.1em}
+.tag{color:var(--dim);font-size:10px}
+.pill{display:flex;align-items:center;gap:6px;background:var(--s2);border:1px solid var(--border2);border-radius:4px;padding:4px 10px;font-family:var(--mono);font-size:10px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(0,230,118,.5)}50%{opacity:.6;box-shadow:0 0 0 4px rgba(0,230,118,0)}}
+.hm{display:flex;gap:20px;margin-left:auto}
+.hm-item{text-align:right}
+.hm-val{font-family:var(--mono);font-size:15px;font-weight:600;color:var(--teal);display:block}
+.hm-lbl{font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
+.left{background:var(--s1);border-right:1px solid var(--border);overflow-y:auto;display:flex;flex-direction:column;padding:16px}
+.stitle{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:14px 0 8px}
+.stitle:first-child{margin-top:0}
+textarea{width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:6px;color:var(--teal);font-family:var(--mono);font-size:11px;line-height:1.6;padding:12px;resize:vertical;min-height:140px;outline:none}
+textarea:focus{border-color:var(--blue)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+select,input[type=number]{width:100%;background:var(--s2);border:1px solid var(--border2);border-radius:4px;color:var(--ink);padding:7px 10px;font-size:12px;outline:none}
+label{font-size:10px;color:var(--dim);display:block;margin-bottom:3px}
+.btn{padding:9px 18px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:600;width:100%;margin-top:6px;transition:all .15s}
+.btn-p{background:var(--blue);color:#fff}.btn-p:hover{background:#2a9fff}
+.btn-s{background:var(--s2);color:var(--teal);border:1px solid var(--border2)}
+.right{overflow-y:auto;padding:20px}
+.summary{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px}
+.metric{background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:12px 14px}
+.mval{font-family:var(--mono);font-size:19px;font-weight:700}
+.mlbl{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;margin-top:4px}
+.passed{color:var(--green)}.warning{color:var(--amber)}.failed{color:var(--red)}.high{color:var(--green)}.medium{color:var(--amber)}.low{color:var(--red)}
+.banner{padding:9px 14px;border-radius:6px;font-size:12px;display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.bok{background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.25);color:var(--green)}
+.bfail{background:rgba(255,68,68,.08);border:1px solid rgba(255,68,68,.25);color:var(--red)}
+.card{background:var(--s1);border:1px solid var(--border);border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.ctitle{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.bars{margin-bottom:14px}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:11px}
+.bar-track{flex:1;height:6px;background:var(--s2);border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;border-radius:3px}
+.bar-n{font-family:var(--mono);font-size:10px;min-width:35px;text-align:right}
+.issue{padding:7px 10px;border-radius:5px;margin-bottom:3px;font-size:11px;display:flex;gap:8px;align-items:flex-start}
+.iwarn{background:rgba(255,171,0,.06);border-left:3px solid var(--amber)}
+.ifail{background:rgba(255,68,68,.07);border-left:3px solid var(--red)}
+.iname{font-family:var(--mono);font-size:10px;color:var(--muted);min-width:160px;flex-shrink:0}
+.icat{font-size:9px;color:var(--dim);background:var(--s2);border-radius:3px;padding:1px 5px;flex-shrink:0}
+.excl{padding:6px 10px;background:rgba(255,68,68,.04);border-left:2px solid var(--red);border-radius:0 4px 4px 0;margin:2px 0;font-size:11px}
+.excl-i{font-family:var(--mono);font-size:10px;color:var(--red)}
+.cat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:7px}
+.ccat{background:var(--s2);border:1px solid var(--border);border-radius:5px;padding:9px 11px}
+.cname{font-family:var(--mono);font-size:10px;color:var(--teal);margin-bottom:5px}
+.crow{display:flex;justify-content:space-between;font-size:10px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:7px}
+.scard{background:var(--s2);border:1px solid var(--border);border-radius:5px;padding:9px 11px}
+.sname{font-family:var(--mono);font-size:10px;color:var(--teal);margin-bottom:5px}
+.srow{display:flex;justify-content:space-between;font-size:10px}
+.sval{font-family:var(--mono);color:var(--ink)}
+.badge{font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:3px;background:var(--s2);color:var(--muted);border:1px solid var(--border2)}
+/* AI section */
+.ai-card{background:var(--s1);border:1px solid rgba(179,157,255,.35);border-radius:8px;padding:14px 16px;margin-bottom:14px}
+.ai-title{font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--purple);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.ai-score-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding:10px 12px;background:var(--s2);border-radius:6px}
+.ai-summary{font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:12px;padding:10px 12px;background:var(--s2);border-radius:6px;border-left:3px solid var(--purple)}
+.ai-finding{padding:8px 10px;border-radius:5px;margin-bottom:4px;font-size:11px}
+.af-crit{background:rgba(255,68,68,.07);border-left:3px solid var(--red)}
+.af-warn{background:rgba(255,171,0,.06);border-left:3px solid var(--amber)}
+.af-info{background:rgba(0,229,255,.05);border-left:3px solid var(--teal)}
+.af-header{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+.af-detail{font-size:11px;color:var(--muted);padding-left:20px}
+.ai-pulse{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--purple);animation:pulse 1.2s ease-in-out infinite}
+.renamed-row{font-family:var(--mono);font-size:10px;padding:3px 0;color:var(--muted)}
+.renamed-arrow{color:var(--amber)}
+/* Bottom */
+.bottom{grid-column:1/-1;background:var(--s1);border-top:1px solid var(--border);padding:10px 20px;display:flex;gap:20px;overflow:hidden}
+.log-a{flex:1;overflow:hidden}
+.log-t{font-family:var(--mono);font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin-bottom:5px}
+#logEl{font-family:var(--mono);font-size:10px;color:var(--muted);overflow:hidden}
+.ll{display:flex;gap:10px;line-height:1.7}
+.lts{color:var(--dim);min-width:75px}
+.lok{color:var(--green)}.lwarn{color:var(--amber)}.lerr{color:var(--red)}.linfo{color:var(--purple)}
+.domains{font-family:var(--mono);font-size:10px;color:var(--dim);background:var(--s2);border:1px solid var(--border2);border-radius:5px;padding:10px 12px;min-width:200px;line-height:2}
+.empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--dim);gap:12px;text-align:center}
+.empty-icon{font-size:48px;opacity:.3}
+.loading{text-align:center;padding:60px;color:var(--muted);font-family:var(--mono)}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--border2);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite;margin-right:8px}
+</style>
+</head>
+<body>
+<header>
+  <div><div class="logo">SimAPI <span style="font-size:11px;color:var(--dim)">v3</span></div>
+    <div class="tag">Dual-layer validation · 280+ deterministic checks · LLM reasoning · 21 domains</div></div>
+  <div class="pill"><div class="dot" id="dot"></div><span id="stxt">Connecting...</span></div>
+  <div class="hm">
+    <div class="hm-item"><span class="hm-val" id="hmC">—</span><span class="hm-lbl">Checks</span></div>
+    <div class="hm-item"><span class="hm-val" id="hmP">—</span><span class="hm-lbl">Passed</span></div>
+    <div class="hm-item"><span class="hm-val" id="hmI">—</span><span class="hm-lbl">Issues</span></div>
+    <div class="hm-item"><span class="hm-val" id="hmMs">—</span><span class="hm-lbl">ms</span></div>
+  </div>
+</header>
+
+<div class="left">
+  <div class="stitle">Input Data</div>
+  <textarea id="dataIn" placeholder='Paste JSON array. Any column naming works — Cd, cd, drag_coefficient, coeff_drag are all recognized.&#10;&#10;[&#10;  {"Cd":0.312,"Cl":0.847,"Re":450000,"v":15.0,"Ma":0.0437},&#10;  ...&#10;]'></textarea>
+  <div class="grid2">
+    <div><label>Simulation Type</label>
+      <select id="simType">
+        <option value="aerodynamics">Aerodynamics</option>
+        <option value="fluid_dynamics">Fluid Dynamics</option>
+        <option value="structural">Structural</option>
+        <option value="thermodynamics">Thermodynamics</option>
+        <option value="robotics">Robotics</option>
+        <option value="combustion">Combustion</option>
+        <option value="acoustics">Acoustics</option>
+        <option value="electromagnetics">Electromagnetics</option>
+        <option value="geomechanics">Geomechanics</option>
+        <option value="biomechanics">Biomechanics</option>
+        <option value="nuclear">Nuclear</option>
+        <option value="plasma">Plasma</option>
+        <option value="chemical">Chemical</option>
+        <option value="hydrodynamics">Hydrodynamics</option>
+        <option value="meteorology">Meteorology</option>
+        <option value="astrophysics">Astrophysics</option>
+        <option value="materials">Materials</option>
+        <option value="tribology">Tribology</option>
+        <option value="aeroelasticity">Aeroelasticity</option>
+        <option value="cryogenics">Cryogenics</option>
+      </select></div>
+    <div><label>Velocity (m/s)</label><input type="number" id="vel" value="15"></div>
+    <div><label>Altitude (m)</label><input type="number" id="alt" value="120"></div>
+    <div><label>Trials</label><input type="number" id="nT" value="200" min="10" max="2000"></div>
+  </div>
+  <button class="btn btn-p" onclick="runVal()" id="runBtn">▶ Run Validation</button>
+  <button class="btn btn-s" onclick="runDemo()">⚡ Demo (short column names → auto-renamed)</button>
+  <button class="btn btn-s" onclick="runPhysOnly()">⚡ Physics Only (no AI, instant)</button>
+</div>
+
+<div class="right" id="right">
+  <div class="empty"><div class="empty-icon">⚛</div>
+    <div style="font-size:16px;color:var(--muted)">Run a validation to see results</div>
+    <div style="font-size:12px">Physics result is instant · AI analysis follows async</div></div>
+</div>
+
+<div class="bottom">
+  <div class="log-a"><div class="log-t">Activity Log</div><div id="logEl"></div></div>
+  <div class="domains">
+    <div style="color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.1em;margin-bottom:4px">21 Domains · 500+ Column Aliases</div>
+    <div style="color:var(--teal)">Aero · Fluid · Structural · Thermo · Robotics · Combustion · Acoustics · EM · Geo · Bio · Nuclear · Plasma · Chemical · Hydro · Meteo · Astro · Materials · Tribology · Aeroelastic · Cryo · Multi</div>
+  </div>
+</div>
+
+<script>
+const API='http://localhost:8000';
+let pollTimer=null; let currentJobId=null;
+
+async function checkStatus(){
+  try{const r=await fetch(`${API}/v1/health`,{signal:AbortSignal.timeout(3000)});
+    if(r.ok){const d=await r.json();
+      document.getElementById('dot').style.background='#00e676';
+      document.getElementById('stxt').textContent=`Connected · ${d.jobs_processed} jobs`;return;}}
+  catch{}
+  document.getElementById('dot').style.background='#ff4444';
+  document.getElementById('dot').style.animation='none';
+  document.getElementById('stxt').textContent='Offline — run: python launch.py';}
+checkStatus();setInterval(checkStatus,5000);
+
+function gauss(m,s){return m+s*Math.sqrt(-2*Math.log(1-Math.random()))*Math.cos(2*Math.PI*Math.random());}
+
+function genData(t){
+  const n=parseInt(document.getElementById('nT').value)||200;
+  const v=parseFloat(document.getElementById('vel').value)||15;
+  const data=[];
+  for(let i=0;i<n;i++){
+    let trial={};
+    if(t==='aerodynamics'){
+      trial={drag_coefficient:gauss(0.312,0.018),lift_coefficient:gauss(0.847,0.031),
+             reynolds_number:400000+Math.random()*100000,pressure:gauss(101325,500),
+             velocity:v,mach_number:v/343};
+      if(i===5)trial.drag_coefficient=999;
+      if(i===12)trial.lift_coefficient=null;
+      if(i===30)trial.drag_coefficient=-5;
+      if(i===55){trial.velocity=14.2;}
+    }else if(t==='structural'){
+      trial={stress:Math.abs(gauss(250e6,20e6)),strain:Math.abs(gauss(0.002,0.0002)),
+             elastic_modulus:200e9,von_mises_stress:Math.abs(gauss(240e6,18e6)),
+             yield_stress:550e6,ultimate_stress:680e6,safety_factor:gauss(2.3,0.1),
+             poisson_ratio:0.29,principal_stress_1:Math.abs(gauss(280e6,20e6)),
+             principal_stress_2:Math.abs(gauss(210e6,15e6)),principal_stress_3:Math.abs(gauss(145e6,12e6)),
+             stress_concentration:gauss(1.4,0.05),fatigue_life:Math.abs(gauss(850000,50000)),
+             natural_frequency:gauss(142,1),damping_ratio:gauss(0.043,0.003)};
+      if(i===10)trial.poisson_ratio=0.31;
+      if(i===20)trial.principal_stress_2=285e6;
+      if(i===30)trial.von_mises_stress=265e6;
+      if(i===42)trial.stress_concentration=0.85;
+    }else if(t==='thermodynamics'){
+      trial={temperature:gauss(800,50),heat_flux:gauss(10000,1000),
+             thermal_efficiency:gauss(0.35,0.03),entropy_generation:Math.abs(gauss(100,20)),
+             carnot_efficiency:gauss(0.625,0.02),cop:gauss(3.5,0.3),
+             nusselt_number:gauss(150,20),prandtl_number:0.71,
+             heat_transfer_coefficient:gauss(500,50),emissivity:gauss(0.85,0.05)};
+    }else if(t==='robotics'){
+      trial={joint_torque:gauss(50,5),joint_velocity:gauss(1.5,0.2),
+             end_effector_force:gauss(100,15),position_error:Math.abs(gauss(0.005,0.001)),
+             power_consumption:Math.abs(gauss(75,8)),settling_time:Math.abs(gauss(0.8,0.1)),
+             rise_time:Math.abs(gauss(0.3,0.05)),overshoot:Math.abs(gauss(0.15,0.03)),
+             manipulability:Math.abs(gauss(2.5,0.4)),damping_ratio:gauss(0.6,0.05)};
+    }else if(t==='combustion'){
+      trial={temperature:gauss(2200,150),pressure:gauss(101325*5,5000),
+             equivalence_ratio:gauss(1.0,0.05),heat_release_rate:gauss(1e6,1e5),
+             co2_concentration:gauss(0.12,0.01),co_concentration:gauss(0.02,0.005),
+             nox_concentration:Math.abs(gauss(0.001,0.0002)),combustion_efficiency:gauss(0.98,0.01),
+             adiabatic_temperature:gauss(2300,100),flame_temperature:gauss(2200,150)};
+    }else{
+      trial={pressure:gauss(101325,500),velocity:gauss(v,0.5),
+             density:gauss(1.225,0.01),temperature:gauss(293,5),
+             reynolds_number:Math.random()*1e6+1e5};}
+    Object.keys(trial).forEach(k=>{if(trial[k]===null||Number.isNaN(trial[k]))trial[k]=null;});
+    data.push(trial);}
+  return data;}
+
+async function runVal(){
+  const raw=document.getElementById('dataIn').value.trim();
+  let data;
+  if(raw){try{data=JSON.parse(raw);}catch{alert('Invalid JSON');return;}
+    if(!Array.isArray(data)){alert('Must be JSON array');return;}}
+  else{data=genData(document.getElementById('simType').value);}
+  await submit(data,true);}
+
+async function runPhysOnly(){
+  const data=genData(document.getElementById('simType').value);
+  await submit(data,false);}
+
+async function runDemo(){
+  showLoading('Running demo with short column names (cd, cl, re, v, ma)...');
+  try{const r=await fetch(`${API}/v1/demo`,{method:'POST'});
+    if(!r.ok)throw new Error(await r.text());
+    const d=await r.json();
+    render(d); pollAI(d.job_id);}
+  catch(e){showError(e.message);}}
+
+async function submit(data,runAi){
+  const btn=document.getElementById('runBtn');
+  btn.disabled=true;btn.textContent='Running physics checks...';
+  showLoading('Running 280+ physics checks...');
+  const payload={data,simulation_type:document.getElementById('simType').value,
+    conditions:{velocity:parseFloat(document.getElementById('vel').value)||15,
+                altitude:parseFloat(document.getElementById('alt').value)||120},
+    run_ai:runAi};
+  try{const r=await fetch(`${API}/v1/validate`,{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok)throw new Error(await r.text());
+    const d=await r.json();
+    render(d);
+    if(runAi) pollAI(d.job_id);}
+  catch(e){showError(e.message);}
+  finally{btn.disabled=false;btn.textContent='▶ Run Validation';}}
+
+function pollAI(jobId){
+  if(pollTimer) clearInterval(pollTimer);
+  currentJobId=jobId;
+  log('info',`Job ${jobId}`,`AI analysis running...`);
+  pollTimer=setInterval(async()=>{
+    try{const r=await fetch(`${API}/v1/job/${jobId}/ai`);
+      if(!r.ok) return;
+      const d=await r.json();
+      if(!d.ai_running && d.ai){
+        clearInterval(pollTimer); pollTimer=null;
+        renderAI(d.ai);
+        log(d.ai_status==='passed'?'ok':d.ai_status==='error'?'err':'warn',
+            `AI ${jobId}`,`${d.ai_status} · anomaly ${((d.ai.anomaly_score||0)*100).toFixed(0)}% · ${d.ai.findings?.length||0} findings`);
+      }}catch{}},1500);}
+
+function showLoading(msg){
+  if(pollTimer){clearInterval(pollTimer);pollTimer=null;}
+  document.getElementById('right').innerHTML=`<div class="loading"><span class="spinner"></span>${msg}</div>`;}
+function showError(m){
+  document.getElementById('right').innerHTML=`<div style="padding:40px;color:var(--red);font-family:var(--mono)">✗ ${m}<br><br><span style="color:var(--dim)">Run: python launch.py</span></div>`;}
+
+function fmtN(n){
+  if(n===undefined||n===null)return '—';
+  if(Math.abs(n)>=1e6||Math.abs(n)<0.0001&&n!==0)return n.toExponential(3);
+  return Number.isInteger(n)?n.toLocaleString():n.toFixed(4);}
+
+function render(d){
+  document.getElementById('hmC').textContent=(d.all_checks||0).toLocaleString();
+  document.getElementById('hmP').textContent=(d.passed||0).toLocaleString();
+  document.getElementById('hmI').textContent=((d.warnings||0)+(d.failed||0)).toLocaleString();
+  document.getElementById('hmMs').textContent=`${d.processing_ms}ms`;
+
+  const sc=d.status==='passed'?'passed':d.status==='warning'?'warning':'failed';
+  const issues=d.issues||[];
+  const total=d.all_checks||1;
+  const pPct=(d.passed/total*100).toFixed(0);
+  const wPct=((d.warnings||0)/total*100).toFixed(0);
+  const fPct=((d.failed||0)/total*100).toFixed(0);
+
+  // Renamed columns notice
+  const renamed=d.columns_renamed||{};
+  const renamedHtml=Object.keys(renamed).length>0?`
+    <div class="card">
+      <div class="ctitle">Column Names Auto-Normalized <span class="badge">${Object.keys(renamed).length}</span></div>
+      ${Object.entries(renamed).map(([from,to])=>`<div class="renamed-row">${from} <span class="renamed-arrow">→</span> ${to}</div>`).join('')}
+    </div>`:'';
+
+  // Issues html
+  const issueHtml=issues.length===0
+    ?`<div style="color:var(--green);font-size:12px;padding:8px">✓ All ${total.toLocaleString()} checks passed</div>`
+    :issues.map(i=>`<div class="issue ${i.status==='failed'?'ifail':'iwarn'}">
+        <span style="color:${i.status==='failed'?'var(--red)':'var(--amber)'};font-size:13px">${i.status==='failed'?'✗':'⚠'}</span>
+        <span class="iname">${i.name}</span>
+        <span class="icat">${i.category}</span>
+        <span style="flex:1;font-size:11px">${i.detail||i.description}</span>
+      </div>`).join('');
+
+  // Categories with issues
+  const cats=d.checks_by_category||{};
+  const catHtml=Object.entries(cats).filter(([,v])=>(v.warning||0)+(v.failed||0)>0)
+    .map(([cat,v])=>`<div class="ccat"><div class="cname">${cat}</div>
+      <div class="crow"><span style="color:var(--dim)">✓</span><span style="color:var(--green)">${v.passed||0}</span></div>
+      ${v.warning?`<div class="crow"><span style="color:var(--dim)">⚠</span><span style="color:var(--amber)">${v.warning}</span></div>`:''}
+      ${v.failed?`<div class="crow"><span style="color:var(--dim)">✗</span><span style="color:var(--red)">${v.failed}</span></div>`:''}
+    </div>`).join('');
+
+  // Exclusions (deduped server-side)
+  const exclHtml=(d.exclusions||[]).length===0
+    ?`<div style="color:var(--green);font-size:12px">No trials excluded</div>`
+    :(d.exclusions||[]).map(e=>`<div class="excl"><span class="excl-i">Trial #${e.trial_index}</span> — ${e.reason}</div>`).join('');
+
+  // Stats
+  const statsHtml=Object.entries(d.statistics||{}).map(([col,s])=>`
+    <div class="scard"><div class="sname">${col}</div>
+      <div class="srow"><span style="color:var(--dim)">mean</span><span class="sval">${fmtN(s.mean)}</span></div>
+      <div class="srow"><span style="color:var(--dim)">std</span><span class="sval">${fmtN(s.std)}</span></div>
+      <div class="srow"><span style="color:var(--dim)">p5–p95</span><span class="sval">${fmtN(s.p5)} – ${fmtN(s.p95)}</span></div>
+      <div class="srow"><span style="color:var(--dim)">n valid</span><span class="sval">${s.n}</span></div>
+      ${s.skewness!==undefined?`<div class="srow"><span style="color:var(--dim)">skew</span><span class="sval">${fmtN(s.skewness)}</span></div>`:''}
+    </div>`).join('');
+
+  document.getElementById('right').innerHTML=`
+    <div class="summary">
+      <div class="metric"><div class="mval ${sc}">${d.status.toUpperCase()}</div><div class="mlbl">Physics Status</div></div>
+      <div class="metric"><div class="mval ${d.confidence}">${d.confidence.toUpperCase()}</div><div class="mlbl">Confidence</div></div>
+      <div class="metric"><div class="mval" style="color:var(--blue)">${d.trials_valid}<span style="font-size:13px;color:var(--dim)">/${d.trials_submitted}</span></div><div class="mlbl">Valid Trials</div></div>
+      <div class="metric"><div class="mval" style="color:var(--teal)">${d.processing_ms}ms</div><div class="mlbl">Physics Time</div></div>
+      <div class="metric"><div class="mval" style="color:var(--amber)">${(d.warnings||0)+(d.failed||0)}</div><div class="mlbl">Issues Found</div></div>
+    </div>
+
+    <div class="${d.training_ready?'banner bok':'banner bfail'}">
+      ${d.training_ready?'✓ Training Ready':'✗ Not Training Ready'} — ${d.trials_valid} valid trials${d.trials_excluded>0?`, ${d.trials_excluded} excluded`:''}
+    </div>
+
+    ${renamedHtml}
+
+    <div class="card">
+      <div class="ctitle">Check Results <span class="badge">${total.toLocaleString()} total · passed shown as count only</span></div>
+      <div class="bars">
+        <div class="bar-row"><span style="color:var(--green);min-width:65px">✓ Passed</span><div class="bar-track"><div class="bar-fill" style="width:${pPct}%;background:var(--green)"></div></div><span class="bar-n" style="color:var(--green)">${d.passed||0}</span></div>
+        <div class="bar-row"><span style="color:var(--amber);min-width:65px">⚠ Warn</span><div class="bar-track"><div class="bar-fill" style="width:${wPct}%;background:var(--amber)"></div></div><span class="bar-n" style="color:var(--amber)">${d.warnings||0}</span></div>
+        <div class="bar-row"><span style="color:var(--red);min-width:65px">✗ Failed</span><div class="bar-track"><div class="bar-fill" style="width:${fPct}%;background:var(--red)"></div></div><span class="bar-n" style="color:var(--red)">${d.failed||0}</span></div>
+      </div>
+    </div>
+
+    ${catHtml?`<div class="card"><div class="ctitle">Categories with Issues</div><div class="cat-grid">${catHtml}</div></div>`:''}
+
+    <div class="card">
+      <div class="ctitle">Issues Only <span class="badge">${issues.length} shown · ${d.passed||0} passed hidden</span></div>
+      ${issueHtml}
+    </div>
+
+    <div class="card">
+      <div class="ctitle">Excluded Trials <span class="badge">${(d.exclusions||[]).length} unique</span></div>
+      ${exclHtml}
+    </div>
+
+    <div id="aiSection">
+      <div class="ai-card">
+        <div class="ai-title"><span class="ai-pulse"></span> AI Second-Pass — Running... <span class="badge">claude-3.5-haiku</span></div>
+        <div style="font-size:11px;color:var(--dim)">Physics validation complete. AI is analyzing distributions and reasoning about domain-specific anomalies. Results appear here automatically.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ctitle">Statistics — Valid Trials Only</div>
+      <div class="stats-grid">${statsHtml||'<div style="color:var(--dim)">No statistics</div>'}</div>
+    </div>`;
+
+  log(d.status==='passed'?'ok':d.status==='warning'?'warn':'err',
+    `Physics ${d.job_id}`,
+    `${d.status} · ${d.all_checks} checks · ${(d.warnings||0)+(d.failed||0)} issues · ${d.trials_valid}/${d.trials_submitted} valid · ${d.processing_ms}ms`);}
+
+function renderAI(ai){
+  const sec=document.getElementById('aiSection');
+  if(!sec) return;
+
+  if(ai.error){
+    sec.innerHTML=`<div class="ai-card">
+      <div class="ai-title">🤖 AI Layer — ${ai.timed_out?'Timed Out':'Error'}</div>
+      <div style="font-size:11px;color:var(--dim)">${ai.error}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:6px">Physics validation above is complete and standalone.</div>
+    </div>`; return;}
+
+  const scoreColor=ai.anomaly_score<0.2?'var(--green)':ai.anomaly_score<0.5?'var(--amber)':'var(--red)';
+  const scorePct=(ai.anomaly_score*100).toFixed(0);
+  const sevC={critical:'var(--red)',warning:'var(--amber)',info:'var(--teal)'};
+  const sevI={critical:'✗',warning:'⚠',info:'ℹ'};
+  const sevCls={critical:'af-crit',warning:'af-warn',info:'af-info'};
+
+  const findHtml=(ai.findings||[]).length===0
+    ?`<div style="color:var(--green);font-size:12px;padding:6px">✓ AI found no additional issues beyond the physics engine</div>`
+    :(ai.findings||[]).map(f=>{
+      const col=sevC[f.severity]||'var(--muted)'; const ico=sevI[f.severity]||'·';
+      const tb=f.trials&&f.trials.length>0?`<span class="badge">Trials: ${f.trials.slice(0,5).join(', ')}${f.trials.length>5?'…':''}</span>`:'';
+      const cb=`<span class="badge">${(f.confidence*100).toFixed(0)}% conf</span>`;
+      return `<div class="ai-finding ${sevCls[f.severity]||'af-warn'}">
+        <div class="af-header">
+          <span style="color:${col};font-size:13px">${ico}</span>
+          <strong style="color:${col};font-size:12px">${f.title}</strong>
+          <span class="badge">${f.category}</span>${tb}${cb}
+        </div>
+        <div class="af-detail">${f.detail}</div>
+      </div>`;}).join('');
+
+  const recHtml=(ai.recommendations||[]).map(r=>`<div style="padding:4px 0;font-size:11px;color:var(--muted);display:flex;gap:8px"><span style="color:var(--blue)">→</span>${r}</div>`).join('');
+
+  sec.innerHTML=`<div class="ai-card">
+    <div class="ai-title">🤖 AI Second-Pass Validation <span class="badge">${ai.model}</span><span class="badge">${ai.processing_ms}ms</span></div>
+    <div class="ai-score-bar">
+      <div style="flex:1">
+        <div style="font-size:10px;color:var(--dim);margin-bottom:4px">AI Anomaly Score (0=clean · 1=invalid)</div>
+        <div style="height:8px;background:var(--bg);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${scorePct}%;background:${scoreColor};border-radius:4px;transition:width .5s"></div>
+        </div>
+      </div>
+      <div style="font-family:var(--mono);font-size:22px;font-weight:700;color:${scoreColor}">${scorePct}%</div>
+    </div>
+    ${ai.dataset_summary?`<div class="ai-summary">${ai.dataset_summary}</div>`:''}
+    <div class="ctitle" style="margin-bottom:8px">AI Findings <span class="badge">${(ai.findings||[]).length}</span></div>
+    ${findHtml}
+    ${(ai.recommendations||[]).length>0?`<div class="ctitle" style="margin-top:10px;margin-bottom:6px">Recommendations</div>${recHtml}`:''}
+  </div>`;}
+
+function log(type,id,msg){
+  const el=document.getElementById('logEl');
+  const now=new Date().toISOString().substr(11,12);
+  const div=document.createElement('div'); div.className='ll';
+  const cls={ok:'lok',warn:'lwarn',err:'lerr',info:'linfo'}[type]||'lok';
+  div.innerHTML=`<span class="lts">${now}</span><span style="color:var(--dim);min-width:90px">${id}</span><span class="${cls}">${msg}</span>`;
+  el.prepend(div);
+  while(el.children.length>5) el.removeChild(el.lastChild);}
+</script>
+</body>
+</html>

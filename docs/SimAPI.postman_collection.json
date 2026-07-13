@@ -1,0 +1,221 @@
+{
+  "info": {
+    "name": "SimAPI",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "api_key",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/health",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "health"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Prometheus Metrics",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/metrics",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "metrics"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Validate",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/validate",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "validate"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Validate Upload",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/validate/upload",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "validate",
+            "upload"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Validate Physics Only",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/validate/physics-only",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "validate",
+            "physics-only"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Job",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/job/{job_id}",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "job",
+            "{job_id}"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Get Job Ai",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/job/{job_id}/ai",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "job",
+            "{job_id}",
+            "ai"
+          ]
+        }
+      }
+    },
+    {
+      "name": "List Jobs",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/jobs",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "jobs"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Demo",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "X-API-Key",
+            "value": "{{api_key}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/demo",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "v1",
+            "demo"
+          ]
+        }
+      }
+    }
+  ]
+}

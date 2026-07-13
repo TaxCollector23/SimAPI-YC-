@@ -1,0 +1,17 @@
+# Local, one-command run:  docker compose up --build
+services:
+  api:
+    build: .
+    image: simapi:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      SIMAPI_ENV: development
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
