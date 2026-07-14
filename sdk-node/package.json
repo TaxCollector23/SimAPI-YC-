@@ -1,6 +1,6 @@
 {
   "name": "simapi",
-  "version": "3.1.0",
+  "version": "1.0.0",
   "description": "Node.js SDK and CLI for SimAPI — validate simulation results against physical laws.",
   "type": "module",
   "main": "./dist/index.js",
@@ -10,8 +10,7 @@
   },
   "files": ["dist", "bin", "README.md"],
   "scripts": {
-    "build": "tsc",
-    "prepublishOnly": "npm run build"
+    "build": "tsc"
   },
   "engines": {
     "node": ">=18"
