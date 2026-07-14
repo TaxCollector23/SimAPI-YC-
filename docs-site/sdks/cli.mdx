@@ -1,77 +1,101 @@
 ---
 title: "CLI"
-description: "Validate simulations from the terminal and CI."
+description: "Validate simulations from the terminal."
 icon: "terminal"
 ---
 
-The `simapi` CLI ships with the Node package and validates simulation files from
-the terminal or a CI pipeline. Requires Node 18+.
+The `simapi` CLI validates simulation files from the terminal or CI, with a
+browser-based login flow.
 
 ## Install
 
-```bash
+<CodeGroup>
+
+```bash curl (macOS/Linux)
+curl -fsSL https://sim-api.vercel.app/install.sh | sh
+```
+
+```powershell PowerShell (Windows)
+irm https://sim-api.vercel.app/install.ps1 | iex
+```
+
+```bash Homebrew
+brew install TaxCollector23/tap/simapi
+```
+
+```bash npm
 npm install -g simapi
 ```
 
-## Authenticate
-
-```bash
-simapi login        # prompts for your key, saves to ~/.simapi/config.json
+```bash pip
+pip install simapi
 ```
 
-`SIMAPI_API_KEY` overrides the saved key — convenient in CI.
+</CodeGroup>
+
+## Log in
+
+```bash
+simapi login
+```
+
+Opens `https://sim-api.vercel.app/auth?cli=true`, you sign in with Google or email,
+copy your API key, and paste it back in the terminal. The key is verified and saved
+to `~/.simapi/config.json`. `SIMAPI_API_KEY` overrides it in CI.
 
 ## Commands
 
 <CodeGroup>
 
 ```bash Validate
-simapi init                       # write a sample simulation.json
-simapi validate simulation.json
-simapi validate run.json --type structural
+simapi init                      # write a sample simapi.json
+simapi validate simulation.json  # score, status, warnings, violations, time
+simapi validate run.json --type structural --json
+simapi watch simulation.json     # re-validate on every change
 ```
 
-```bash JSON output
-simapi validate run.json --json | jq .status
-```
-
-```bash CI gate (exit code)
-simapi validate run.json --fail-on warning
-# exit 0 = passed · exit 1 = warning/failed
-```
-
-```bash Session
-simapi whoami
+```bash Account
+simapi whoami                    # account, plan, masked key
+simapi usage                     # requests today/month, quota, avg time
 simapi logout
+```
+
+```bash API keys
+simapi api-key show
+simapi api-key rotate            # new key, invalidates the old one
+simapi api-key delete
+```
+
+```bash Config
+simapi config                    # show current configuration
+simapi config set fail_on warning
 simapi version
 simapi help
+simapi <command> --help
 ```
 
 </CodeGroup>
 
-## Output
+## Report output
 
 ```text
-  Status:     PASSED
-  Confidence: high
-  Trials:     196/200 valid
-  Checks:     287 (0 failed, 4 warnings)
-  Time:       23.4ms
+  Validation report  simulation.json
+  ──────────────────────────────────────────────
+  Validation score       35
+  Status                 FAILED
+  Warnings               0
+  Constraint violations  1
+  Physics violations     0
+  Execution time         5.1ms
 ```
 
 ## Options
 
 <ParamField path="--type <domain>" type="string" default="aerodynamics">Simulation domain.</ParamField>
 <ParamField path="--json" type="flag">Print the raw JSON response.</ParamField>
-<ParamField path="--no-ai" type="flag">Skip the async AI layer.</ParamField>
-<ParamField path="--fail-on <level>" type="string">Exit non-zero on `warning` or `failed`.</ParamField>
+<ParamField path="--fail-on <level>" type="string">Exit non-zero on `warning` or `failed` (for CI).</ParamField>
 
 ## Environment
 
 <ParamField path="SIMAPI_API_KEY" type="string">Overrides the saved key.</ParamField>
 <ParamField path="SIMAPI_BASE_URL" type="string" default="https://sim-api.vercel.app/api">API base URL.</ParamField>
-
-<Tip>
-  Use `--fail-on` to turn a validation verdict into a CI exit code — the
-  foundation for [gating your pipeline](/cicd/github-actions).
-</Tip>

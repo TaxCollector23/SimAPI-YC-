@@ -7,9 +7,11 @@ import { SectionHeader } from "./ui/section";
 import { cn } from "@/lib/utils";
 
 const install: Record<string, string> = {
-  Python: "pip install simapi",
-  "Node / CLI": "npm install -g simapi",
-  Homebrew: "brew install simapi   # coming soon",
+  curl: "curl -fsSL https://sim-api.vercel.app/install.sh | sh",
+  PowerShell: "irm https://sim-api.vercel.app/install.ps1 | iex",
+  Homebrew: "brew install TaxCollector23/tap/simapi",
+  npm: "npm install -g simapi",
+  pip: "pip install simapi",
 };
 
 const snippets: Record<string, string> = {

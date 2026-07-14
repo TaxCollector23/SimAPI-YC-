@@ -1,21 +1,23 @@
 import { NextResponse } from "next/server";
-import { validate, type SimulationType, type CheckResult } from "@/lib/validation-engine";
-import { aiReview } from "@/lib/ai-review";
+import type { SimulationType } from "@/lib/validation-engine";
+import { richValidate } from "@/lib/rich-validate";
+import { aiReview, type AiReview } from "@/lib/ai-review";
 
 /**
  * POST /api/v1/validate
  *
- * A free, public validation endpoint that runs the deterministic engine on the
- * server (same code the browser uses). Accepts the standard SimAPI request shape
- * so the Python/Node SDKs and CLI work against it directly — no separate backend
- * to host, no redirect.
+ * Free public validation endpoint. Runs the deterministic engine on the server
+ * (same code the browser uses) and returns the full report shape the dashboard
+ * and SDKs consume, plus an optional AI second pass (OPENROUTER_API_KEY).
  */
 export const runtime = "nodejs";
+export const maxDuration = 30;
 
 interface ValidateBody {
   data?: Record<string, unknown>[];
   simulation_type?: SimulationType;
   conditions?: Record<string, number>;
+  run_ai?: boolean;
   job_id?: string;
 }
 
@@ -23,9 +25,39 @@ function errorBody(code: string, message: string, requestId: string) {
   return { error: { code, message, request_id: requestId } };
 }
 
+/** Map the compact AI review into the dashboard's richer AIResult shape. */
+function mapAi(review: AiReview): Record<string, unknown> | null {
+  if (!review.enabled) return null;
+  if (review.error) {
+    return { status: "error", model: review.model ?? "", processing_ms: 0, anomaly_score: 0, dataset_summary: "", physics_agreement: "", physics_gaps: "", findings: [], recommendations: [], timed_out: false, error: review.error };
+  }
+  const anomaly = review.status === "agree" ? 0.12 : review.status === "concern" ? 0.42 : 0.78;
+  const concerns = review.concerns ?? [];
+  return {
+    status: "completed",
+    model: review.model ?? "",
+    processing_ms: 0,
+    anomaly_score: anomaly,
+    dataset_summary: review.assessment ?? "",
+    physics_agreement: review.status === "agree" ? "Confirms the deterministic findings — no additional physical inconsistencies detected." : "",
+    physics_gaps: review.status !== "agree" ? concerns.join(" ") : "",
+    findings: concerns.map((cc) => ({
+      severity: review.status === "disagree" ? "critical" : "warning",
+      category: "ai_review",
+      title: "AI-identified concern",
+      detail: cc,
+      trials: [],
+      confidence: 0.7,
+      source: "physics_missed",
+    })),
+    recommendations: concerns,
+    timed_out: false,
+    error: null,
+  };
+}
+
 export async function POST(req: Request) {
   const requestId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
-  const t0 = performance.now();
 
   let body: ValidateBody;
   try {
@@ -43,66 +75,31 @@ export async function POST(req: Request) {
     return NextResponse.json(errorBody("payload_too_large", "Maximum 10,000 trials per request.", requestId), { status: 413 });
   }
 
-  // Validate each trial and aggregate.
-  let allChecks = 0, passed = 0, warnings = 0, failed = 0, excluded = 0;
-  const issueMap = new Map<string, CheckResult>();
-  const exclusions: { trial_index: number; reason: string }[] = [];
+  const result = richValidate(rows, simType, requestId.slice(0, 8));
 
-  rows.forEach((trial, i) => {
-    const r = validate(trial, simType);
-    allChecks += r.checksRun;
-    passed += r.passed;
-    warnings += r.warnings;
-    failed += r.failed;
-    for (const c of r.checks) if (c.status !== "passed" && !issueMap.has(c.name)) issueMap.set(c.name, c);
-    if (r.failed > 0) {
-      excluded++;
-      exclusions.push({ trial_index: i, reason: r.violations[0]?.reason ?? "Failed physics checks" });
-    }
-  });
+  const review =
+    body.run_ai === false
+      ? ({ enabled: false } as AiReview)
+      : await aiReview(
+          {
+            status: result.status,
+            score: result.status === "passed" ? 100 : result.status === "warning" ? 70 : 35,
+            violations: result.issues.filter((i) => i.status === "failed").map((i) => ({ field: i.name, value: "", reason: i.detail, severity: "critical" as const })),
+            recommendations: [],
+            simulationType: simType,
+            checks: [],
+          },
+          body.conditions ?? {},
+        );
 
-  const trialsValid = rows.length - excluded;
-  const status = failed > 0 ? "failed" : warnings > 0 ? "warning" : "passed";
-  const issueChecks = [...issueMap.values()];
-  const issues = issueChecks.map((c) => ({
-    name: c.name, status: c.status, detail: c.detail, category: c.category,
-  }));
-
-  // Optional AI second-pass (runs only when OPENROUTER_API_KEY is configured).
-  const ai = await aiReview(
+  return NextResponse.json(
     {
-      status,
-      score: status === "passed" ? 100 : status === "warning" ? 70 : 35,
-      violations: issueChecks.filter((c) => c.status === "failed").map((c) => ({ field: c.name, value: "", reason: c.detail, severity: "critical" as const })),
-      recommendations: [],
-      simulationType: simType,
-      checks: issueChecks,
+      ...result,
+      ai: mapAi(review),
+      ai_status: review.enabled ? (review.error ? "error" : "completed") : "disabled",
+      ai_running: false,
+      request_id: requestId,
     },
-    body.conditions ?? {},
+    { headers: { "X-Request-ID": requestId } },
   );
-
-  const response = {
-    job_id: body.job_id ?? requestId.slice(0, 8),
-    status,
-    confidence: status === "passed" ? "high" : status === "warning" ? "medium" : "low",
-    trials_submitted: rows.length,
-    trials_valid: trialsValid,
-    trials_excluded: excluded,
-    exclusion_rate: rows.length ? excluded / rows.length : 0,
-    training_ready: status !== "failed" && trialsValid >= 1,
-    all_checks: allChecks,
-    passed,
-    warnings,
-    failed,
-    issues,
-    exclusions,
-    statistics: {},
-    columns_renamed: {},
-    processing_ms: Math.round((performance.now() - t0) * 100) / 100,
-    ai_status: ai.enabled ? (ai.error ? "error" : "done") : "disabled",
-    ai: ai.enabled ? ai : null,
-    request_id: requestId,
-  };
-
-  return NextResponse.json(response, { headers: { "X-Request-ID": requestId } });
 }

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simapi"
+version = "1.0.0"
+description = "Validate simulation results before they reach production — Python SDK + CLI."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "SimAPI" }]
+keywords = ["simulation", "validation", "cfd", "fea", "physics"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://sim-api.vercel.app"
+Source = "https://github.com/TaxCollector23/SimAPI-YC-"
+
+[project.scripts]
+simapi = "simapi.cli:main"
+
+[tool.setuptools]
+packages = ["simapi"]

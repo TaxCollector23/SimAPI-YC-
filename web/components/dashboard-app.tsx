@@ -8,11 +8,11 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
-  listKeys, createKey, revokeKey, usageStats, listRuns, recordRun,
+  listKeys, createKey, revokeKey, usageStats, listRuns,
   type ApiKeyRecord, type UsageStats, type ValidationRecord,
 } from "@/lib/dashboard-store";
 import { AuthScreen } from "./auth-screen";
-import { SimulationBuilder } from "./simulation-builder";
+import { ValidationDashboard } from "./validation-dashboard";
 import { cn } from "@/lib/utils";
 import { site } from "@/lib/site";
 
@@ -357,18 +357,7 @@ function Usage() {
 
 // ── Run Simulation ────────────────────────────────────────────────────────────
 function RunSimulation() {
-  const { user } = useAuth();
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-white">Run a validation</h1>
-        <p className="mt-1 text-sm text-white/50">
-          Define simulation conditions and validate them against physical laws — in the browser.
-        </p>
-      </div>
-      <SimulationBuilder onComplete={(report) => user && recordRun(user.uid, report)} />
-    </div>
-  );
+  return <ValidationDashboard />;
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
