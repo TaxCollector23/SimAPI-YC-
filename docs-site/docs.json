@@ -97,7 +97,7 @@
         "groups": [
           {
             "group": "Libraries",
-            "pages": ["sdks/python", "sdks/node", "sdks/cli"]
+            "pages": ["sdks/node", "sdks/cli"]
           }
         ]
       }

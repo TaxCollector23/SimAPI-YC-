@@ -21,7 +21,6 @@ const ART = [
   "███████║██║██║ ╚═╝ ██║██║  ██║██║     ██║",
   "╚══════╝╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝",
 ];
-const GRAD = ["#22d3ee", "#2abef0", "#32aaf3", "#3796f5", "#3a87f6", "#3b82f6"];
 
 export function CodeSection() {
   const installTabs = Object.keys(install);
@@ -81,12 +80,11 @@ export function CodeSection() {
               <span className="ml-2 font-mono text-xs text-white/40">simapi</span>
             </div>
             <div className="overflow-x-auto bg-black/40 p-5">
-              <pre className="font-mono text-[11px] leading-[1.15] sm:text-[13px]">
-                {ART.map((line, i) => (
-                  <div key={i} style={{ color: GRAD[i] }}>
-                    {line}
-                  </div>
-                ))}
+              <pre
+                className="w-max whitespace-pre bg-gradient-to-b from-accent-cyan to-accent-blue bg-clip-text font-mono text-[10px] leading-none text-transparent sm:text-[13px]"
+                aria-label="SimAPI"
+              >
+                {ART.join("\n")}
               </pre>
               <pre className="mt-3 font-mono text-[12px] leading-relaxed sm:text-[13px]">
                 <span className="text-white/90">        SimAPI CLI v1.0.0</span>
