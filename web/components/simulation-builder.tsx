@@ -17,6 +17,15 @@ import {
 import { JsonView } from "./ui/json-view";
 import { cn } from "@/lib/utils";
 
+interface AiReview {
+  enabled: boolean;
+  status?: "agree" | "concern" | "disagree";
+  assessment?: string;
+  concerns?: string[];
+  model?: string;
+  error?: string;
+}
+
 type VarType = "number" | "boolean" | "string" | "vector" | "array";
 
 interface Variable {
@@ -86,11 +95,13 @@ export function SimulationBuilder({
   const [vars, setVars] = useState<Variable[]>(PRESETS.aerodynamics);
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [running, setRunning] = useState(false);
+  const [ai, setAi] = useState<{ loading: boolean; review: AiReview | null }>({ loading: false, review: null });
 
   function changeType(type: SimulationType) {
     setSimType(type);
     setVars(PRESETS[type].map((p) => ({ ...p, id: crypto.randomUUID().slice(0, 6) })));
     setReport(null);
+    setAi({ loading: false, review: null });
   }
   function addVar() {
     setVars((vs) => [...vs, v(`variable_${vs.length + 1}`, "number", "0")]);
@@ -105,6 +116,7 @@ export function SimulationBuilder({
   function run() {
     setRunning(true);
     setReport(null);
+    setAi({ loading: false, review: null });
     setTimeout(() => {
       const values: Record<string, unknown> = {};
       for (const variable of vars) if (variable.name.trim()) values[variable.name.trim()] = coerce(variable);
@@ -112,6 +124,20 @@ export function SimulationBuilder({
       setReport(r);
       setRunning(false);
       onComplete?.(r);
+
+      // Second-pass AI review (server-side; no-op unless OPENROUTER_API_KEY is set).
+      setAi({ loading: true, review: null });
+      fetch("/api/v1/ai-review", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          report: { status: r.status, score: r.score, violations: r.violations, recommendations: r.recommendations, simulationType: r.simulationType, checks: r.checks },
+          conditions: values,
+        }),
+      })
+        .then((res) => res.json())
+        .then((review: AiReview) => setAi({ loading: false, review }))
+        .catch(() => setAi({ loading: false, review: { enabled: false } }));
     }, 400);
   }
 
@@ -226,7 +252,7 @@ export function SimulationBuilder({
           )}
           {report && !running && (
             <motion.div key="report" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <Results report={report} />
+              <Results report={report} ai={ai} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -248,7 +274,7 @@ function StatusPill({ status }: { status: ValidationReport["status"] }) {
   );
 }
 
-function Results({ report }: { report: ValidationReport }) {
+function Results({ report, ai }: { report: ValidationReport; ai: { loading: boolean; review: AiReview | null } }) {
   const [showAll, setShowAll] = useState(false);
   const [copied, setCopied] = useState(false);
   const issues = report.checks.filter((c) => c.status !== "passed");
@@ -292,6 +318,9 @@ function Results({ report }: { report: ValidationReport }) {
           ))}
         </div>
       </div>
+
+      {/* AI second-pass review */}
+      <AiPanel ai={ai} />
 
       {/* Pass / warn / fail bars */}
       <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
@@ -368,6 +397,55 @@ function Results({ report }: { report: ValidationReport }) {
           <JsonView text={responseJson} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function AiPanel({ ai }: { ai: { loading: boolean; review: AiReview | null } }) {
+  if (ai.loading) {
+    return (
+      <div className="flex items-center gap-2.5 rounded-2xl border border-purple-400/20 bg-purple-400/5 p-4 text-xs text-purple-300/80">
+        <Loader2 className="h-4 w-4 animate-spin" /> AI reviewing whether the result is physically and logically correct…
+      </div>
+    );
+  }
+  const r = ai.review;
+  if (!r) return null;
+  if (!r.enabled) {
+    return (
+      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] p-4 text-xs text-white/35">
+        AI review is off. Set <code className="rounded bg-white/[0.06] px-1 font-mono text-white/60">OPENROUTER_API_KEY</code> to have an LLM double-check each result.
+      </div>
+    );
+  }
+  if (r.error) {
+    return (
+      <div className="rounded-2xl border border-amber-400/15 bg-amber-400/5 p-4 text-xs text-amber-300/70">
+        AI review unavailable ({r.error}). The deterministic result above stands on its own.
+      </div>
+    );
+  }
+  const tone =
+    r.status === "agree" ? { cls: "border-pass/25 bg-pass/5", dot: "bg-pass", label: "AI agrees" } :
+    r.status === "disagree" ? { cls: "border-red-400/25 bg-red-400/5", dot: "bg-red-400", label: "AI disagrees" } :
+    { cls: "border-amber-400/20 bg-amber-400/5", dot: "bg-amber-400", label: "AI has concerns" };
+  return (
+    <div className={cn("rounded-2xl border p-5", tone.cls)}>
+      <div className="mb-2 flex items-center gap-2">
+        <span className={cn("h-2 w-2 rounded-full", tone.dot)} />
+        <p className="text-sm font-medium text-white">{tone.label}</p>
+        {r.model && <span className="ml-auto font-mono text-[10px] text-white/25">{r.model.split("/").pop()}</span>}
+      </div>
+      {r.assessment && <p className="text-sm leading-relaxed text-white/60">{r.assessment}</p>}
+      {r.concerns && r.concerns.length > 0 && (
+        <ul className="mt-3 space-y-1.5">
+          {r.concerns.map((c, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs text-white/50">
+              <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-white/30" />{c}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

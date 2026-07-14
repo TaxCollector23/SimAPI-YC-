@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { validate, type SimulationType, type CheckResult } from "@/lib/validation-engine";
+import { aiReview } from "@/lib/ai-review";
 
 /**
  * POST /api/v1/validate
@@ -62,9 +63,23 @@ export async function POST(req: Request) {
 
   const trialsValid = rows.length - excluded;
   const status = failed > 0 ? "failed" : warnings > 0 ? "warning" : "passed";
-  const issues = [...issueMap.values()].map((c) => ({
+  const issueChecks = [...issueMap.values()];
+  const issues = issueChecks.map((c) => ({
     name: c.name, status: c.status, detail: c.detail, category: c.category,
   }));
+
+  // Optional AI second-pass (runs only when OPENROUTER_API_KEY is configured).
+  const ai = await aiReview(
+    {
+      status,
+      score: status === "passed" ? 100 : status === "warning" ? 70 : 35,
+      violations: issueChecks.filter((c) => c.status === "failed").map((c) => ({ field: c.name, value: "", reason: c.detail, severity: "critical" as const })),
+      recommendations: [],
+      simulationType: simType,
+      checks: issueChecks,
+    },
+    body.conditions ?? {},
+  );
 
   const response = {
     job_id: body.job_id ?? requestId.slice(0, 8),
@@ -84,7 +99,8 @@ export async function POST(req: Request) {
     statistics: {},
     columns_renamed: {},
     processing_ms: Math.round((performance.now() - t0) * 100) / 100,
-    ai_status: "disabled",
+    ai_status: ai.enabled ? (ai.error ? "error" : "done") : "disabled",
+    ai: ai.enabled ? ai : null,
     request_id: requestId,
   };
 

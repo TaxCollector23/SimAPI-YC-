@@ -1,6 +1,5 @@
 import { Hero } from "@/components/hero";
 import { CodeSection } from "@/components/code-section";
-import { Features } from "@/components/features";
 import { Cta } from "@/components/cta";
 
 export default function HomePage() {
@@ -8,7 +7,6 @@ export default function HomePage() {
     <>
       <Hero />
       <CodeSection />
-      <Features />
       <Cta />
     </>
   );
