@@ -10,7 +10,6 @@ const install: Record<string, string> = {
   PowerShell: "irm https://sim-api.vercel.app/install.ps1 | iex",
   Homebrew: "brew install TaxCollector23/tap/simapi",
   npm: "npm install -g simapi",
-  pip: "pip install simapi",
 };
 
 // SIMAPI banner — same art and cyan→blue gradient the CLI prints.
