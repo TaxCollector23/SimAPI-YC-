@@ -4,37 +4,47 @@ description: "Validate simulations from the terminal and CI."
 icon: "terminal"
 ---
 
-The SimAPI CLI wraps the API for quick local checks and CI gates.
+The `simapi` CLI ships with the Node package and validates simulation files from
+the terminal or a CI pipeline. Requires Node 18+.
 
 ## Install
 
 ```bash
-pip install simapi           # installs the `simapi` command
+npm install -g simapi
 ```
 
 ## Authenticate
 
 ```bash
-export SIMAPI_API_KEY="sk_live_..."
+simapi login        # prompts for your key, saves to ~/.simapi/config.json
 ```
+
+`SIMAPI_API_KEY` overrides the saved key — convenient in CI.
 
 ## Commands
 
 <CodeGroup>
 
-```bash Validate a file
-simapi validate cfd_output.csv \
-  --type aerodynamics \
-  --conditions '{"velocity": 15.0}'
+```bash Validate
+simapi init                       # write a sample simulation.json
+simapi validate simulation.json
+simapi validate run.json --type structural
 ```
 
-```bash Physics only
-simapi validate run.json --type structural --no-ai
+```bash JSON output
+simapi validate run.json --json | jq .status
 ```
 
-```bash Exit-code gate (for CI)
-simapi validate run.csv --type aerodynamics --fail-on warning
-# exit 0 = passed, 1 = warning/failed
+```bash CI gate (exit code)
+simapi validate run.json --fail-on warning
+# exit 0 = passed · exit 1 = warning/failed
+```
+
+```bash Session
+simapi whoami
+simapi logout
+simapi version
+simapi help
 ```
 
 </CodeGroup>
@@ -42,22 +52,24 @@ simapi validate run.csv --type aerodynamics --fail-on warning
 ## Output
 
 ```text
-SimAPI Validation Report
-────────────────────────────────────────
-Status:          PASSED
-Confidence:      HIGH
-Trials:          196/200 valid (2.0% excluded)
-Training ready:  YES
-Processing time: 23.4ms
-
-Physics Checks (287): 287 passed
+  Status:     PASSED
+  Confidence: high
+  Trials:     196/200 valid
+  Checks:     287 (0 failed, 4 warnings)
+  Time:       23.4ms
 ```
 
-## JSON output
+## Options
 
-```bash
-simapi validate run.csv --type aerodynamics --json | jq .status
-```
+<ParamField path="--type <domain>" type="string" default="aerodynamics">Simulation domain.</ParamField>
+<ParamField path="--json" type="flag">Print the raw JSON response.</ParamField>
+<ParamField path="--no-ai" type="flag">Skip the async AI layer.</ParamField>
+<ParamField path="--fail-on <level>" type="string">Exit non-zero on `warning` or `failed`.</ParamField>
+
+## Environment
+
+<ParamField path="SIMAPI_API_KEY" type="string">Overrides the saved key.</ParamField>
+<ParamField path="SIMAPI_BASE_URL" type="string" default="https://api.simapi.dev">API base URL.</ParamField>
 
 <Tip>
   Use `--fail-on` to turn a validation verdict into a CI exit code — the

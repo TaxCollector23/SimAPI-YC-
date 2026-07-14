@@ -6,19 +6,18 @@ const columns = [
   {
     title: "Product",
     links: [
-      { label: "Overview", href: "/product" },
-      { label: "Pricing", href: "/pricing" },
-      { label: "Live Demo", href: "/#demo" },
-      { label: "API Playground", href: "/#playground" },
-      { label: "Status", href: "/status" },
+      { label: "Home", href: "/" },
+      { label: "Dashboard", href: "/dashboard" },
+      { label: "Run a validation", href: "/dashboard" },
+      { label: "Live demo", href: "/#demo" },
     ],
   },
   {
     title: "Developers",
     links: [
       { label: "Documentation", href: "/docs" },
-      { label: "API Reference", href: "/docs" },
-      { label: "SDKs", href: "/docs" },
+      { label: "API reference", href: "/docs" },
+      { label: "SDKs & CLI", href: "/docs" },
       { label: "GitHub", href: site.github },
       { label: "Changelog", href: `${site.github}/blob/main/CHANGELOG.md` },
     ],
@@ -27,8 +26,7 @@ const columns = [
     title: "Company",
     links: [
       { label: "About", href: "/about" },
-      { label: "Blog", href: "/blog" },
-      { label: "Contact", href: "/contact" },
+      { label: "Security", href: `${site.github}/blob/main/SECURITY.md` },
     ],
   },
   {
@@ -36,7 +34,6 @@ const columns = [
     links: [
       { label: "Privacy", href: "/privacy" },
       { label: "Terms", href: "/terms" },
-      { label: "Security", href: `${site.github}/blob/main/SECURITY.md` },
     ],
   },
 ];

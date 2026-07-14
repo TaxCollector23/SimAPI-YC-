@@ -5,13 +5,11 @@ export const site = {
   tagline: "The CI/CD layer for engineering simulations.",
   description:
     "Automatically validate CFD, FEA, robotics, and multiphysics simulations with deterministic physics rules, statistical analysis, and AI reasoning — before they reach production, design review, or ML pipelines.",
-  github: "https://github.com/TaxCollector23/SimAPI-",
+  github: "https://github.com/TaxCollector23/SimAPI-YC-",
   nav: [
-    { label: "Product", href: "/product" },
-    { label: "Pricing", href: "/pricing" },
-    { label: "Docs", href: "/docs" },
-    { label: "Blog", href: "/blog" },
+    { label: "Home", href: "/" },
     { label: "About", href: "/about" },
-    { label: "Status", href: "/status" },
+    { label: "Docs", href: "/docs" },
+    { label: "Dashboard", href: "/dashboard" },
   ],
 } as const;

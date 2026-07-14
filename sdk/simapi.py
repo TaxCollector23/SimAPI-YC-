@@ -277,6 +277,73 @@ def get_job(job_id: str) -> ValidationResult:
     return ValidationResult(response.json())
 
 
+# ── Client class ────────────────────────────────────────────────────────────────
+
+class SimAPI:
+    """
+    Object-oriented client, equivalent to the module-level functions but with a
+    bound API key and base URL. Mirrors the Node SDK.
+
+    Example:
+        from simapi import SimAPI
+        client = SimAPI(api_key="sk_live_...")
+        result = client.validate("simulation.json", simulation_type="aerodynamics")
+        print(result.status)
+    """
+
+    def __init__(self, api_key: str | None = None, base_url: str | None = None):
+        self.api_key = api_key or API_KEY
+        self.base_url = (base_url or API_BASE).rstrip("/")
+
+    def validate(
+        self,
+        data: str | list | pd.DataFrame | np.ndarray,
+        simulation_type: str = "aerodynamics",
+        conditions: dict | None = None,
+        job_id: str | None = None,
+    ) -> ValidationResult:
+        """Validate simulation data. Accepts a file path, list, DataFrame, or array."""
+        records = _load_data(data)
+        payload = {
+            "data": records,
+            "simulation_type": simulation_type,
+            "conditions": conditions or {},
+        }
+        if job_id:
+            payload["job_id"] = job_id
+        response = requests.post(
+            f"{self.base_url}/v1/validate",
+            json=payload,
+            headers=_auth_headers(self.api_key),
+            timeout=60,
+        )
+        if response.status_code != 200:
+            raise RuntimeError(_format_error(response))
+        return ValidationResult(response.json())
+
+    def demo(self) -> ValidationResult:
+        """Validate seeded synthetic data."""
+        response = requests.post(
+            f"{self.base_url}/v1/demo", headers=_auth_headers(self.api_key), timeout=60
+        )
+        if response.status_code != 200:
+            raise RuntimeError(_format_error(response))
+        return ValidationResult(response.json())
+
+    def get_job(self, job_id: str) -> ValidationResult:
+        """Retrieve a previous job result by id."""
+        response = requests.get(
+            f"{self.base_url}/v1/job/{job_id}", headers=_auth_headers(self.api_key), timeout=10
+        )
+        if response.status_code == 404:
+            raise ValueError(f"Job {job_id} not found")
+        return ValidationResult(response.json())
+
+    def health(self) -> dict:
+        """Server health and facts."""
+        return requests.get(f"{self.base_url}/v1/health", timeout=10).json()
+
+
 # ── Error helper ───────────────────────────────────────────────────────────────
 
 def _format_error(response) -> str:

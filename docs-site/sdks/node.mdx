@@ -1,0 +1,86 @@
+---
+title: "Node.js SDK"
+description: "Validate simulations from Node.js and TypeScript."
+icon: "node-js"
+---
+
+A typed wrapper over the REST API that mirrors the Python SDK. Requires Node 18+.
+
+## Install
+
+```bash
+npm install simapi
+```
+
+## Configure
+
+```bash
+export SIMAPI_BASE_URL="https://api.simapi.dev"
+export SIMAPI_API_KEY="sk_live_..."
+```
+
+## Validate
+
+<CodeGroup>
+
+```ts TypeScript
+import { SimAPI, type ValidationResult } from "simapi";
+
+const client = new SimAPI(process.env.SIMAPI_API_KEY!);
+
+const result: ValidationResult = await client.validate(rows, {
+  simulationType: "aerodynamics",
+  conditions: { velocity: 15.0, altitude: 120.0 },
+});
+
+if (result.status === "failed") throw new Error("Simulation rejected");
+console.log(result.trials_valid, "/", result.trials_submitted, "valid");
+```
+
+```js JavaScript
+import { SimAPI } from "simapi";
+
+const client = new SimAPI(process.env.SIMAPI_API_KEY);
+const result = await client.validate(rows, { simulationType: "structural" });
+console.log(result.status);
+```
+
+</CodeGroup>
+
+## Validate a file
+
+```ts
+const result = await client.validateFile("simulation.json", {
+  simulationType: "aerodynamics",
+});
+```
+
+## Configuration
+
+<ParamField path="new SimAPI(apiKey)" type="string">
+  Pass the key directly, or omit it to read <code>SIMAPI_API_KEY</code>.
+</ParamField>
+<ParamField path="new SimAPI(config)" type="object">
+  <code>{`{ apiKey, baseUrl, timeoutMs }`}</code> for full control.
+</ParamField>
+
+## Error handling
+
+Non-2xx responses throw `SimAPIError`:
+
+```ts
+import { SimAPI, SimAPIError } from "simapi";
+
+try {
+  await client.validate(rows);
+} catch (e) {
+  if (e instanceof SimAPIError) {
+    console.error(e.code, e.message, e.requestId);
+  }
+}
+```
+
+<Note>
+  The same package ships the [`simapi` CLI](/sdks/cli) — install it globally with
+  `npm install -g simapi`.
+</Note>

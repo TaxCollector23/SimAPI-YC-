@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { ArrowRight, Play, Terminal, KeyRound } from "lucide-react";
+import { ArrowRight, Terminal, KeyRound } from "lucide-react";
 import { HeroBackground } from "./hero-background";
 
 const container = {
@@ -29,7 +29,7 @@ export function Hero() {
           <motion.div variants={item}>
             <span className="eyebrow">
               <span className="h-1.5 w-1.5 rounded-full bg-accent-cyan animate-pulse-soft" />
-              Simulation validation infrastructure
+              Simulation validation API
             </span>
           </motion.div>
 
@@ -37,9 +37,9 @@ export function Hero() {
             variants={item}
             className="mt-7 text-balance text-5xl font-semibold leading-[1.05] tracking-tight text-white sm:text-6xl md:text-7xl"
           >
-            Trust every simulation
+            Validate simulation results
             <br />
-            before it reaches{" "}
+            before they reach{" "}
             <span className="text-gradient">production</span>.
           </motion.h1>
 
@@ -47,20 +47,17 @@ export function Hero() {
             variants={item}
             className="mt-6 max-w-xl text-lg leading-relaxed text-white/55"
           >
-            Automatically validate engineering simulations using deterministic physics
-            rules, statistical analysis, and AI reasoning — in milliseconds, via API.
+            Upload simulation outputs and detect impossible values, failed constraints,
+            and physics violations before your team trusts the data.
           </motion.p>
 
           <motion.div variants={item} className="mt-9 flex flex-wrap items-center justify-center gap-3">
-            <Link href="/contact" className="btn-accent">
+            <Link href="/dashboard" className="btn-accent">
               <KeyRound className="h-4 w-4" /> Get API Key
             </Link>
             <Link href="/docs" className="btn-ghost">
-              <Terminal className="h-4 w-4" /> Read Docs
+              <Terminal className="h-4 w-4" /> View Documentation
             </Link>
-            <a href="#demo" className="btn-ghost">
-              <Play className="h-4 w-4" /> View Live Demo
-            </a>
           </motion.div>
 
           <motion.div variants={item} className="mt-14 w-full">
@@ -68,7 +65,7 @@ export function Hero() {
           </motion.div>
 
           <motion.p variants={item} className="mt-6 text-xs uppercase tracking-[0.2em] text-white/35">
-            287 checks · 21 domains · &lt;30&nbsp;ms physics latency
+            287 checks · 21 domains · deterministic
           </motion.p>
         </motion.div>
       </div>

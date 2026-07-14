@@ -1,0 +1,29 @@
+{
+  "name": "simapi",
+  "version": "3.1.0",
+  "description": "Node.js SDK and CLI for SimAPI — validate simulation results against physical laws.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "simapi": "./bin/simapi.js"
+  },
+  "files": ["dist", "bin", "README.md"],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["simulation", "validation", "cfd", "fea", "physics", "simapi"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TaxCollector23/SimAPI-YC-"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.10.5"
+  }
+}

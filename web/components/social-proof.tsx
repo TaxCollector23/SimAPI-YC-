@@ -13,9 +13,9 @@ export function SocialProof() {
     <section className="relative py-24 sm:py-32">
       <div className="container-tight">
         <SectionHeader
-          eyebrow="Ecosystem"
-          title={<>Built for modern engineering teams</>}
-          lede="Designed for CFD, FEA, robotics, and scientific-computing workflows — and ready for enterprise deployment. It plugs into the tools you already run."
+          eyebrow="Fits your stack"
+          title={<>Works with the tools you already run</>}
+          lede="SimAPI is an HTTP API. Call it from a CI pipeline, a data job, or a notebook — validation slots in between your solver and everything downstream."
         />
 
         {/* Integrations */}
@@ -31,30 +31,6 @@ export function SocialProof() {
             ))}
           </div>
         </Reveal>
-
-        {/* Design partner placeholders — clearly marked */}
-        <div className="mt-14">
-          <p className="mb-4 text-center text-xs uppercase tracking-[0.18em] text-white/35">
-            Design partner program · onboarding now
-          </p>
-          <div className="grid gap-4 sm:grid-cols-3">
-            {[1, 2, 3].map((n) => (
-              <Reveal key={n} delay={n * 0.05}>
-                <div className="flex h-32 flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/12 bg-ink-900/40">
-                  <div className="h-8 w-8 rounded-lg bg-white/[0.05]" />
-                  <span className="text-xs text-white/30">Your team here</span>
-                  <span className="text-[10px] uppercase tracking-wider text-white/20">
-                    Placeholder
-                  </span>
-                </div>
-              </Reveal>
-            ))}
-          </div>
-          <p className="mt-4 text-center text-xs text-white/30">
-            We don&apos;t fake logos or testimonials. These slots fill in as real design
-            partners come on board.
-          </p>
-        </div>
       </div>
     </section>
   );

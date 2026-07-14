@@ -27,8 +27,8 @@ export function Nav() {
     >
       <nav className="container-tight flex h-16 items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5" aria-label="SimAPI home">
-          <Logo className="h-7 w-7" />
-          <span className="text-[15px] font-semibold tracking-tight text-white">SimAPI</span>
+          <Logo className="h-9 w-9" />
+          <span className="text-[17px] font-semibold tracking-tight text-white">SimAPI</span>
         </Link>
 
         <div className="hidden items-center gap-1 md:flex">
@@ -41,13 +41,18 @@ export function Nav() {
               {item.label}
             </Link>
           ))}
+          <a
+            href={site.github}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-full px-3.5 py-1.5 text-sm text-white/60 transition-colors hover:text-white"
+          >
+            GitHub
+          </a>
         </div>
 
         <div className="hidden items-center gap-2 md:flex">
-          <a href={site.github} target="_blank" rel="noreferrer" className="btn-ghost">
-            GitHub <ArrowUpRight className="h-3.5 w-3.5" />
-          </a>
-          <Link href="/contact" className="btn-primary">
+          <Link href="/dashboard" className="btn-primary">
             Get API Key
           </Link>
         </div>
@@ -74,7 +79,15 @@ export function Nav() {
                 {item.label}
               </Link>
             ))}
-            <Link href="/contact" onClick={() => setOpen(false)} className="btn-primary mt-2">
+            <a
+              href={site.github}
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-1 rounded-lg px-3 py-2.5 text-sm text-white/70 hover:bg-white/5 hover:text-white"
+            >
+              GitHub <ArrowUpRight className="h-3.5 w-3.5" />
+            </a>
+            <Link href="/dashboard" onClick={() => setOpen(false)} className="btn-primary mt-2">
               Get API Key
             </Link>
           </div>
