@@ -2,7 +2,7 @@
 title: "Validate"
 description: "Validate a batch of simulation trials."
 icon: "circle-check"
-api: "POST https://api.simapi.dev/v1/validate"
+api: "POST https://sim-api.vercel.app/api/v1/validate"
 ---
 
 Runs the deterministic physics engine synchronously and kicks off the async AI
@@ -49,7 +49,7 @@ layer (unless disabled). Returns a full validation report.
 <RequestExample>
 
 ```bash cURL
-curl -X POST https://api.simapi.dev/v1/validate \
+curl -X POST https://sim-api.vercel.app/api/v1/validate \
   -H "X-API-Key: $SIMAPI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{

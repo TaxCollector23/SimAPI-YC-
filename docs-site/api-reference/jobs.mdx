@@ -18,7 +18,7 @@ Returns the full physics report plus an `ai_running` flag.
 <RequestExample>
 
 ```bash cURL
-curl https://api.simapi.dev/v1/job/3f9ca12b \
+curl https://sim-api.vercel.app/api/v1/job/3f9ca12b \
   -H "X-API-Key: $SIMAPI_API_KEY"
 ```
 
@@ -42,7 +42,7 @@ import time, requests
 def wait_for_ai(job_id, headers, timeout=30):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        r = requests.get(f"https://api.simapi.dev/v1/job/{job_id}/ai", headers=headers).json()
+        r = requests.get(f"https://sim-api.vercel.app/api/v1/job/{job_id}/ai", headers=headers).json()
         if not r["ai_running"] and r["ai_status"] != "pending":
             return r["ai"]
         time.sleep(1)
@@ -50,7 +50,7 @@ def wait_for_ai(job_id, headers, timeout=30):
 ```
 
 ```bash cURL
-curl https://api.simapi.dev/v1/job/3f9ca12b/ai -H "X-API-Key: $SIMAPI_API_KEY"
+curl https://sim-api.vercel.app/api/v1/job/3f9ca12b/ai -H "X-API-Key: $SIMAPI_API_KEY"
 ```
 
 </CodeGroup>

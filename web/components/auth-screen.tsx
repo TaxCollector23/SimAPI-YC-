@@ -43,7 +43,7 @@ export function AuthScreen() {
   return (
     <div className="mx-auto flex min-h-[70vh] max-w-md flex-col justify-center pt-24">
       <div className="mb-8 flex flex-col items-center text-center">
-        <Logo className="h-12 w-12" />
+        <Logo className="h-11" />
         <h1 className="mt-4 text-2xl font-semibold text-white">
           {mode === "signup" ? "Create your account" : "Sign in to SimAPI"}
         </h1>

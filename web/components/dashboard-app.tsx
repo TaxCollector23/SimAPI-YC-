@@ -126,13 +126,21 @@ function Overview({ onNavigate }: { onNavigate: (s: Section) => void }) {
       )}
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-white">Quickstart</h2>
+        <h2 className="text-base font-semibold text-white">Quickstart — Run the simulations in your browser</h2>
+        <p className="mt-1 text-sm text-white/50">
+          No install needed. Configure conditions and validate right here.
+        </p>
+        <button onClick={() => onNavigate("run")} className="btn-accent mt-4">
+          <FlaskConical className="h-4 w-4" /> Run simulation in browser
+        </button>
+
+        <p className="mb-3 mt-8 text-sm text-white/50">or, use the CLI</p>
         <div className="card overflow-hidden">
           <div className="border-b border-white/[0.06] px-4 py-2 font-mono text-xs text-white/40">python</div>
           <pre className="overflow-x-auto p-4 font-mono text-[13px] leading-relaxed text-white/70">
-{`import simapi
+{`from simapi import SimAPI
 
-client = simapi.SimAPI(api_key="sk_live_...")
+client = SimAPI(api_key="sk_live_...")
 result = client.validate("simulation.json", simulation_type="aerodynamics")
 
 print(result.status)          # "passed" | "warning" | "failed"

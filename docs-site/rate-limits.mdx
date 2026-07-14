@@ -42,7 +42,7 @@ import time, requests
 def validate_with_retry(payload, headers, max_attempts=5):
     delay = 0.5
     for attempt in range(max_attempts):
-        r = requests.post("https://api.simapi.dev/v1/validate", json=payload, headers=headers)
+        r = requests.post("https://sim-api.vercel.app/api/v1/validate", json=payload, headers=headers)
         if r.status_code != 429:
             return r
         wait = float(r.headers.get("Retry-After", delay))

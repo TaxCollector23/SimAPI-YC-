@@ -1,0 +1,41 @@
+<svg viewBox="0 0 1200 380" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="380">
+      <stop offset="0" stop-color="#0a0b10"/>
+      <stop offset="1" stop-color="#0d0f15"/>
+    </linearGradient>
+    <linearGradient id="acc" x1="0" y1="0" x2="1200" y2="0">
+      <stop offset="0" stop-color="#22d3ee"/>
+      <stop offset="0.5" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0" r="0.8">
+      <stop offset="0" stop-color="#3b82f6" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#3b82f6" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="380" rx="16" fill="url(#bg)"/>
+  <rect width="1200" height="380" rx="16" fill="url(#glow)"/>
+  <g stroke="#ffffff" stroke-opacity="0.06">
+    <path d="M0 95h1200M0 190h1200M0 285h1200"/>
+    <path d="M150 0v380M400 0v380M650 0v380M900 0v380M1150 0v380"/>
+  </g>
+  <!-- validation pipeline -->
+  <g>
+    <line x1="150" y1="190" x2="400" y2="120" stroke="url(#acc)" stroke-opacity="0.5"/>
+    <line x1="400" y1="120" x2="650" y2="230" stroke="url(#acc)" stroke-opacity="0.5"/>
+    <line x1="650" y1="230" x2="900" y2="150" stroke="url(#acc)" stroke-opacity="0.5"/>
+    <line x1="900" y1="150" x2="1050" y2="190" stroke="url(#acc)" stroke-opacity="0.5"/>
+  </g>
+  <g fill="#0d0f15" stroke="url(#acc)" stroke-width="2">
+    <circle cx="150" cy="190" r="14"/>
+    <circle cx="400" cy="120" r="14"/>
+    <circle cx="650" cy="230" r="14"/>
+    <circle cx="900" cy="150" r="14"/>
+  </g>
+  <circle cx="1050" cy="190" r="20" fill="#34d399" fill-opacity="0.15" stroke="#34d399" stroke-width="2"/>
+  <path d="m1042 190 6 6 12-13" stroke="#34d399" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- data signal -->
+  <path d="M40 320 Q120 300 200 315 T360 310 T520 320 T680 305 T840 318 T1000 308 T1160 316"
+        stroke="url(#acc)" stroke-width="2" stroke-opacity="0.6" fill="none"/>
+</svg>

@@ -51,10 +51,7 @@ export function Features() {
               className="group relative overflow-hidden rounded-2xl border border-white/[0.07] bg-ink-900/50 p-6 transition-colors hover:border-white/15"
             >
               <div className="pointer-events-none absolute -right-16 -top-16 h-32 w-32 rounded-full bg-accent-blue/10 opacity-0 blur-2xl transition-opacity group-hover:opacity-100" />
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03]">
-                <f.icon className="h-5 w-5 text-accent-cyan" />
-              </div>
-              <h3 className="mt-4 text-[15px] font-semibold text-white">{f.title}</h3>
+              <h3 className="text-[15px] font-semibold text-white">{f.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-white/50">{f.desc}</p>
             </motion.div>
           ))}

@@ -80,7 +80,7 @@ export class SimAPI {
     const cfg: SimAPIConfig =
       typeof apiKeyOrConfig === "string" ? { apiKey: apiKeyOrConfig } : apiKeyOrConfig ?? {};
     this.apiKey = cfg.apiKey ?? process.env.SIMAPI_API_KEY;
-    this.baseUrl = (cfg.baseUrl ?? process.env.SIMAPI_BASE_URL ?? "https://api.simapi.dev").replace(/\/$/, "");
+    this.baseUrl = (cfg.baseUrl ?? process.env.SIMAPI_BASE_URL ?? "https://sim-api.vercel.app/api").replace(/\/$/, "");
     this.timeoutMs = cfg.timeoutMs ?? 60_000;
   }
 

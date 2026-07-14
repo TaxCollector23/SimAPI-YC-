@@ -2,7 +2,7 @@
 title: "Validate Upload"
 description: "Validate an uploaded simulation file."
 icon: "file-arrow-up"
-api: "POST https://api.simapi.dev/v1/validate/upload"
+api: "POST https://sim-api.vercel.app/api/v1/validate/upload"
 ---
 
 Accepts a multipart file upload (CSV, JSON, VTK, NumPy, or OpenFOAM) and validates
@@ -26,7 +26,7 @@ it exactly like [`/v1/validate`](/api-reference/validate).
 <RequestExample>
 
 ```bash cURL
-curl -X POST https://api.simapi.dev/v1/validate/upload \
+curl -X POST https://sim-api.vercel.app/api/v1/validate/upload \
   -H "X-API-Key: $SIMAPI_API_KEY" \
   -F "file=@cfd_output.csv" \
   -F "simulation_type=aerodynamics" \
@@ -37,7 +37,7 @@ curl -X POST https://api.simapi.dev/v1/validate/upload \
 import requests
 with open("cfd_output.csv", "rb") as f:
     r = requests.post(
-        "https://api.simapi.dev/v1/validate/upload",
+        "https://sim-api.vercel.app/api/v1/validate/upload",
         headers={"X-API-Key": KEY},
         files={"file": f},
         data={"simulation_type": "aerodynamics", "conditions": '{"velocity":15.0}'},

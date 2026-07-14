@@ -8,7 +8,8 @@ export const site = {
   github: "https://github.com/TaxCollector23/SimAPI-YC-",
   nav: [
     { label: "Home", href: "/" },
-    { label: "About", href: "/about" },
+    { label: "Blog", href: "/blog" },
+    { label: "FAQ", href: "/faq" },
     { label: "Docs", href: "/docs" },
     { label: "Dashboard", href: "/dashboard" },
   ],

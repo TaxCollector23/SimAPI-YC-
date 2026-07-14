@@ -27,7 +27,7 @@ export function Nav() {
     >
       <nav className="container-tight flex h-16 items-center justify-between">
         <Link href="/" className="flex items-center gap-2.5" aria-label="SimAPI home">
-          <Logo className="h-9 w-9" />
+          <Logo className="h-9" />
           <span className="text-[17px] font-semibold tracking-tight text-white">SimAPI</span>
         </Link>
 

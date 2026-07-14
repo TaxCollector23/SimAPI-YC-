@@ -2,15 +2,18 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Plus, Trash2, Play, Download, Loader2, Check, AlertTriangle, XCircle, Copy } from "lucide-react";
+import {
+  Plus, Trash2, Play, Download, Loader2, Copy, Check,
+  CheckCircle, AlertTriangle, XCircle, ChevronDown, ChevronUp, Info,
+} from "lucide-react";
 import {
   validate,
   toApiResponse,
   SIMULATION_TYPES,
   type SimulationType,
   type ValidationReport,
+  type CheckResult,
 } from "@/lib/validation-engine";
-import { ScoreRing } from "./charts";
 import { JsonView } from "./ui/json-view";
 import { cn } from "@/lib/utils";
 
@@ -20,15 +23,16 @@ interface Variable {
   id: string;
   name: string;
   type: VarType;
-  value: string; // raw text; coerced on run
+  value: string;
 }
 
+// Default condition variables per domain — pre-seeded but fully editable.
 const PRESETS: Record<SimulationType, Variable[]> = {
   aerodynamics: [
-    v("cd", "number", "0.312"),
-    v("cl", "number", "0.847"),
-    v("re", "number", "415000"),
-    v("mach", "number", "0.044"),
+    v("drag_coefficient", "number", "0.312"),
+    v("lift_coefficient", "number", "0.847"),
+    v("reynolds_number", "number", "415000"),
+    v("mach_number", "number", "0.044"),
     v("velocity", "vector", "15, 0, 0"),
   ],
   fluid_dynamics: [
@@ -63,20 +67,13 @@ function v(name: string, type: VarType, value: string): Variable {
 
 function coerce(variable: Variable): unknown {
   switch (variable.type) {
-    case "number":
-      return Number(variable.value);
-    case "boolean":
-      return variable.value === "true";
-    case "string":
-      return variable.value;
+    case "number": return Number(variable.value);
+    case "boolean": return variable.value === "true";
+    case "string": return variable.value;
     case "vector":
     case "array":
-      return variable.value
-        .split(",")
-        .map((s) => Number(s.trim()))
-        .filter((n) => !Number.isNaN(n));
-    default:
-      return variable.value;
+      return variable.value.split(",").map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n));
+    default: return variable.value;
   }
 }
 
@@ -89,14 +86,12 @@ export function SimulationBuilder({
   const [vars, setVars] = useState<Variable[]>(PRESETS.aerodynamics);
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [running, setRunning] = useState(false);
-  const [copied, setCopied] = useState(false);
 
-  function loadPreset(type: SimulationType) {
+  function changeType(type: SimulationType) {
     setSimType(type);
     setVars(PRESETS[type].map((p) => ({ ...p, id: crypto.randomUUID().slice(0, 6) })));
     setReport(null);
   }
-
   function addVar() {
     setVars((vs) => [...vs, v(`variable_${vs.length + 1}`, "number", "0")]);
   }
@@ -110,26 +105,158 @@ export function SimulationBuilder({
   function run() {
     setRunning(true);
     setReport(null);
-    // Small delay so the transition reads as "running".
     setTimeout(() => {
       const values: Record<string, unknown> = {};
-      for (const variable of vars) {
-        if (variable.name.trim()) values[variable.name.trim()] = coerce(variable);
-      }
+      for (const variable of vars) if (variable.name.trim()) values[variable.name.trim()] = coerce(variable);
       const r = validate(values, simType);
       setReport(r);
       setRunning(false);
       onComplete?.(r);
-    }, 380);
+    }, 400);
   }
 
-  function downloadReport() {
-    if (!report) return;
-    const payload = {
-      ...toApiResponse(report, crypto.randomUUID().slice(0, 8)),
-      checks: report.checks,
-      generated_at: new Date().toISOString(),
-    };
+  return (
+    <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
+      {/* ── Controls ── */}
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
+          <label className="mb-2 block text-xs uppercase tracking-widest text-white/35">Simulation type</label>
+          <select
+            value={simType}
+            onChange={(e) => changeType(e.target.value as SimulationType)}
+            className="w-full rounded-xl border border-white/[0.08] bg-black/30 px-3 py-2.5 text-sm text-white/75 outline-none focus:border-accent-blue/50"
+          >
+            {SIMULATION_TYPES.map((t) => (
+              <option key={t.value} value={t.value} className="bg-ink-900">{t.label}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <label className="text-xs uppercase tracking-widest text-white/35">Conditions (editable variables)</label>
+            <button onClick={addVar} className="flex items-center gap-1 text-xs text-accent-cyan hover:text-white">
+              <Plus className="h-3.5 w-3.5" /> Add
+            </button>
+          </div>
+          <div className="space-y-2">
+            {vars.map((variable) => (
+              <div key={variable.id} className="flex items-center gap-1.5">
+                <input
+                  value={variable.name}
+                  onChange={(e) => update(variable.id, { name: e.target.value })}
+                  spellCheck={false}
+                  className="w-[42%] rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-xs text-white/80 outline-none focus:border-accent-blue/50"
+                  aria-label="Variable name"
+                />
+                <select
+                  value={variable.type}
+                  onChange={(e) => update(variable.id, { type: e.target.value as VarType })}
+                  className="rounded-lg border border-white/10 bg-black/30 px-1.5 py-2 text-xs text-white/70 outline-none focus:border-accent-blue/50"
+                  aria-label="Variable type"
+                >
+                  {(["number", "boolean", "string", "vector", "array"] as VarType[]).map((t) => (
+                    <option key={t} value={t} className="bg-ink-900">{t}</option>
+                  ))}
+                </select>
+                {variable.type === "boolean" ? (
+                  <select
+                    value={variable.value}
+                    onChange={(e) => update(variable.id, { value: e.target.value })}
+                    className="flex-1 rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-xs text-white/80 outline-none focus:border-accent-blue/50"
+                  >
+                    <option value="true" className="bg-ink-900">true</option>
+                    <option value="false" className="bg-ink-900">false</option>
+                  </select>
+                ) : (
+                  <input
+                    value={variable.value}
+                    onChange={(e) => update(variable.id, { value: e.target.value })}
+                    spellCheck={false}
+                    placeholder={variable.type === "vector" || variable.type === "array" ? "2, 4, 0" : ""}
+                    className="flex-1 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-xs text-white/80 outline-none focus:border-accent-blue/50"
+                    aria-label="Variable value"
+                  />
+                )}
+                <button onClick={() => remove(variable.id)} className="rounded-lg p-1.5 text-white/30 hover:bg-white/5 hover:text-fail" aria-label="Delete variable">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+            {vars.length === 0 && (
+              <p className="rounded-lg border border-dashed border-white/10 py-6 text-center text-xs text-white/35">
+                No variables. Add one to describe the simulation conditions.
+              </p>
+            )}
+          </div>
+          <button onClick={run} disabled={running} className="btn-accent mt-4 w-full">
+            {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            {running ? "Running validation…" : "Run validation"}
+          </button>
+        </div>
+
+        <div className="flex gap-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent-cyan" />
+          <p className="text-xs leading-relaxed text-white/35">
+            Runs the deterministic engine entirely in your browser — no data leaves the page.
+            Rename, retype, add, or remove any condition and re-run.
+          </p>
+        </div>
+      </div>
+
+      {/* ── Results ── */}
+      <div className="min-h-[420px]">
+        <AnimatePresence mode="wait">
+          {!report && !running && (
+            <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="flex h-full min-h-[420px] flex-col items-center justify-center rounded-2xl border border-white/[0.07] bg-ink-900/40 text-center">
+              <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-white/[0.08] bg-white/[0.03]">
+                <Play className="h-7 w-7 text-white/15" />
+              </div>
+              <p className="text-white/35">Configure conditions and hit Run</p>
+              <p className="mt-1.5 text-xs text-white/20">Deterministic physics checks · results in milliseconds</p>
+            </motion.div>
+          )}
+          {running && (
+            <motion.div key="running" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="flex h-full min-h-[420px] flex-col items-center justify-center rounded-2xl border border-white/[0.07] bg-ink-900/40">
+              <Loader2 className="mb-4 h-8 w-8 animate-spin text-accent-cyan" />
+              <p className="text-sm text-white/50">Running physics validation…</p>
+            </motion.div>
+          )}
+          {report && !running && (
+            <motion.div key="report" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+              <Results report={report} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({ status }: { status: ValidationReport["status"] }) {
+  const map = {
+    passed: { cls: "bg-pass/10 text-pass border-pass/30", Icon: CheckCircle, label: "PASSED" },
+    warning: { cls: "bg-amber-400/10 text-amber-400 border-amber-400/30", Icon: AlertTriangle, label: "WARNING" },
+    failed: { cls: "bg-red-400/10 text-red-400 border-red-400/30", Icon: XCircle, label: "FAILED" },
+  }[status];
+  return (
+    <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold", map.cls)}>
+      <map.Icon className="h-3.5 w-3.5" /> {map.label}
+    </span>
+  );
+}
+
+function Results({ report }: { report: ValidationReport }) {
+  const [showAll, setShowAll] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const issues = report.checks.filter((c) => c.status !== "passed");
+  const visible = showAll ? issues : issues.slice(0, 8);
+  const responseJson = JSON.stringify(toApiResponse(report, "3f9ca12b"), null, 2);
+
+  function download() {
+    const payload = { ...toApiResponse(report, crypto.randomUUID().slice(0, 8)), checks: report.checks, generated_at: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -139,228 +266,131 @@ export function SimulationBuilder({
     URL.revokeObjectURL(url);
   }
 
-  const responseJson = report
-    ? JSON.stringify(toApiResponse(report, "3f9ca12b"), null, 2)
-    : "";
-
-  return (
-    <div className="grid gap-5 lg:grid-cols-[1fr_1fr]">
-      {/* Builder */}
-      <div className="card p-5">
-        <div className="mb-4">
-          <label className="mb-1.5 block text-xs font-medium text-white/55">Simulation type</label>
-          <div className="flex flex-wrap gap-1.5">
-            {SIMULATION_TYPES.map((t) => (
-              <button
-                key={t.value}
-                onClick={() => loadPreset(t.value)}
-                className={cn(
-                  "rounded-full px-3 py-1.5 text-xs font-medium transition-all",
-                  simType === t.value ? "bg-white text-ink-950" : "border border-white/10 text-white/55 hover:text-white",
-                )}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="mb-2 flex items-center justify-between">
-          <label className="text-xs font-medium text-white/55">Variables</label>
-          <button onClick={addVar} className="flex items-center gap-1 text-xs text-accent-cyan hover:text-white">
-            <Plus className="h-3.5 w-3.5" /> Add variable
-          </button>
-        </div>
-
-        <div className="space-y-2">
-          {vars.map((variable) => (
-            <div key={variable.id} className="flex items-center gap-2">
-              <input
-                value={variable.name}
-                onChange={(e) => update(variable.id, { name: e.target.value })}
-                spellCheck={false}
-                className="w-[38%] rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-xs text-white/80 outline-none focus:border-accent-blue/50"
-                aria-label="Variable name"
-              />
-              <select
-                value={variable.type}
-                onChange={(e) => update(variable.id, { type: e.target.value as VarType })}
-                className="rounded-lg border border-white/10 bg-black/30 px-2 py-2 text-xs text-white/70 outline-none focus:border-accent-blue/50"
-                aria-label="Variable type"
-              >
-                {(["number", "boolean", "string", "vector", "array"] as VarType[]).map((t) => (
-                  <option key={t} value={t} className="bg-ink-900">
-                    {t}
-                  </option>
-                ))}
-              </select>
-              {variable.type === "boolean" ? (
-                <select
-                  value={variable.value}
-                  onChange={(e) => update(variable.id, { value: e.target.value })}
-                  className="flex-1 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-xs text-white/80 outline-none focus:border-accent-blue/50"
-                >
-                  <option value="true" className="bg-ink-900">true</option>
-                  <option value="false" className="bg-ink-900">false</option>
-                </select>
-              ) : (
-                <input
-                  value={variable.value}
-                  onChange={(e) => update(variable.id, { value: e.target.value })}
-                  spellCheck={false}
-                  placeholder={variable.type === "vector" || variable.type === "array" ? "2, 4, 0" : ""}
-                  className="flex-1 rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 font-mono text-xs text-white/80 outline-none focus:border-accent-blue/50"
-                  aria-label="Variable value"
-                />
-              )}
-              <button
-                onClick={() => remove(variable.id)}
-                className="rounded-lg p-2 text-white/30 hover:bg-white/5 hover:text-fail"
-                aria-label="Delete variable"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
-          {vars.length === 0 && (
-            <p className="rounded-lg border border-dashed border-white/10 py-6 text-center text-xs text-white/35">
-              No variables. Add one to describe the simulation conditions.
-            </p>
-          )}
-        </div>
-
-        <button onClick={run} className="btn-accent mt-5 w-full" disabled={running}>
-          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {running ? "Validating…" : "Run validation"}
-        </button>
-      </div>
-
-      {/* Results */}
-      <div className="card min-h-[400px] p-5">
-        <AnimatePresence mode="wait">
-          {!report && !running && (
-            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="flex h-full min-h-[360px] flex-col items-center justify-center text-center">
-              <p className="text-sm text-white/40">Configure variables, then run a validation.</p>
-              <p className="mt-1 text-xs text-white/25">Runs locally in your browser — no data leaves the page.</p>
-            </motion.div>
-          )}
-          {running && (
-            <motion.div key="running" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="flex h-full min-h-[360px] items-center justify-center gap-2 text-sm text-white/50">
-              <Loader2 className="h-4 w-4 animate-spin text-accent-cyan" /> Running deterministic checks…
-            </motion.div>
-          )}
-          {report && !running && (
-            <motion.div key="report" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
-              <ResultsView
-                report={report}
-                responseJson={responseJson}
-                onDownload={downloadReport}
-                onCopy={() => {
-                  navigator.clipboard.writeText(responseJson);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1500);
-                }}
-                copied={copied}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </div>
-  );
-}
-
-function ResultsView({
-  report,
-  responseJson,
-  onDownload,
-  onCopy,
-  copied,
-}: {
-  report: ValidationReport;
-  responseJson: string;
-  onDownload: () => void;
-  onCopy: () => void;
-  copied: boolean;
-}) {
-  const meta =
-    report.status === "passed"
-      ? { color: "text-pass", ring: "bg-pass/10 ring-pass/30", Icon: Check, label: "PASS" }
-      : report.status === "warning"
-        ? { color: "text-warn", ring: "bg-warn/10 ring-warn/30", Icon: AlertTriangle, label: "WARNING" }
-        : { color: "text-fail", ring: "bg-fail/10 ring-fail/30", Icon: XCircle, label: "FAIL" };
+  const metrics = [
+    { l: "Checks run", v: String(report.checksRun), c: "text-accent-cyan" },
+    { l: "Passed", v: String(report.passed), c: "text-pass" },
+    { l: "Issues", v: String(report.warnings + report.failed), c: report.failed > 0 ? "text-red-400" : report.warnings > 0 ? "text-amber-400" : "text-pass" },
+    { l: "Time", v: `${report.executionMs}ms`, c: "text-pass" },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className={cn("flex items-center justify-between rounded-xl p-4 ring-1", meta.ring)}>
-        <div className="flex items-center gap-3">
-          <meta.Icon className={cn("h-6 w-6", meta.color)} />
-          <div>
-            <p className={cn("text-lg font-semibold", meta.color)}>{meta.label}</p>
-            <p className="text-xs text-white/45">
-              {report.passed}/{report.checksRun} checks passed · {report.executionMs}ms
-            </p>
-          </div>
+      {/* Summary */}
+      <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
+        <div className="mb-5 flex items-center justify-between">
+          <StatusPill status={report.status} />
+          <span className="text-xs capitalize text-white/30">
+            {report.status === "passed" ? "high" : report.status === "warning" ? "medium" : "low"} confidence · score {report.score}
+          </span>
         </div>
-        <ScoreRing value={report.score} label="Score" color={report.status === "failed" ? "#f87171" : report.status === "warning" ? "#fbbf24" : "#34d399"} />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {metrics.map((m) => (
+            <div key={m.l} className="rounded-xl border border-white/[0.05] bg-white/[0.03] p-3 text-center">
+              <p className={cn("font-mono text-xl font-semibold", m.c)}>{m.v}</p>
+              <p className="mt-0.5 text-[10px] uppercase tracking-wider text-white/30">{m.l}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {report.violations.length > 0 && (
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">
-            Detected issues ({report.violations.length})
-          </h4>
+      {/* Pass / warn / fail bars */}
+      <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
+        <p className="mb-4 text-xs uppercase tracking-widest text-white/30">
+          {report.checksRun} checks — only issues are listed below
+        </p>
+        {[
+          { label: "Passed", n: report.passed, color: "bg-pass", text: "text-pass" },
+          { label: "Warnings", n: report.warnings, color: "bg-amber-400", text: "text-amber-400" },
+          { label: "Failed", n: report.failed, color: "bg-red-400", text: "text-red-400" },
+        ].map((r) => (
+          <div key={r.label} className="mb-2.5 flex items-center gap-3">
+            <span className={cn("w-16 text-xs", r.text)}>{r.label}</span>
+            <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/[0.05]">
+              <div className={cn("h-full rounded-full transition-all duration-700", r.color)}
+                style={{ width: `${Math.round((r.n / Math.max(report.checksRun, 1)) * 100)}%` }} />
+            </div>
+            <span className={cn("w-8 text-right font-mono text-xs", r.text)}>{r.n}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Issues */}
+      <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
+        <p className="mb-3 text-xs uppercase tracking-widest text-white/30">
+          {issues.length === 0 ? "All checks passed" : `${issues.length} issue${issues.length !== 1 ? "s" : ""} found — click to expand`}
+        </p>
+        {issues.length === 0 ? (
+          <div className="rounded-xl border border-pass/20 bg-pass/5 px-4 py-3 text-xs text-pass">
+            ✓ Conditions are physically valid — all checks passed
+          </div>
+        ) : (
+          <>
+            <div className="space-y-1.5">{visible.map((c) => <IssueRow key={c.name} check={c} />)}</div>
+            {issues.length > 8 && (
+              <button onClick={() => setShowAll((s) => !s)} className="mt-3 flex items-center gap-1.5 text-xs text-white/30 hover:text-white">
+                {showAll ? <><ChevronUp className="h-3 w-3" /> Show fewer</> : <><ChevronDown className="h-3 w-3" /> Show {issues.length - 8} more</>}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Recommendations */}
+      {report.recommendations.length > 0 && (
+        <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
+          <p className="mb-3 text-xs uppercase tracking-widest text-white/30">Recommendations</p>
           <div className="space-y-2">
-            {report.violations.map((vi, i) => (
-              <div key={i} className="flex items-start gap-2.5 rounded-lg border border-white/[0.05] bg-white/[0.02] p-3">
-                {vi.severity === "critical" ? (
-                  <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-fail" />
-                ) : (
-                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
-                )}
-                <div>
-                  <p className="font-mono text-xs text-white/70">{vi.field} = {vi.value}</p>
-                  <p className="text-xs text-white/45">{vi.reason}</p>
-                </div>
+            {report.recommendations.map((r, i) => (
+              <div key={i} className="flex gap-2 text-xs text-white/50">
+                <span className="shrink-0 text-accent-cyan">→</span>
+                <span>{r}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {report.recommendations.length > 0 && (
-        <div>
-          <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/40">Recommendations</h4>
-          <ul className="space-y-1.5">
-            {report.recommendations.map((r, i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-white/55">
-                <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-accent-cyan" />
-                {r}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <h4 className="text-xs font-semibold uppercase tracking-wider text-white/40">JSON response</h4>
-          <div className="flex gap-2">
-            <button onClick={onCopy} className="flex items-center gap-1 text-xs text-white/45 hover:text-white">
-              {copied ? <Check className="h-3.5 w-3.5 text-pass" /> : <Copy className="h-3.5 w-3.5" />}
-              {copied ? "Copied" : "Copy"}
+      {/* JSON */}
+      <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-xs uppercase tracking-widest text-white/30">JSON response</p>
+          <div className="flex gap-3">
+            <button onClick={() => { navigator.clipboard.writeText(responseJson); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="flex items-center gap-1 text-xs text-white/45 hover:text-white">
+              {copied ? <Check className="h-3.5 w-3.5 text-pass" /> : <Copy className="h-3.5 w-3.5" />} {copied ? "Copied" : "Copy"}
             </button>
-            <button onClick={onDownload} className="flex items-center gap-1 text-xs text-white/45 hover:text-white">
+            <button onClick={download} className="flex items-center gap-1 text-xs text-white/45 hover:text-white">
               <Download className="h-3.5 w-3.5" /> Report
             </button>
           </div>
         </div>
-        <div className="max-h-56 overflow-auto rounded-lg border border-white/[0.06] bg-black/30 p-3">
+        <div className="max-h-64 overflow-auto rounded-lg border border-white/[0.06] bg-black/30 p-3">
           <JsonView text={responseJson} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function IssueRow({ check }: { check: CheckResult }) {
+  const [open, setOpen] = useState(false);
+  const fail = check.status === "failed";
+  return (
+    <div
+      className={cn("cursor-pointer rounded-lg border transition-colors", fail
+        ? "border-red-400/20 bg-red-400/5 hover:border-red-400/40"
+        : "border-amber-400/15 bg-amber-400/5 hover:border-amber-400/35")}
+      onClick={() => setOpen((o) => !o)}
+    >
+      <div className="flex items-center gap-3 px-3 py-2.5">
+        <span className={cn("shrink-0 text-sm", fail ? "text-red-400" : "text-amber-400")}>{fail ? "✗" : "⚠"}</span>
+        <span className="flex-1 text-xs font-medium leading-snug text-white/75">{check.name}</span>
+        <span className={cn("shrink-0 rounded border px-1.5 py-0.5 font-mono text-[10px]", fail ? "border-red-400/20 text-red-400/60" : "border-amber-400/20 text-amber-400/60")}>
+          {check.category}
+        </span>
+        {open ? <ChevronUp className="h-3 w-3 shrink-0 text-white/20" /> : <ChevronDown className="h-3 w-3 shrink-0 text-white/20" />}
+      </div>
+      {open && <div className="border-t border-white/[0.06] px-3 py-2.5 text-xs leading-relaxed text-white/45">{check.detail}</div>}
     </div>
   );
 }

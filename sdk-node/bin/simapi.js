@@ -15,7 +15,7 @@ import { stdin, stdout } from "node:process";
 
 const CONFIG_DIR = join(homedir(), ".simapi");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
-const DEFAULT_BASE = process.env.SIMAPI_BASE_URL || "https://api.simapi.dev";
+const DEFAULT_BASE = process.env.SIMAPI_BASE_URL || "https://sim-api.vercel.app/api";
 const VERSION = "3.1.0";
 
 const c = {

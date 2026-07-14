@@ -63,7 +63,7 @@ The response reports exactly what was renamed:
 ## Uploading a file
 
 ```bash
-curl -X POST https://api.simapi.dev/v1/validate/upload \
+curl -X POST https://sim-api.vercel.app/api/v1/validate/upload \
   -H "X-API-Key: $SIMAPI_API_KEY" \
   -F "file=@cfd_output.csv" \
   -F "simulation_type=aerodynamics" \

@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-API_BASE = os.environ.get("SIMAPI_BASE_URL", "http://localhost:8000")
+API_BASE = os.environ.get("SIMAPI_BASE_URL", "https://sim-api.vercel.app/api")
 API_KEY = os.environ.get("SIMAPI_API_KEY")
 
 
