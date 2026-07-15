@@ -9,7 +9,7 @@ A typed wrapper over the REST API that mirrors the Python SDK. Requires Node 18+
 ## Install
 
 ```bash
-npm install simapi
+npm install simapi-cli
 ```
 
 ## Configure
@@ -24,7 +24,7 @@ export SIMAPI_API_KEY="sk_live_..."
 <CodeGroup>
 
 ```ts TypeScript
-import { SimAPI, type ValidationResult } from "simapi";
+import { SimAPI, type ValidationResult } from "simapi-cli";
 
 const client = new SimAPI(process.env.SIMAPI_API_KEY!);
 
@@ -38,7 +38,7 @@ console.log(result.trials_valid, "/", result.trials_submitted, "valid");
 ```
 
 ```js JavaScript
-import { SimAPI } from "simapi";
+import { SimAPI } from "simapi-cli";
 
 const client = new SimAPI(process.env.SIMAPI_API_KEY);
 const result = await client.validate(rows, { simulationType: "structural" });
@@ -69,7 +69,7 @@ const result = await client.validateFile("simulation.json", {
 Non-2xx responses throw `SimAPIError`:
 
 ```ts
-import { SimAPI, SimAPIError } from "simapi";
+import { SimAPI, SimAPIError } from "simapi-cli";
 
 try {
   await client.validate(rows);
@@ -82,5 +82,5 @@ try {
 
 <Note>
   The same package ships the [`simapi` CLI](/sdks/cli) — install it globally with
-  `npm install -g simapi`.
+  `npm install -g simapi-cli`.
 </Note>

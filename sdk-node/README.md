@@ -6,14 +6,14 @@ Requires Node 18+.
 ## Install
 
 ```bash
-npm install simapi          # SDK
-npm install -g simapi       # CLI (`simapi` command)
+npm install simapi-cli          # SDK
+npm install -g simapi-cli       # CLI (`simapi` command)
 ```
 
 ## SDK
 
 ```ts
-import { SimAPI } from "simapi";
+import { SimAPI } from "simapi-cli";
 
 const client = new SimAPI(process.env.SIMAPI_API_KEY);
 

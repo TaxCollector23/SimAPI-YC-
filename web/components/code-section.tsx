@@ -9,18 +9,20 @@ const install: Record<string, string> = {
   curl: "curl -fsSL https://sim-api.vercel.app/install.sh | sh",
   PowerShell: "irm https://sim-api.vercel.app/install.ps1 | iex",
   Homebrew: "brew install TaxCollector23/tap/simapi",
-  npm: "npm install -g simapi",
+  npm: "npm install -g simapi-cli",
 };
 
-// SIMAPI banner — same art and cyan→blue gradient the CLI prints.
-const ART = [
-  "███████╗██╗███╗   ███╗ █████╗ ██████╗ ██╗",
-  "██╔════╝██║████╗ ████║██╔══██╗██╔══██╗██║",
-  "███████╗██║██╔████╔██║███████║██████╔╝██║",
-  "╚════██║██║██║╚██╔╝██║██╔══██║██╔═══╝ ██║",
-  "███████║██║██║ ╚═╝ ██║██║  ██║██║     ██║",
-  "╚══════╝╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝",
-];
+// SIMAPI banner — solid block font (only █ and spaces) so it aligns perfectly
+// in any browser font, unlike box-drawing art which staircases on fallback fonts.
+const GLYPHS: Record<string, string[]> = {
+  S: ["█████", "█    ", "█████", "    █", "█████"],
+  I: ["█████", "  █  ", "  █  ", "  █  ", "█████"],
+  M: ["█   █", "██ ██", "█ █ █", "█   █", "█   █"],
+  A: ["█████", "█   █", "█████", "█   █", "█   █"],
+  P: ["█████", "█   █", "█████", "█    ", "█    "],
+};
+const WORD = ["S", "I", "M", "A", "P", "I"];
+const ART = [0, 1, 2, 3, 4].map((row) => WORD.map((ch) => GLYPHS[ch][row]).join("  "));
 
 export function CodeSection() {
   const installTabs = Object.keys(install);

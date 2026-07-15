@@ -1,5 +1,5 @@
 {
-  "name": "simapi",
+  "name": "simapi-cli",
   "version": "1.0.0",
   "description": "Node.js SDK and CLI for SimAPI — validate simulation results against physical laws.",
   "type": "module",
