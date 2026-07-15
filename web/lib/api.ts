@@ -132,3 +132,31 @@ export async function healthCheck(): Promise<boolean> {
     return r.ok;
   } catch { return false; }
 }
+
+// ── Pre-flight (mesh + setup) validation ────────────────────────────────────────
+export interface SetupIssue {
+  name: string; human_name: string; status: "warning" | "failed";
+  description: string; detail: string; value: number | null; category: string;
+}
+export interface SetupResult {
+  status: "ready" | "warning" | "not_ready";
+  all_checks: number; passed: number; warnings: number; failed: number;
+  issues: SetupIssue[];
+  predicted_error_types: string[];
+  estimated_corruption_risk: number;
+  recommendations: string[];
+  processing_ms: number;
+}
+
+export async function validateSetup(config: Record<string, unknown>, meshStats?: Record<string, unknown>, simulationType = "aerodynamics"): Promise<SetupResult> {
+  const r = await fetch(`${API_BASE}/v1/validate/setup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ config, mesh_stats: meshStats, simulation_type: simulationType }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ error: r.statusText }));
+    throw new Error(err?.error?.message ?? r.statusText);
+  }
+  return r.json();
+}

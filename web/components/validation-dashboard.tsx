@@ -8,6 +8,7 @@ import {
   Check, Plus, Trash2, Info,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PreflightPanel } from "./preflight-panel";
 import {
   validate, runDemo, pollAI, generateKey,
   DEMO_KEY, healthCheck,
@@ -191,6 +192,7 @@ export function ValidationDashboard() {
   const [aiPoll,    setAiPoll]      = useState(false);
   const [keyGen,    setKeyGen]      = useState(false);
   const [copied,    setCopied]      = useState(false);
+  const [tab,       setTab]         = useState<"preflight"|"output">("output");
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -278,6 +280,20 @@ export function ValidationDashboard() {
         </div>
       </div>
 
+      {/* Pre-flight / Output tab switcher */}
+      <div className="mb-6 flex gap-1 rounded-xl border border-white/[0.06] bg-ink-900/40 p-1">
+        {([["preflight", "Pre-flight"], ["output", "Output validation"]] as const).map(([id, label]) => (
+          <button key={id} onClick={() => setTab(id)}
+            className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
+              tab === id ? "bg-white/10 text-white" : "text-white/45 hover:text-white")}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "preflight" ? (
+        <PreflightPanel onGotoOutput={() => setTab("output")} />
+      ) : (
       <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
 
         {/* ── LEFT: Controls ── */}
@@ -708,6 +724,7 @@ export function ValidationDashboard() {
           </AnimatePresence>
         </div>
       </div>
+      )}
     </div>
   );
 }
