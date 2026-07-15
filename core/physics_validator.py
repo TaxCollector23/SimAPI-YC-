@@ -303,6 +303,7 @@ class PhysicsValidator:
         layers = [
             self._input_quality, self._plausibility, self._numerical_stability,
             self._statistical_distribution, self._outlier_detection,
+            self._near_duplicates,
             self._cross_variable, self._conservation_laws, self._dimensional,
             self._temporal, self._monotonicity, self._symmetry, self._scaling_laws,
             self._information_entropy, self._autocorrelation, self._stationarity,
@@ -628,6 +629,16 @@ class PhysicsValidator:
             C.append(self._w("cx_ideal_gas",nb==0,"P=ρRT satisfied",f"{nb}",float(nb),0.0,cat))
             for idx in data.index[bad]:
                 E.append(TrialExclusion(int(idx),"Ideal gas violation P≠ρRT","warning"))
+            # Gas-constant unit check: even in-bounds P breaks if it is in kPa not Pa.
+            # P/(ρT) must equal R_air=287.05; ~0.287 means P is off by 1000×.
+            R_calc=data["pressure"]/(data["density"]*data["temperature"]).clip(lower=1e-10)
+            ubad=(R_calc<250)|(R_calc>320); nu=int(ubad.sum())
+            C.append(self._c("cx_gas_constant_check",nu==0,
+                "P/(ρT) = R_air = 287 J/kg·K (unit consistency check)",
+                f"{nu} trials where P/(ρT) deviates >10% from 287 — possible unit error",float(nu),cat=cat))
+            for idx in data.index[ubad]:
+                E.append(TrialExclusion(int(idx),
+                    f"Gas constant check: P/(ρT)={float(R_calc.loc[idx]):.1f} (expected 287) — unit error?","critical"))
         # Bernoulli P+0.5ρv²=const
         if {"pressure","velocity"}.issubset(cols):
             rho=cond.get("density",P["rho_air"])
@@ -656,7 +667,7 @@ class PhysicsValidator:
         # Hooke's law σ=Eε
         if {"stress","strain","elastic_modulus"}.issubset(cols):
             exp_s=data["elastic_modulus"]*data["strain"]
-            bad=(np.abs(data["stress"]-exp_s)/exp_s.clip(lower=1e-10)>0.3).sum()
+            bad=(np.abs(data["stress"]-exp_s)/exp_s.clip(lower=1e-10)>0.15).sum()  # Hooke's law exact in linear regime
             C.append(self._w("cx_hooke",bad==0,"σ=Eε (Hooke's Law)",f"{bad}",float(bad),0.0,cat))
         # Carnot η=1-Tc/Th
         if "carnot_efficiency" in cols:
@@ -708,8 +719,12 @@ class PhysicsValidator:
             rho=cond.get("density",P["rho_air"]); mu=cond.get("viscosity",P["mu_air"]); L=cond.get("length_scale",0.5)
             if mu>0 and L>0:
                 exp_re=rho*data["velocity"]*L/mu
-                bad=(np.abs(data["reynolds_number"]-exp_re)/exp_re.clip(lower=1e-10)>0.35).sum()
+                rel_re=np.abs(data["reynolds_number"]-exp_re)/exp_re.clip(lower=1e-10)
+                bad_mask=rel_re>0.15  # tightened from 0.35 (still allows fluid-property variation)
+                bad=int(bad_mask.sum())
                 C.append(self._w("cx_reynolds",bad==0,"Re=ρvL/μ",f"{bad}",float(bad),0.0,cat))
+                for idx in data.index[bad_mask]:
+                    E.append(TrialExclusion(int(idx),f"Re inconsistent with ρvL/μ (rel err {float(rel_re.loc[idx]):.2f})","warning"))
         # Wave c=λ/T
         if {"wave_speed","wave_length","wave_period"}.issubset(cols):
             exp_c=data["wave_length"]/data["wave_period"].replace(0,np.nan)
@@ -883,6 +898,74 @@ class PhysicsValidator:
                 if d.std()>0:
                     j=(np.abs(d/d.std())>10).sum()
                     C.append(self._w(f"temp_jump_{col}",j==0,f"No discontinuous jumps in {col}",f"{j}",float(j),0.0,cat))
+        # Sub-threshold drift + distribution shift (targets sensor-drift corruption
+        # whose values are individually in-bounds but collectively trend/shift).
+        for col in self._nc(data):
+            dc=self._check_monotonic_drift(data,col)
+            if dc is not None: C.append(dc)
+            sc,se=self._check_distribution_shift(data,col)
+            C.extend(sc); E.extend(se)
+        return self._r(C,E)
+
+    def _check_monotonic_drift(self, data, col, threshold_pct=0.05):
+        """Mann-Kendall trend test: catches monotonic drift too weak for linear
+        regression (R<0.7) but still statistically significant."""
+        from scipy.stats import kendalltau
+        s=data[col].dropna()
+        if len(s)<20: return None
+        tau,p=kendalltau(range(len(s)),s.values)
+        if p is not None and p<0.01 and abs(tau)>0.2:
+            return self._w(f"temp_drift_{col}",False,
+                f"Statistically significant monotonic drift in {col}",
+                f"Mann-Kendall τ={tau:.3f}, p={p:.4f} — possible sensor drift or condition change",
+                float(tau),0.2,"temporal_drift")
+        return None
+
+    def _check_distribution_shift(self, data, col, n_windows=10):
+        """Detect windows whose mean deviates >2.5σ from the dataset mean — the
+        run-to-run condition-change signature. Drifted windows are excluded."""
+        s=data[col].dropna().reset_index(drop=True)
+        if len(s)<n_windows*5: return [],[]
+        w=len(s)//n_windows; mu=s.mean(); sd=s.std()
+        if sd==0: return [],[]
+        C=[]; E=[]
+        for i in range(n_windows):
+            win=s.iloc[i*w:(i+1)*w]
+            if len(win)==0: continue
+            z=abs(win.mean()-mu)/sd
+            if z>2.5:
+                C.append(self._w(f"temp_shift_{col}_w{i}",False,
+                    f"Distribution shift in {col} around trial {i*w+1}",
+                    f"Window {i+1} mean deviates {z:.1f}σ from dataset mean — possible condition change",
+                    float(z),2.5,"distribution_shift"))
+                for idx in win.index:
+                    E.append(TrialExclusion(int(idx),
+                        f"Distribution shift in {col} (window {i+1}, {z:.1f}σ)","warning"))
+        return C,E
+
+    def _near_duplicates(self, data, sim, cond):
+        """Detect blocks of near-identical trials in feature space — catches
+        copy-paste contamination even when values were slightly perturbed.
+        (numpy cosine similarity; equivalent to StandardScaler+cosine_similarity.)"""
+        C=[]; E=[]; cat="near_duplicates"
+        nc=self._nc(data)
+        if len(nc)<2 or len(data)<10: return self._r(C,E)
+        X=data[nc].fillna(0).values.astype(float)
+        mu=X.mean(0); sd=X.std(0); sd[sd==0]=1.0
+        X=(X-mu)/sd
+        norms=np.linalg.norm(X,axis=1); norms[norms==0]=1.0
+        Xn=X/norms[:,None]
+        window=5; n=len(Xn)
+        for i in range(n-window):
+            sims=Xn[i]@Xn[i+1:i+1+window].T
+            if (sims>0.999).any():
+                matches=[i+1+j+1 for j,sv in enumerate(sims) if sv>0.999]
+                mx=float(sims.max())
+                C.append(self._w(f"nd_block_{i}",False,
+                    f"Trial {i+1} is nearly identical to trials {matches}",
+                    "Cosine similarity > 0.999 — likely copy-paste or data duplication",
+                    mx,0.999,cat))
+                E.append(TrialExclusion(i,f"Near-duplicate of trials {matches} (sim={mx:.4f})","warning"))
         return self._r(C,E)
 
     # ── Layer 10: Monotonicity ────────────────────────────────────────────────

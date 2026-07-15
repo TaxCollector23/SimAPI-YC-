@@ -47,6 +47,7 @@ from core.ai_validator import AI_ENABLED, validate_with_ai
 from core.ai_validator import MODEL as AI_MODEL
 from core.ai_validator import report_to_dict as ai_dict
 from core.ingestion import DataIngester
+from core.mesh_validator import MeshValidator, humanize_mesh_check_name
 from core.physics_validator import PhysicsValidator, SimulationType
 
 API_VERSION = "3.1.0"
@@ -73,6 +74,7 @@ app.add_middleware(
 )
 
 validator = PhysicsValidator()
+mesh_validator = MeshValidator()
 ingester = DataIngester()
 
 # Job store: {job_id: {physics: dict, ai_running: bool, ts: float}}
@@ -91,6 +93,16 @@ class ValidateRequest(BaseModel):
     conditions: dict[str, float] = Field(default_factory=dict, description="Input boundary conditions.")
     job_id: str | None = Field(default=None, description="Optional caller-supplied tracking id.")
     run_ai: bool = Field(default=True, description="Run the async AI reasoning layer.")
+
+
+class SetupValidateRequest(BaseModel):
+    """Payload for pre-simulation (mesh + setup) validation."""
+
+    config: dict[str, Any] = Field(default_factory=dict, description="Simulation configuration dict.")
+    mesh_stats: dict[str, Any] | None = Field(default=None, description="Mesh quality metrics, if available.")
+    solver: str = Field(default="openfoam", description="openfoam | ansys | comsol | su2 | abaqus")
+    physics: str = Field(default="fluid", description="fluid | structural | thermal | electromagnetic")
+    simulation_type: str = Field(default="aerodynamics", description="Output physics domain.")
 
 
 # ── Middleware: correlation id, timing, structured access log, metrics ──────────
@@ -250,6 +262,7 @@ def _serialize(report, df: pd.DataFrame) -> dict[str, Any]:
         "columns_renamed": renamed,
         "ai": None,
         "ai_status": "pending",  # overwritten by the caller based on run_ai / AI availability
+        "ai_exclusions": [],     # populated by the AI second-pass worker
     })
 
 
@@ -264,6 +277,19 @@ def _prune_jobs() -> None:
             JOBS.pop(jid, None)
 
 
+def _ai_exclusion_indices(df: pd.DataFrame, ai_findings: list[dict]) -> list[int]:
+    """Second-pass exclusions: pull specific trial indices out of critical AI
+    findings (converting 1-indexed display → 0-indexed data)."""
+    idxs: set[int] = set()
+    for finding in ai_findings or []:
+        if finding.get("severity") == "critical" and finding.get("trials"):
+            for trial_num in finding["trials"]:
+                i = int(trial_num) - 1
+                if 0 <= i < len(df):
+                    idxs.add(i)
+    return sorted(idxs)
+
+
 def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                   conditions: dict, physics_issues: list[dict]) -> None:
     """Background worker: run the AI layer and fold its verdict into the job."""
@@ -273,12 +299,26 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                 JOBS[job_id]["ai_running"] = True
         ai_report = validate_with_ai(df, sim_type, conditions, physics_issues)
         ai_data = ai_dict(ai_report)
+        ai_excl = _ai_exclusion_indices(df, ai_data.get("findings", []))
         with _JOBS_LOCK:
             if job_id not in JOBS:
                 return
             physics = JOBS[job_id]["physics"]
             physics["ai"] = ai_data
             physics["ai_status"] = ai_data["status"]
+            # Fold AI-flagged trials into the exclusion set (physics ∪ ai).
+            physics["ai_exclusions"] = ai_excl
+            listed = {e["trial_index"] for e in physics["exclusions"]}
+            new_ai = [i for i in ai_excl if i not in listed]
+            for i in new_ai:
+                physics["exclusions"].append(
+                    {"trial_index": i, "reason": "AI-flagged critical anomaly", "severity": "critical"}
+                )
+            if new_ai:
+                physics["trials_excluded"] += len(new_ai)
+                physics["trials_valid"] = max(0, physics["trials_valid"] - len(new_ai))
+                sub = physics["trials_submitted"] or 1
+                physics["exclusion_rate"] = round(physics["trials_excluded"] / sub, 4)
             ai_sev = {"passed": 0, "warning": 1, "failed": 2, "error": 0, "disabled": 0}.get(ai_data["status"], 0)
             ph_sev = {"passed": 0, "warning": 1, "failed": 2}.get(physics["status"], 0)
             if ai_sev > ph_sev:
@@ -404,6 +444,44 @@ async def validate_upload(
 async def validate_physics_only(req: ValidateRequest, _: str = Depends(caller_identity)):
     req.run_ai = False
     return await _validate_core(req)
+
+
+@app.post("/v1/validate/setup", tags=["validation"])
+async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_identity)):
+    """
+    Pre-flight validation: judge a mesh + solver + physics setup BEFORE it runs
+    and predict which output checks are likely to fail. Same issue-surfacing
+    contract as /v1/validate — only warnings and failures are returned.
+    """
+    report = mesh_validator.validate(
+        config=req.config, mesh_stats=req.mesh_stats,
+        solver=req.solver, physics=req.physics, simulation_type=req.simulation_type,
+    )
+    issues = [
+        {
+            "name": c.name,
+            "human_name": humanize_mesh_check_name(c.name),
+            "status": c.status,
+            "description": c.description,
+            "detail": c.detail,
+            "value": c.value,
+            "category": c.category,
+        }
+        for c in report.issues
+    ]
+    metrics.incr("setup_validations_total", status=report.status)
+    return _json_safe({
+        "status": report.status,
+        "all_checks": report.all_checks_count,
+        "passed": report.passed_count,
+        "warnings": report.warning_count,
+        "failed": report.failed_count,
+        "issues": issues,
+        "predicted_error_types": report.predicted_error_types,
+        "estimated_corruption_risk": report.estimated_corruption_risk,
+        "recommendations": report.recommendations,
+        "processing_ms": report.processing_ms,
+    })
 
 
 @app.get("/v1/job/{job_id}", tags=["jobs"])
