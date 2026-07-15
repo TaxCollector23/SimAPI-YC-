@@ -6,3 +6,4 @@ httpx>=0.27.0
 ruff>=0.6.0
 mypy>=1.11.0
 pre-commit>=3.8.0
+scikit-learn>=1.4

@@ -1,0 +1,35 @@
+{
+  "seeds": [
+    42,
+    123,
+    456,
+    789,
+    1337
+  ],
+  "models": {
+    "gbt": {
+      "mape_improvement_mean": 23.09,
+      "mape_improvement_std": 14.32,
+      "mae_improvement_mean": 22.63,
+      "mae_improvement_std": 13.9
+    },
+    "mlp": {
+      "mape_improvement_mean": 52.58,
+      "mape_improvement_std": 13.62,
+      "mae_improvement_mean": 52.55,
+      "mae_improvement_std": 13.61
+    }
+  },
+  "exclusion": {
+    "precision": 0.996,
+    "recall": 0.546,
+    "per_category_recall_pct": {
+      "solver_divergence": 100.0,
+      "unit_conversion": 100.0,
+      "sensor_drift": 42.2,
+      "copy_paste": 97.1,
+      "cross_variable": 100.0
+    }
+  },
+  "elapsed_s": 4.5
+}

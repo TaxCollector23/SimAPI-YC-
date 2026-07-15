@@ -295,7 +295,7 @@ class PhysicsValidator:
         self.checks_run = 0
         self.total_processing_ms = 0.0
 
-    def validate(self, data, simulation_type, conditions, job_id=None):
+    def validate(self, data, simulation_type, conditions, job_id=None, max_exclusions=200):
         t0 = time.time()
         job_id = job_id or str(uuid.uuid4())[:8]
         all_checks, all_excl, warnings_list = [], [], []
@@ -380,7 +380,7 @@ class PhysicsValidator:
             exclusion_rate=round(excl_rate,4), confidence=conf, overall_status=overall,
             issues=issues, all_checks_count=len(all_checks),
             passed_count=len(passed), warning_count=len(warned), failed_count=len(failed),
-            exclusions=all_excl[:200], statistics=statistics, warnings=warnings_list,
+            exclusions=all_excl[:max_exclusions], statistics=statistics, warnings=warnings_list,
             provenance={"validator_version":"3.0.0","simulation_type":simulation_type.value,
                        "conditions":conditions,"columns_validated":list(data.columns),
                        "total_checks":len(all_checks)},
