@@ -8,10 +8,12 @@
 
 html {
   scroll-behavior: smooth;
+  overflow-x: hidden;
 }
 
 body {
   @apply bg-ink-950 text-white/80 antialiased;
+  overflow-x: hidden;
   background-image:
     radial-gradient(50% 40% at 50% -8%, rgba(59, 130, 246, 0.16), transparent 60%),
     radial-gradient(38% 30% at 88% 6%, rgba(139, 92, 246, 0.12), transparent 55%);
@@ -50,7 +52,7 @@ body {
   }
 
   .card {
-    @apply rounded-2xl border border-white/[0.08] bg-ink-900/60 backdrop-blur-sm;
+    @apply min-w-0 rounded-lg border border-white/[0.08] bg-ink-900/60 backdrop-blur-sm;
   }
 
   .hairline {
@@ -78,7 +80,8 @@ body {
 
   .eyebrow {
     @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03]
-      px-3 py-1 text-xs font-medium uppercase tracking-[0.14em] text-white/[0.55];
+      max-w-full justify-center px-3 py-1 text-center text-xs font-medium uppercase
+      tracking-[0.14em] text-white/[0.55];
   }
 
   /* Engineering grid backdrop */

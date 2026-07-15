@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Terminal, KeyRound } from "lucide-react";
+import { Terminal, KeyRound, ShieldCheck } from "lucide-react";
 import { HeroBackground } from "./hero-background";
 
 const container = {
@@ -15,49 +15,64 @@ const item = {
 };
 
 export function Hero() {
+  const proofPoints = ["CFD, FEA, robotics", "CLI, SDK, REST API", "CI fail gates"];
+
   return (
-    <section className="relative overflow-hidden pt-40 pb-16">
+    <section className="relative overflow-hidden pt-36 pb-16 sm:pt-40">
       <HeroBackground />
 
       <div className="container-tight relative">
         <motion.div
           variants={container}
-          initial="hidden"
+          initial={false}
           animate="show"
-          className="mx-auto flex max-w-3xl flex-col items-center text-center"
+          className="mx-auto flex w-full max-w-4xl flex-col items-center text-center"
         >
           <motion.div variants={item}>
             <span className="eyebrow">
               <span className="h-1.5 w-1.5 rounded-full bg-accent-cyan animate-pulse-soft" />
-              Simulation validation API
+              Simulation validation
             </span>
           </motion.div>
 
           <motion.h1
             variants={item}
-            className="mt-7 text-balance text-5xl font-semibold leading-[1.05] tracking-tight text-white sm:text-6xl md:text-7xl"
+            className="mt-7 w-full text-balance text-3xl font-semibold leading-[1.1] tracking-tight text-white sm:text-6xl md:text-7xl"
           >
-            Validate simulation results
-            <br />
-            before they reach{" "}
+            Validate simulation results before they reach{" "}
             <span className="text-gradient">production</span>.
           </motion.h1>
 
           <motion.p
             variants={item}
-            className="mt-6 max-w-xl text-lg leading-relaxed text-white/55"
+            className="mt-6 w-full max-w-2xl text-base leading-relaxed text-white/58 sm:text-lg"
           >
-            Upload simulation outputs and detect impossible values, failed constraints,
-            and physics violations before your team trusts the data.
+            Catch impossible outputs, constraint failures, and physics regressions
+            before simulation data feeds design reviews, autonomy stacks, or ML training.
           </motion.p>
 
-          <motion.div variants={item} className="mt-9 flex flex-wrap items-center justify-center gap-3">
+          <motion.div variants={item} className="mt-9 flex w-full flex-wrap items-center justify-center gap-3">
             <Link href="/dashboard" className="btn-accent">
               <KeyRound className="h-4 w-4" /> Get API Key
             </Link>
             <Link href="/docs" className="btn-ghost">
               <Terminal className="h-4 w-4" /> View Documentation
             </Link>
+          </motion.div>
+
+          <motion.div
+            variants={item}
+            className="mt-8 flex w-full flex-wrap items-center justify-center gap-2 text-xs text-white/42"
+          >
+            {proofPoints.map((point) => (
+              <span
+                key={point}
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-black/20 px-3 py-1.5"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-pass" />
+                {point}
+              </span>
+            ))}
           </motion.div>
         </motion.div>
       </div>

@@ -17,15 +17,15 @@ export function SectionHeader({
   return (
     <Reveal
       className={cn(
-        "flex flex-col gap-4",
+        "flex w-full flex-col gap-4",
         align === "center" ? "items-center text-center" : "items-start text-left",
       )}
     >
       {eyebrow && <span className="eyebrow">{eyebrow}</span>}
-      <h2 className="max-w-2xl text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+      <h2 className="w-full max-w-2xl text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
         {title}
       </h2>
-      {lede && <p className="max-w-2xl text-base leading-relaxed text-white/55">{lede}</p>}
+      {lede && <p className="w-full max-w-2xl text-base leading-relaxed text-white/55">{lede}</p>}
     </Reveal>
   );
 }

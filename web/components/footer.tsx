@@ -5,7 +5,7 @@ import { Logo } from "./logo";
 const pages = [
   { label: "Home", href: "/" },
   { label: "Dashboard", href: "/dashboard" },
-  { label: "Run a validation in the web", href: "/dashboard" },
+  { label: "Run a browser validation", href: "/dashboard" },
   { label: "Documentation", href: "/docs" },
   { label: "GitHub", href: site.github },
 ];

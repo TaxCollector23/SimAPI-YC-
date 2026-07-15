@@ -107,7 +107,7 @@ const notes: Note[] = [
             <code>from simapi import SimAPI</code>.
           </li>
           <li>
-            Node/CLI: <code>npm install -g simapi</code>, then <code>simapi login</code> and{" "}
+            Node/CLI: <code>npm install -g simapi-cli</code>, then <code>simapi login</code> and{" "}
             <code>simapi validate run.json</code>.
           </li>
           <li>
