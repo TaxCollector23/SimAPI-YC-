@@ -175,6 +175,32 @@ export function richValidate(rows: Record<string, unknown>[], simType: Simulatio
   // 4. Near-duplicate blocks (standardized cosine similarity, sliding window).
   nearDuplicates(rowNum, rows.length, exclude, addCheck);
 
+  // 5. Relationship drift: sensor drift buried in a wide marginal distribution but
+  // breaking a near-constant physical ratio (Re/v, Ma/v, P/ρ, …). Excludes trials
+  // whose ratio deviates from the clean baseline once a trend is confirmed.
+  const RATIO_PAIRS: [string, string][] = [
+    ["reynolds_number", "velocity"], ["mach_number", "velocity"], ["dynamic_pressure", "velocity"],
+    ["pressure", "density"], ["stress", "strain"], ["heat_flux", "temperature"],
+  ];
+  for (const [a, b] of RATIO_PAIRS) {
+    const ser: { idx: number; v: number }[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const rn = rowNum[i];
+      if (rn && rn[a] !== undefined && rn[b] !== undefined && rn[b] !== 0) ser.push({ idx: i, v: rn[a] / rn[b] });
+    }
+    if (ser.length < 40) continue;
+    const order = ser.map((_, k) => k), vals = ser.map((p) => p.v);
+    if (Math.abs(pearsonR(order, vals)) < 0.2) continue; // require a real trend
+    const k = Math.max(10, Math.floor(ser.length / 5));
+    const baseArr = vals.slice(0, k).sort((x, y) => x - y);
+    const base = baseArr[Math.floor(baseArr.length / 2)];
+    const mad = median(baseArr.map((v) => Math.abs(v - base)));
+    const scale = (mad > 0 ? mad * 1.4826 : std(vals.slice(0, k), mean(vals.slice(0, k)))) || 1e-9;
+    let flagged = 0;
+    for (const p of ser) if (Math.abs(p.v - base) / scale > 5) { exclude(p.idx, `Relationship drift: ${a}/${b} off clean baseline`, "warning"); flagged++; }
+    if (flagged) addCheck(`reldrift_${a}:${b}`, `Sensor drift in ${a}/${b}`, `${flagged} trials where ${a}/${b} deviates >5σ from the clean baseline — progressive sensor drift`, "temporal_drift", "warning");
+  }
+
   excluded = excludedIdx.size;
   const trialsValid = rows.length - excluded;
   const status = failed > 0 ? "failed" : warnings > 0 ? "warning" : "passed";
@@ -206,6 +232,7 @@ export function richValidate(rows: Record<string, unknown>[], simType: Simulatio
 
 // ── dataset-level helpers ──
 function mean(a: number[]): number { return a.reduce((x, y) => x + y, 0) / a.length; }
+function median(a: number[]): number { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : 0; }
 function std(a: number[], mu: number): number { return Math.sqrt(a.reduce((x, y) => x + (y - mu) ** 2, 0) / a.length); }
 function pearsonR(a: number[], b: number[]): number {
   const n = a.length, ma = mean(a), mb = mean(b);

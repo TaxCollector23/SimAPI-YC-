@@ -64,7 +64,7 @@ def inject_corruptions(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, set]]:
     half = n // 2
     log: dict[str, set] = {k: set() for k in
                            ("solver_divergence", "unit_conversion", "sensor_drift",
-                            "copy_paste", "cross_variable")}
+                            "copy_paste", "cross_variable", "measurement_noise")}
     first = np.arange(0, half)
     rng = np.random.default_rng(np.random.randint(0, 1_000_000))
 
@@ -96,11 +96,22 @@ def inject_corruptions(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, set]]:
     for j in range(start + 1, start + blk):
         df.iloc[j] = df.iloc[start] * (1 + np.random.normal(0, 1e-5, df.shape[1]))
         log["copy_paste"].add(int(j))
-    # Sensor drift: monotonic +8% creep on velocity over the second half.
-    drift = np.linspace(0.0, 0.08, n - half)
-    df.loc[half:, "velocity"] = df.loc[half:, "velocity"].values * (1 + drift)
-    for i in range(half, n):
+    # Sensor drift: a progressive 1→9% creep on velocity over a contiguous ~15%
+    # block in the second half (a realistic drifting-sensor window, not the whole run).
+    seg_len = int(n * 0.15)
+    d0 = int(rng.integers(half, n - seg_len))
+    seg = np.arange(d0, d0 + seg_len)
+    df.loc[seg, "velocity"] = df.loc[seg, "velocity"].values * (1 + np.linspace(0.01, 0.09, seg_len))
+    for i in seg:
         log["sensor_drift"].add(int(i))
+    # Measurement noise: a subtle ±12% perturbation of the target on a few first-half
+    # trials — stays in-bounds and breaks no relationship, so it is genuinely hard to
+    # detect. Included so recall is realistic, not a synthetic 100%.
+    for i in pick(0.05):
+        if any(i in log[c] for c in ("solver_divergence", "cross_variable")):
+            continue
+        df.at[i, "drag_coefficient"] = df.at[i, "drag_coefficient"] * rng.uniform(0.88, 1.12)
+        log["measurement_noise"].add(int(i))
     return df, log
 
 
@@ -155,6 +166,7 @@ def run_benchmark(seeds=(42, 123, 456, 789, 1337)) -> dict:
     t0 = time.time()
     results = {"gbt": [], "mlp": []}
     pr_runs = []
+    corruption_rates = []
     for seed in seeds:
         np.random.seed(seed)
         clean = gen(2000)
@@ -162,30 +174,37 @@ def run_benchmark(seeds=(42, 123, 456, 789, 1337)) -> dict:
         corrupted, log = inject_corruptions(train_pool.copy())
         cleaned, excluded = clean_with_simapi(corrupted)
         pr_runs.append(_prec_recall(excluded, log))
+        corruption_rates.append(len(set().union(*log.values())) / len(train_pool))
 
         for model_type in ("gbt", "mlp"):
+            r_clean = train_eval(train_pool, test, model_type)
             r_corrupted = train_eval(corrupted, test, model_type)
             r_simapi = train_eval(cleaned, test, model_type)
             results[model_type].append({
+                "mape_clean": r_clean["mape"], "mape_corrupted": r_corrupted["mape"], "mape_simapi": r_simapi["mape"],
                 "mae_improvement": (r_corrupted["mae"] - r_simapi["mae"]) / r_corrupted["mae"] * 100,
                 "mape_improvement": (r_corrupted["mape"] - r_simapi["mape"]) / r_corrupted["mape"] * 100,
             })
         print(f"  seed {seed}: excluded {pr_runs[-1]['n_excluded']}/{pr_runs[-1]['n_corrupted']} corrupted "
               f"(recall {pr_runs[-1]['recall']*100:.0f}%, precision {pr_runs[-1]['precision']*100:.0f}%)")
 
-    summary = {"seeds": list(seeds), "models": {}}
-    print(f"\n── Results (mean ± std over {len(seeds)} seeds) ──")
+    corruption_rate = float(np.mean(corruption_rates))
+    summary = {"seeds": list(seeds), "corruption_rate_pct": round(corruption_rate * 100, 1),
+               "train_trials": 1400, "test_trials": 600, "models": {}}
+    print(f"\n── Setup: {corruption_rate*100:.0f}% of ~1400 training trials corrupted (6 categories) ──")
+    print(f"── Results (mean ± std over {len(seeds)} seeds) ──")
     for model_type, runs in results.items():
         mape = [r["mape_improvement"] for r in runs]
-        mae = [r["mae_improvement"] for r in runs]
         summary["models"][model_type] = {
             "mape_improvement_mean": round(float(np.mean(mape)), 2),
             "mape_improvement_std": round(float(np.std(mape)), 2),
-            "mae_improvement_mean": round(float(np.mean(mae)), 2),
-            "mae_improvement_std": round(float(np.std(mae)), 2),
+            "mape_corrupted_mean": round(float(np.mean([r["mape_corrupted"] for r in runs])), 2),
+            "mape_simapi_mean": round(float(np.mean([r["mape_simapi"] for r in runs])), 2),
+            "mape_clean_mean": round(float(np.mean([r["mape_clean"] for r in runs])), 2),
         }
-        print(f"  {model_type.upper()} MAPE improvement: {np.mean(mape):5.1f}% ± {np.std(mape):.1f}%  |  "
-              f"MAE: {np.mean(mae):5.1f}% ± {np.std(mae):.1f}%")
+        m = summary["models"][model_type]
+        print(f"  {model_type.upper():4} MAPE:  corrupted {m['mape_corrupted_mean']:.2f}%  →  SimAPI {m['mape_simapi_mean']:.2f}%  "
+              f"(clean-data ceiling {m['mape_clean_mean']:.2f}%)   =  {np.mean(mape):.0f}% ± {np.std(mape):.0f}% better")
 
     prec = float(np.mean([p["precision"] for p in pr_runs]))
     rec = float(np.mean([p["recall"] for p in pr_runs]))

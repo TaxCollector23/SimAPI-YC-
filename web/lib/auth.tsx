@@ -56,6 +56,26 @@ function persistUser(user: User | null) {
   else localStorage.removeItem(USER_KEY);
 }
 
+/** Translate Firebase auth error codes into clear, actionable messages. */
+function fbError(e: unknown): Error {
+  const code = (e as { code?: string })?.code ?? "";
+  const map: Record<string, string> = {
+    "auth/unauthorized-domain": `This domain isn't authorized in Firebase yet. Add ${typeof location !== "undefined" ? location.hostname : "this domain"} under Firebase Console → Authentication → Settings → Authorized domains.`,
+    "auth/popup-blocked": "Your browser blocked the sign-in popup — allow popups for this site and try again.",
+    "auth/popup-closed-by-user": "Sign-in was cancelled.",
+    "auth/operation-not-allowed": "This sign-in method isn't enabled in Firebase (Authentication → Sign-in method).",
+    "auth/email-already-in-use": "An account with that email already exists. Sign in instead.",
+    "auth/invalid-email": "That email address looks invalid.",
+    "auth/weak-password": "Password is too weak — use at least 8 characters.",
+    "auth/wrong-password": "Incorrect password.",
+    "auth/invalid-credential": "Incorrect email or password.",
+    "auth/user-not-found": "No account found for that email. Create one first.",
+    "auth/too-many-requests": "Too many attempts — wait a moment and try again.",
+    "auth/network-request-failed": "Network error reaching Firebase — check your connection.",
+  };
+  return new Error(map[code] || (e as Error)?.message || "Authentication failed.");
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,17 +93,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInGoogle = useCallback(async () => {
     if (isFirebaseConfigured) {
-      const auth = await getFirebaseAuth();
-      const { GoogleAuthProvider, signInWithPopup } = await import("firebase/auth");
-      const cred = await signInWithPopup(auth, new GoogleAuthProvider());
-      const u: User = {
-        uid: cred.user.uid,
-        email: cred.user.email ?? "",
-        name: cred.user.displayName ?? cred.user.email ?? "User",
-        provider: "google",
-      };
-      persistUser(u);
-      setUser(u);
+      try {
+        const auth = await getFirebaseAuth();
+        const { GoogleAuthProvider, signInWithPopup } = await import("firebase/auth");
+        const cred = await signInWithPopup(auth, new GoogleAuthProvider());
+        const u: User = {
+          uid: cred.user.uid,
+          email: cred.user.email ?? "",
+          name: cred.user.displayName ?? cred.user.email ?? "User",
+          provider: "google",
+        };
+        persistUser(u);
+        setUser(u);
+      } catch (e) {
+        throw fbError(e);
+      }
       return;
     }
     // Local fallback: create a session tied to this browser.
@@ -99,12 +123,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signInEmail = useCallback(async (email: string, password: string) => {
     if (isFirebaseConfigured) {
-      const auth = await getFirebaseAuth();
-      const { signInWithEmailAndPassword } = await import("firebase/auth");
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      const u: User = { uid: cred.user.uid, email, name: cred.user.displayName ?? email, provider: "password" };
-      persistUser(u);
-      setUser(u);
+      try {
+        const auth = await getFirebaseAuth();
+        const { signInWithEmailAndPassword } = await import("firebase/auth");
+        const cred = await signInWithEmailAndPassword(auth, email, password);
+        const u: User = { uid: cred.user.uid, email, name: cred.user.displayName ?? email, provider: "password" };
+        persistUser(u);
+        setUser(u);
+      } catch (e) {
+        throw fbError(e);
+      }
       return;
     }
     const accts = readAccounts();
@@ -120,13 +148,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signUpEmail = useCallback(async (email: string, password: string, name: string) => {
     if (password.length < 8) throw new Error("Password must be at least 8 characters.");
     if (isFirebaseConfigured) {
-      const auth = await getFirebaseAuth();
-      const { createUserWithEmailAndPassword, updateProfile } = await import("firebase/auth");
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      if (name) await updateProfile(cred.user, { displayName: name });
-      const u: User = { uid: cred.user.uid, email, name: name || email, provider: "password" };
-      persistUser(u);
-      setUser(u);
+      try {
+        const auth = await getFirebaseAuth();
+        const { createUserWithEmailAndPassword, updateProfile } = await import("firebase/auth");
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        if (name) await updateProfile(cred.user, { displayName: name });
+        const u: User = { uid: cred.user.uid, email, name: name || email, provider: "password" };
+        persistUser(u);
+        setUser(u);
+      } catch (e) {
+        throw fbError(e);
+      }
       return;
     }
     const accts = readAccounts();

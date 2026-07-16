@@ -303,7 +303,7 @@ class PhysicsValidator:
         layers = [
             self._input_quality, self._plausibility, self._numerical_stability,
             self._statistical_distribution, self._outlier_detection,
-            self._near_duplicates,
+            self._near_duplicates, self._relationship_drift,
             self._cross_variable, self._conservation_laws, self._dimensional,
             self._temporal, self._monotonicity, self._symmetry, self._scaling_laws,
             self._information_entropy, self._autocorrelation, self._stationarity,
@@ -905,6 +905,74 @@ class PhysicsValidator:
             if dc is not None: C.append(dc)
             sc,se=self._check_distribution_shift(data,col)
             C.extend(sc); E.extend(se)
+            cc,ce=self._check_change_point_drift(data,col)
+            C.extend(cc); E.extend(ce)
+        return self._r(C,E)
+
+    def _changepoint_on_series(self, s, label, min_tau=0.15):
+        """CUSUM change-point on a 1-D series: if it has a statistically significant
+        trend, locate the shift and exclude the drifted segment. Shared by the
+        raw-column and cross-variable-residual drift detectors."""
+        from scipy.stats import kendalltau
+        s=s.dropna()
+        n=len(s)
+        if n<40: return [],[]
+        vals=s.values.astype(float); idx=s.index.to_numpy()
+        mu=float(vals.mean()); sd=float(vals.std())
+        if sd==0 or not np.isfinite(sd): return [],[]
+        tau,p=kendalltau(range(n),vals)
+        if p is None or p>=0.01 or abs(tau)<min_tau: return [],[]
+        cp=int(np.argmax(np.abs(np.cumsum(vals-mu))))
+        if cp<5 or cp>n-5: return [],[]
+        mb=float(vals[:cp+1].mean()); ma=float(vals[cp+1:].mean())
+        if abs(ma-mb) < 0.5*sd: return [],[]
+        base=float(np.median(vals[:max(5,n//7)]))
+        drift_after=abs(ma-base)>=abs(mb-base)
+        seg_idx=idx[cp+1:] if drift_after else idx[:cp+1]
+        z=abs((ma if drift_after else mb)-base)/sd
+        C=[self._w(f"temp_changepoint_{label}",False,
+            f"Change-point drift in {label} at trial ~{cp+1}",
+            f"Mean shifts {mb:.4g}→{ma:.4g} at trial {cp+1} (τ={tau:.2f}); drifted segment excluded",
+            float(z),0.5,"temporal_drift")]
+        E=[TrialExclusion(int(i),f"Drifted segment in {label} (change-point at trial {cp+1})","warning") for i in seg_idx]
+        return C,E
+
+    def _check_change_point_drift(self, data, col):
+        """Change-point drift on a raw column."""
+        return self._changepoint_on_series(data[col], col)
+
+    def _relationship_drift(self, data, sim, cond):
+        """Detect sensor drift buried in a column's marginal distribution but that
+        breaks a physical relationship. For pairs that should be proportional
+        (Re/v, Ma/v, P/ρ, σ/ε, …) the ratio is near-constant, so when a significant
+        trend exists we exclude precisely the trials whose ratio deviates from the
+        clean (early) baseline — high recall without gutting clean data."""
+        from scipy.stats import kendalltau
+        C=[]; E=[]; cols=set(data.columns)
+        pairs=[("reynolds_number","velocity"),("mach_number","velocity"),
+               ("dynamic_pressure","velocity"),("pressure","density"),
+               ("stress","strain"),("heat_flux","temperature"),
+               ("lift_coefficient","drag_coefficient"),("power_consumption","joint_torque")]
+        for a,b in pairs:
+            if not {a,b}.issubset(cols): continue
+            ratio=(data[a]/data[b].replace(0,np.nan)).replace([np.inf,-np.inf],np.nan).dropna()
+            if len(ratio)<40: continue
+            vals=ratio.values.astype(float); idx=ratio.index.to_numpy()
+            tau,p=kendalltau(range(len(vals)),vals)
+            if p is None or p>=0.01 or abs(tau)<0.12: continue      # a real trend must exist
+            k=max(10,len(vals)//5)
+            base=float(np.median(vals[:k]))
+            mad=float(np.median(np.abs(vals[:k]-base)))
+            scale=mad*1.4826 if mad>0 else max(float(np.std(vals[:k])),1e-9)
+            bad=np.abs(vals-base)/max(scale,1e-9) > 5.0            # >5 robust-σ from clean baseline
+            nb=int(bad.sum())
+            if nb==0: continue
+            C.append(self._w(f"reldrift_{a}:{b}",False,
+                f"Sensor drift in the {a}/{b} relationship",
+                f"{nb} trials where {a}/{b} deviates >5σ from the clean baseline (τ={tau:.2f}) — progressive sensor drift",
+                float(nb),0.0,"temporal_drift"))
+            for i in idx[bad]:
+                E.append(TrialExclusion(int(i),f"Relationship drift: {a}/{b} off its clean baseline","warning"))
         return self._r(C,E)
 
     def _check_monotonic_drift(self, data, col, threshold_pct=0.05):
