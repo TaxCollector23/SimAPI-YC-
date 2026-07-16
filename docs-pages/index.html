@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SimAPI Documentation</title>
+<meta name="description" content="SimAPI — validate simulation results before they reach production. Guides, API reference, SDKs, and the CLI." />
+<link rel="icon" href="https://sim-api.vercel.app/hero.svg" />
+<style>
+  :root{
+    --bg:#090a0f; --panel:#0f1118; --panel2:#12141d; --line:rgba(255,255,255,.08);
+    --text:#e6e9f0; --muted:#9aa2b4; --dim:#6b7280; --cyan:#22d3ee; --blue:#3b82f6;
+    --pass:#34d399; --warn:#fbbf24; --fail:#f87171; --code:#0b0d13;
+    --mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.65;
+    background-image:radial-gradient(60% 40% at 50% -10%,rgba(59,130,246,.14),transparent 60%);
+    background-repeat:no-repeat}
+  a{color:var(--cyan);text-decoration:none}
+  a:hover{color:#fff}
+  code{font-family:var(--mono);font-size:.85em;background:rgba(255,255,255,.06);padding:.12em .4em;border-radius:5px;color:#cbd5e1}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;font-family:var(--mono);font-size:13px;line-height:1.6}
+  pre code{background:none;padding:0;color:#c7d0e0}
+  .layout{display:grid;grid-template-columns:264px 1fr;max-width:1200px;margin:0 auto;gap:0}
+  /* Sidebar */
+  aside{position:sticky;top:0;height:100vh;overflow-y:auto;border-right:1px solid var(--line);padding:26px 20px}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:22px}
+  .brand img{height:30px}
+  .brand b{font-size:16px;letter-spacing:-.01em}
+  nav .grp{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:var(--dim);margin:20px 0 8px}
+  nav a{display:block;color:var(--muted);padding:5px 10px;border-radius:8px;font-size:14px}
+  nav a:hover{background:rgba(255,255,255,.04);color:#fff}
+  /* Content */
+  main{padding:40px 48px 120px;min-width:0;max-width:820px}
+  h1{font-size:34px;letter-spacing:-.02em;margin:.2em 0 .3em}
+  h2{font-size:22px;letter-spacing:-.01em;margin:2.2em 0 .6em;padding-top:8px;border-top:1px solid var(--line)}
+  h2:first-of-type{border-top:none}
+  h3{font-size:16px;margin:1.6em 0 .4em;color:#dfe4ee}
+  p,li{color:var(--muted)}
+  .lede{font-size:18px;color:#c3c9d6;margin-bottom:.4em}
+  .grad{background:linear-gradient(90deg,var(--cyan),var(--blue));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .pill{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);border:1px solid var(--line);background:rgba(0,0,0,.25);padding:5px 11px;border-radius:999px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--cyan)}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:18px 0}
+  .card{border:1px solid var(--line);background:var(--panel);border-radius:14px;padding:16px}
+  .card b{color:#fff}
+  .card p{margin:.3em 0 0;font-size:13px}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  td code{white-space:nowrap}
+  .tag{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:6px;border:1px solid var(--line)}
+  .post{color:var(--blue);border-color:rgba(59,130,246,.3)}
+  .note{border:1px solid rgba(34,211,238,.25);background:rgba(34,211,238,.05);border-radius:12px;padding:12px 15px;margin:16px 0;font-size:14px;color:#bfe9f2}
+  footer{border-top:1px solid var(--line);margin-top:60px;padding-top:24px;color:var(--dim);font-size:13px}
+  .top{display:none}
+  @media(max-width:820px){
+    .layout{grid-template-columns:1fr}
+    aside{display:none} main{padding:28px 20px 90px}
+    .cards{grid-template-columns:1fr}
+    .top{display:flex;align-items:center;gap:10px;padding:16px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(9,10,15,.9);backdrop-filter:blur(8px);z-index:5}
+    .top img{height:26px}
+  }
+</style>
+</head>
+<body>
+<div class="top"><img src="https://sim-api.vercel.app/hero.svg" alt="SimAPI"/><b>SimAPI Docs</b></div>
+<div class="layout">
+  <aside>
+    <a class="brand" href="#top"><img src="https://sim-api.vercel.app/hero.svg" alt="SimAPI"/><b>SimAPI</b></a>
+    <nav>
+      <div class="grp">Get started</div>
+      <a href="#overview">Overview</a>
+      <a href="#install">Install the CLI</a>
+      <a href="#quickstart">Quickstart</a>
+      <a href="#auth">Authentication</a>
+      <div class="grp">API reference</div>
+      <a href="#base">Base URL</a>
+      <a href="#validate">POST /v1/validate</a>
+      <a href="#setup">POST /v1/validate/setup</a>
+      <a href="#health">GET /v1/health</a>
+      <a href="#errors">Errors</a>
+      <div class="grp">SDKs</div>
+      <a href="#python">Python</a>
+      <a href="#node">Node / TypeScript</a>
+      <a href="#cli">CLI</a>
+      <div class="grp">More</div>
+      <a href="#cicd">CI/CD</a>
+      <a href="https://sim-api.vercel.app">Dashboard ↗</a>
+      <a href="https://github.com/TaxCollector23/SimAPI-YC-">GitHub ↗</a>
+    </nav>
+  </aside>
+
+  <main id="top">
+    <span class="pill"><span class="dot"></span> Simulation validation API</span>
+    <h1 id="overview">SimAPI <span class="grad">Documentation</span></h1>
+    <p class="lede">Validate simulation results — and simulation setups — before they reach production.</p>
+    <p>SimAPI checks engineering simulation output against physical laws: it detects impossible values, failed
+    constraints, physics violations, sensor drift, unit errors, and duplicates, then tells you which trials are
+    safe to trust or train on. A pre-flight layer validates the mesh + solver setup <em>before</em> you run and
+    predicts which output checks will fail. Deterministic where physics is exact, AI-assisted where it isn't.</p>
+
+    <div class="cards">
+      <div class="card"><b>Deterministic engine</b><p>Rule-based physics checks — plausibility bounds, conservation laws, cross-variable and dimensional consistency.</p></div>
+      <div class="card"><b>Pre-flight validation</b><p>Judge a mesh/solver config before the run and predict likely output failures.</p></div>
+      <div class="card"><b>Corruption detection</b><p>Monotonic drift, distribution shift, near-duplicate blocks, and unit errors — with per-trial exclusions.</p></div>
+      <div class="card"><b>AI second pass</b><p>An LLM reviews distributions, correlations, and sample rows as an engineer-in-charge.</p></div>
+    </div>
+
+    <h2 id="install">Install the CLI</h2>
+    <p>Pick whichever fits your stack — the command installed is always <code>simapi</code>.</p>
+    <pre><code># macOS / Linux
+curl -fsSL https://sim-api.vercel.app/install.sh | sh
+
+# Windows (PowerShell)
+irm https://sim-api.vercel.app/install.ps1 | iex
+
+# Homebrew
+brew install TaxCollector23/tap/simapi
+
+# npm
+npm install -g simapi-cli</code></pre>
+
+    <h2 id="quickstart">Quickstart</h2>
+    <p>Validate a batch of simulation trials against the aerodynamics ruleset:</p>
+    <pre><code>curl -X POST https://sim-api.vercel.app/api/v1/validate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "simulation_type": "aerodynamics",
+    "conditions": { "velocity": 15.0 },
+    "data": [
+      { "cd": 0.312, "cl": 0.847, "re": 415000 },
+      { "cd": 999.0, "cl": 0.850, "re": 418000 }
+    ]
+  }'</code></pre>
+    <p>The response returns <code>status</code> (<code>passed</code>/<code>warning</code>/<code>failed</code>),
+    the surfaced <code>issues</code>, per-trial <code>exclusions</code>, per-column <code>statistics</code>, and a
+    <code>training_ready</code> verdict.</p>
+    <div class="note">No key required for the public demo endpoint. For higher limits, generate an API key on the
+    <a href="https://sim-api.vercel.app/dashboard">dashboard</a> and send it as <code>X-API-Key</code>.</div>
+
+    <h2 id="auth">Authentication</h2>
+    <p>Send your key in the <code>X-API-Key</code> header (preferred) or as a bearer token. The SDKs and CLI read
+    <code>SIMAPI_API_KEY</code> from the environment automatically.</p>
+    <pre><code>curl https://sim-api.vercel.app/api/v1/validate \
+  -H "X-API-Key: sk_live_..."</code></pre>
+
+    <h2 id="base">Base URL</h2>
+    <pre><code>https://sim-api.vercel.app/api</code></pre>
+    <p>All endpoints are versioned under <code>/v1</code>. The response schema within a version is additive-only.</p>
+
+    <h2 id="validate">POST /v1/validate</h2>
+    <p>Runs the deterministic engine on a batch of trials and (when enabled) an AI second pass. Returns only
+    surfaced issues — passed checks are counted, not listed.</p>
+    <h3>Request</h3>
+    <table>
+      <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      <tr><td><code>data</code></td><td>array</td><td>Trials as a list of records (required).</td></tr>
+      <tr><td><code>simulation_type</code></td><td>string</td><td>Domain, e.g. <code>aerodynamics</code>, <code>structural</code>, <code>thermodynamics</code>, <code>robotics</code>, <code>fluid_dynamics</code>.</td></tr>
+      <tr><td><code>conditions</code></td><td>object</td><td>Boundary conditions (velocity, density, …).</td></tr>
+      <tr><td><code>run_ai</code></td><td>boolean</td><td>Run the AI reviewer (default true).</td></tr>
+    </table>
+    <h3>Response</h3>
+    <table>
+      <tr><th>Field</th><th>Description</th></tr>
+      <tr><td><code>status</code></td><td><code>passed</code> · <code>warning</code> · <code>failed</code></td></tr>
+      <tr><td><code>unique_checks</code></td><td>Distinct rules applied (e.g. 15).</td></tr>
+      <tr><td><code>all_checks</code></td><td>Total evaluations = unique rules × trials.</td></tr>
+      <tr><td><code>trials_valid</code> / <code>trials_excluded</code></td><td>Split after exclusions.</td></tr>
+      <tr><td><code>training_ready</code></td><td>Whether the cleaned set is safe for ML training.</td></tr>
+      <tr><td><code>issues</code></td><td>Warnings + failures, each with <code>name</code>, <code>human_name</code>, <code>detail</code>, <code>category</code>.</td></tr>
+      <tr><td><code>exclusions</code></td><td>Per-trial <code>trial_index</code>, <code>reason</code>, <code>severity</code>.</td></tr>
+      <tr><td><code>statistics</code></td><td>Per-column mean/std/min/max/cv/skew.</td></tr>
+      <tr><td><code>ai</code></td><td>AI review (<code>status</code>, <code>assessment</code>, <code>concerns</code>) when enabled.</td></tr>
+    </table>
+
+    <h2 id="setup">POST /v1/validate/setup</h2>
+    <p>Pre-flight validation: judge a mesh + solver + physics configuration <em>before</em> it runs and predict
+    which output checks are likely to fail.</p>
+    <pre><code>curl -X POST https://sim-api.vercel.app/api/v1/validate/setup \
+  -H "Content-Type: application/json" \
+  -d '{ "config": {
+    "solver": "openfoam",
+    "flow_conditions": { "reynolds_number": 1000000 },
+    "mesh": { "estimated_yplus": 45, "max_non_orthogonality": 88 },
+    "solver_settings": { "turbulence_model": "kOmegaSST" }
+  }}'</code></pre>
+    <p>Returns <code>status</code> (<code>ready</code>/<code>warning</code>/<code>not_ready</code>),
+    <code>estimated_corruption_risk</code>, humanized <code>predicted_failures</code> (each with a
+    <em>why</em> and a <em>fix</em>), and actionable <code>recommendations</code>.</p>
+
+    <h2 id="health">GET /v1/health</h2>
+    <pre><code>curl https://sim-api.vercel.app/api/v1/health</code></pre>
+
+    <h2 id="errors">Errors</h2>
+    <p>Errors use a consistent envelope with a stable <code>code</code> and a <code>request_id</code>:</p>
+    <pre><code>{ "error": { "code": "bad_request", "message": "`data` must be a non-empty array.", "request_id": "3f9c…a12" } }</code></pre>
+    <table>
+      <tr><th>Status</th><th>Code</th></tr>
+      <tr><td>400</td><td><code>bad_request</code></td></tr>
+      <tr><td>401</td><td><code>unauthorized</code></td></tr>
+      <tr><td>413</td><td><code>payload_too_large</code></td></tr>
+      <tr><td>422</td><td><code>validation_failed</code></td></tr>
+      <tr><td>429</td><td><code>rate_limited</code></td></tr>
+    </table>
+
+    <h2 id="python">Python SDK</h2>
+    <pre><code>pip install simapi
+
+import simapi
+result = simapi.validate(
+    data="cfd_output.csv",
+    simulation_type="aerodynamics",
+    conditions={"velocity": 15.0, "altitude": 120.0},
+)
+print(result.status)          # "passed"
+print(result.training_ready)  # True</code></pre>
+
+    <h2 id="node">Node / TypeScript SDK</h2>
+    <pre><code>npm install simapi-cli
+
+import { SimAPI } from "simapi-cli";
+const client = new SimAPI(process.env.SIMAPI_API_KEY);
+const result = await client.validate(rows, { simulationType: "aerodynamics" });
+if (result.status === "failed") throw new Error("Simulation rejected");</code></pre>
+
+    <h2 id="cli">CLI</h2>
+    <pre><code>simapi login                 # browser sign-in, saves your key
+simapi init                  # write a sample simapi.json
+simapi validate run.json     # score, status, warnings, violations, time
+simapi watch run.json        # re-validate on change
+simapi validate run.json --fail-on warning   # non-zero exit for CI
+simapi usage                 # requests today/month, quota, avg time
+simapi api-key show|rotate|delete</code></pre>
+
+    <h2 id="cicd">CI/CD</h2>
+    <p>Turn a validation verdict into a build gate with <code>--fail-on</code>:</p>
+    <pre><code>- name: Validate simulation output
+  run: simapi validate results.json --fail-on warning
+  env:
+    SIMAPI_API_KEY: ${{ secrets.SIMAPI_API_KEY }}</code></pre>
+
+    <footer>
+      SimAPI — the CI/CD layer for engineering simulations ·
+      <a href="https://sim-api.vercel.app">sim-api.vercel.app</a> ·
+      <a href="https://github.com/TaxCollector23/SimAPI-YC-">GitHub</a>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
