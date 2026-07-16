@@ -72,6 +72,7 @@ export interface ValidationResult {
   training_ready: boolean;
   processing_ms: number;
   all_checks: number;
+  unique_checks?: number;
   passed: number;
   warnings: number;
   failed: number;
@@ -138,11 +139,13 @@ export interface SetupIssue {
   name: string; human_name: string; status: "warning" | "failed";
   description: string; detail: string; value: number | null; category: string;
 }
+export interface PredictedFailure { check: string; label: string; why: string; fix: string }
 export interface SetupResult {
   status: "ready" | "warning" | "not_ready";
   all_checks: number; passed: number; warnings: number; failed: number;
   issues: SetupIssue[];
   predicted_error_types: string[];
+  predicted_failures?: PredictedFailure[];
   estimated_corruption_risk: number;
   recommendations: string[];
   processing_ms: number;

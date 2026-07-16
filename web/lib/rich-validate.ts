@@ -32,6 +32,7 @@ export interface RichResult {
   training_ready: boolean;
   processing_ms: number;
   all_checks: number;
+  unique_checks: number;
   passed: number;
   warnings: number;
   failed: number;
@@ -74,6 +75,7 @@ export function richValidate(rows: Record<string, unknown>[], simType: Simulatio
   const byCat: Record<string, { passed: number; warning: number; failed: number }> = {};
   const columnsRenamed: Record<string, string> = {};
   const columnValues: Record<string, number[]> = {};
+  const uniqueCheckNames = new Set<string>();
 
   rows.forEach((trial, i) => {
     // Track renames + collect numeric columns for statistics.
@@ -90,6 +92,7 @@ export function richValidate(rows: Record<string, unknown>[], simType: Simulatio
     warnings += r.warnings;
     failed += r.failed;
     for (const c of r.checks) {
+      uniqueCheckNames.add(c.name);
       const b = (byCat[c.category] ??= { passed: 0, warning: 0, failed: 0 });
       b[c.status] += 1;
       if (c.status !== "passed" && !issueMap.has(c.name)) {
@@ -110,6 +113,69 @@ export function richValidate(rows: Record<string, unknown>[], simType: Simulatio
     }
   });
 
+  // ── Dataset-level detections (parity with the Python engine + benchmark):
+  // monotonic drift, distribution shift, unit errors, near-duplicates. ──
+  const excludedIdx = new Set<number>(exclusions.map((e) => e.trial_index));
+  const exclude = (idx: number, reason: string, severity = "warning") => {
+    if (!excludedIdx.has(idx)) { excludedIdx.add(idx); exclusions.push({ trial_number: idx + 1, trial_index: idx, reason, severity }); }
+  };
+  const addCheck = (name: string, human: string, detail: string, cat: string, sev: "warning" | "failed") => {
+    uniqueCheckNames.add(name); allChecks += 1;
+    (byCat[cat] ??= { passed: 0, warning: 0, failed: 0 })[sev] += 1;
+    if (sev === "failed") failed += 1; else warnings += 1;
+    if (!issueMap.has(name)) issueMap.set(name, { name, human_name: human, status: sev, description: detail, detail, value: null, category: cat });
+  };
+
+  const series: Record<string, { idx: number; v: number }[]> = {};
+  const rowNum: Record<number, Record<string, number>> = {};
+  rows.forEach((trial, i) => {
+    for (const [rawKey, raw] of Object.entries(trial)) {
+      const key = canonical(rawKey);
+      const n = typeof raw === "number" ? raw : Array.isArray(raw) ? Math.hypot(...(raw as number[])) : NaN;
+      if (Number.isFinite(n)) { (series[key] ??= []).push({ idx: i, v: n as number }); (rowNum[i] ??= {})[key] = n as number; }
+    }
+  });
+
+  // 1. Monotonic drift (Pearson of value vs trial order — catches sub-R=0.7 creep).
+  for (const [col, s] of Object.entries(series)) {
+    if (s.length < 20) continue;
+    const r = pearsonR(s.map((_, k) => k), s.map((p) => p.v));
+    if (Number.isFinite(r) && Math.abs(r) > 0.35)
+      addCheck(`temp_drift_${col}`, `Monotonic drift in ${col}`, `${col} trends monotonically over the run (r=${r.toFixed(2)}) — possible sensor drift`, "temporal_drift", "warning");
+  }
+  // 2. Distribution shift (10 windows; window mean >2.5σ from dataset mean → exclude).
+  for (const [col, s] of Object.entries(series)) {
+    if (s.length < 50) continue;
+    const vals = s.map((p) => p.v), mu = mean(vals), sd = std(vals, mu);
+    if (sd === 0) continue;
+    const w = Math.floor(s.length / 10);
+    for (let win = 0; win < 10; win++) {
+      const chunk = s.slice(win * w, (win + 1) * w);
+      if (!chunk.length) continue;
+      const z = Math.abs(mean(chunk.map((p) => p.v)) - mu) / sd;
+      if (z > 2.5) {
+        addCheck(`temp_shift_${col}_w${win}`, `Distribution shift in ${col}`, `Window ${win + 1} mean deviates ${z.toFixed(1)}σ — condition change`, "distribution_shift", "warning");
+        for (const p of chunk) exclude(p.idx, `Distribution shift in ${col} (${z.toFixed(1)}σ)`, "warning");
+      }
+    }
+  }
+  // 3. Gas-constant unit consistency: P/(ρT) must be ~287 J/kg·K.
+  for (let i = 0; i < rows.length; i++) {
+    const rn = rowNum[i];
+    if (!rn) continue;
+    const P = rn.pressure, rho = rn.density, T = rn.temperature;
+    if (P && rho && T) {
+      const R = P / (rho * T);
+      if (R < 250 || R > 320) {
+        addCheck("cx_gas_constant_check", "Gas-constant unit consistency", "P/(ρT) deviates from 287 J/kg·K — likely a Pa/kPa unit error", "cross_variable", "failed");
+        exclude(i, `Gas constant P/(ρT)=${R.toFixed(1)} (expected 287) — unit error?`, "critical");
+      }
+    }
+  }
+  // 4. Near-duplicate blocks (standardized cosine similarity, sliding window).
+  nearDuplicates(rowNum, rows.length, exclude, addCheck);
+
+  excluded = excludedIdx.size;
   const trialsValid = rows.length - excluded;
   const status = failed > 0 ? "failed" : warnings > 0 ? "warning" : "passed";
   const statistics: Record<string, RichStat> = {};
@@ -126,6 +192,7 @@ export function richValidate(rows: Record<string, unknown>[], simType: Simulatio
     training_ready: status !== "failed" && trialsValid >= 1,
     processing_ms: Math.round((performance.now() - t0) * 100) / 100,
     all_checks: allChecks,
+    unique_checks: uniqueCheckNames.size,
     passed,
     warnings,
     failed,
@@ -135,6 +202,42 @@ export function richValidate(rows: Record<string, unknown>[], simType: Simulatio
     checks_by_category: byCat,
     columns_renamed: columnsRenamed,
   };
+}
+
+// ── dataset-level helpers ──
+function mean(a: number[]): number { return a.reduce((x, y) => x + y, 0) / a.length; }
+function std(a: number[], mu: number): number { return Math.sqrt(a.reduce((x, y) => x + (y - mu) ** 2, 0) / a.length); }
+function pearsonR(a: number[], b: number[]): number {
+  const n = a.length, ma = mean(a), mb = mean(b);
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; num += x * y; da += x * x; db += y * y; }
+  return da && db ? num / Math.sqrt(da * db) : NaN;
+}
+function nearDuplicates(
+  rowNum: Record<number, Record<string, number>>, n: number,
+  exclude: (idx: number, reason: string, sev?: string) => void,
+  addCheck: (name: string, human: string, detail: string, cat: string, sev: "warning" | "failed") => void,
+) {
+  const counts: Record<string, number> = {};
+  for (let i = 0; i < n; i++) { const rn = rowNum[i]; if (!rn) continue; for (const k of Object.keys(rn)) counts[k] = (counts[k] || 0) + 1; }
+  const cols = Object.keys(counts).filter((k) => counts[k] === n);
+  if (cols.length < 2 || n < 10) return;
+  const X: number[][] = [];
+  for (let i = 0; i < n; i++) X.push(cols.map((c) => rowNum[i][c]));
+  const means = cols.map((_, j) => mean(X.map((r) => r[j])));
+  const sds = cols.map((_, j) => std(X.map((r) => r[j]), means[j]) || 1);
+  const Xn = X.map((r) => { const z = r.map((v, j) => (v - means[j]) / sds[j]); const nrm = Math.hypot(...z) || 1; return z.map((v) => v / nrm); });
+  const window = 5;
+  for (let i = 0; i < n - window; i++) {
+    for (let j = i + 1; j <= i + window && j < n; j++) {
+      const sim = Xn[i].reduce((s, v, k) => s + v * Xn[j][k], 0);
+      if (sim > 0.999) {
+        addCheck(`nd_block_${i}`, "Near-duplicate trial", `Trial ${i + 1} is nearly identical to trial ${j + 1} (cosine ${sim.toFixed(4)}) — likely copy-paste`, "near_duplicates", "warning");
+        exclude(i, `Near-duplicate of trial ${j + 1} (sim ${sim.toFixed(4)})`, "warning");
+        break;
+      }
+    }
+  }
 }
 
 /** Deterministic demo dataset: 200 aerodynamics trials with several corruptions. */

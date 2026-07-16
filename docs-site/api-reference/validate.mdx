@@ -41,10 +41,14 @@ layer (unless disabled). Returns a full validation report.
 <ResponseField name="trials_excluded" type="integer">Rows excluded.</ResponseField>
 <ResponseField name="exclusion_rate" type="number">Fraction excluded (0–1).</ResponseField>
 <ResponseField name="training_ready" type="boolean">Safe for ML training.</ResponseField>
-<ResponseField name="all_checks" type="integer">Total checks run (287).</ResponseField>
-<ResponseField name="issues" type="array">Surfaced warnings + failures.</ResponseField>
-<ResponseField name="statistics" type="object">Per-column summary stats.</ResponseField>
-<ResponseField name="ai_status" type="string">`pending` · `disabled` · `passed` · `warning` · `failed`.</ResponseField>
+<ResponseField name="unique_checks" type="integer">Distinct validation rules applied (e.g. 15).</ResponseField>
+<ResponseField name="all_checks" type="integer">Total check evaluations = unique rules × trials.</ResponseField>
+<ResponseField name="passed / warnings / failed" type="integer">Evaluation counts by status.</ResponseField>
+<ResponseField name="issues" type="array">Surfaced warnings + failures only (each with `name`, `human_name`, `detail`, `category`).</ResponseField>
+<ResponseField name="exclusions" type="array">Per-trial exclusions with `trial_index`, `reason`, `severity`.</ResponseField>
+<ResponseField name="statistics" type="object">Per-column summary stats (mean, std, min, max, cv, skewness).</ResponseField>
+<ResponseField name="ai" type="object">AI second-pass review (`status`, `assessment`, `concerns`) when enabled.</ResponseField>
+<ResponseField name="ai_status" type="string">`completed` · `disabled` · `error`.</ResponseField>
 
 <RequestExample>
 

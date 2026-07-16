@@ -457,7 +457,7 @@ export function ValidationDashboard() {
 
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {[
-                      { l: "Checks run",    v: result.all_checks.toLocaleString(), c: "text-accent-cyan" },
+                      { l: "Unique checks", v: String(result.unique_checks ?? result.all_checks), c: "text-accent-cyan" },
                       { l: "Valid trials",  v: `${result.trials_valid} / ${result.trials_submitted}`, c: "text-white" },
                       { l: "Issues",        v: String(result.warnings + result.failed), c: result.failed > 0 ? "text-red-400" : result.warnings > 0 ? "text-amber-400" : "text-pass" },
                       { l: "Time",          v: `${result.processing_ms}ms`, c: "text-pass" },
@@ -469,20 +469,27 @@ export function ValidationDashboard() {
                     ))}
                   </div>
 
-                  <div className={cn("mt-4 rounded-xl border px-4 py-2.5 text-xs flex items-center gap-2 font-medium",
+                  <div className={cn("mt-4 rounded-xl border px-4 py-3 text-xs",
                     result.training_ready
                       ? "border-pass/25 bg-pass/5 text-pass"
                       : "border-red-400/25 bg-red-400/5 text-red-400")}>
-                    {result.training_ready
-                      ? <><CheckCircle className="h-3.5 w-3.5" /> Training ready — {result.trials_valid} validated trials available for ML pipeline</>
-                      : <><XCircle className="h-3.5 w-3.5" /> Not training ready — {result.trials_excluded} trials excluded, review issues below</>}
+                    <div className="flex items-center gap-2 font-medium">
+                      {result.training_ready
+                        ? <><CheckCircle className="h-3.5 w-3.5" /> Training ready — {result.trials_valid} validated trials available for ML pipeline</>
+                        : <><XCircle className="h-3.5 w-3.5" /> Not training ready — {result.trials_excluded} trials excluded, review issues below</>}
+                    </div>
+                    <p className="mt-2 leading-relaxed text-white/45">
+                      {result.trials_excluded > 0
+                        ? <>SimAPI excluded {result.trials_excluded} anomalous trial{result.trials_excluded !== 1 ? "s" : ""} (e.g. diverged runs like <code className="font-mono text-white/60">cd=999</code>, unit-error rows, sensor drift, duplicates). Training a surrogate model on these injects mislabeled targets and out-of-distribution inputs — they bias predictions and destabilize convergence. Excluding them means your model learns only from physically valid data, which is why {result.status !== "failed" ? "the remaining set is training-ready" : "the set needs cleanup first"}.</>
+                        : <>Every trial passed the physics checks, so the full dataset is safe to train on — no anomalies to exclude.</>}
+                    </p>
                   </div>
                 </div>
 
                 {/* Check bar */}
                 <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
                   <p className="text-xs uppercase tracking-widest text-white/30 mb-4">
-                    {result.all_checks.toLocaleString()} physics checks — only issues shown below
+                    {result.unique_checks ?? "—"} core rules validated across {result.trials_submitted.toLocaleString()} trials — only issues shown below
                   </p>
                   {[
                     { label: "Passed",   n: result.passed,   color: "bg-pass",      text: "text-pass" },
@@ -520,7 +527,7 @@ export function ValidationDashboard() {
                 <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
                   <p className="text-xs uppercase tracking-widest text-white/30 mb-3">
                     {issues.length === 0
-                      ? `All ${result.all_checks.toLocaleString()} checks passed`
+                      ? `All ${result.unique_checks ?? ""} core rules passed across ${result.trials_submitted} trials`
                       : `${issues.length} issue${issues.length !== 1 ? "s" : ""} found — click to expand`}
                   </p>
                   {issues.length === 0 ? (

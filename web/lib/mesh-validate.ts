@@ -13,6 +13,13 @@ export interface MeshIssue {
   category: string;
 }
 
+export interface PredictedFailure {
+  check: string;      // raw output-check id (e.g. "cx_yplus_wall")
+  label: string;      // human-readable name
+  why: string;        // why it will fail given the current setup
+  fix: string;        // concrete, actionable change
+}
+
 export interface SetupReport {
   status: "ready" | "warning" | "not_ready";
   all_checks: number;
@@ -20,11 +27,34 @@ export interface SetupReport {
   warnings: number;
   failed: number;
   issues: MeshIssue[];
-  predicted_error_types: string[];
+  predicted_error_types: string[];      // raw ids (back-compat)
+  predicted_failures: PredictedFailure[];
   estimated_corruption_risk: number;
   recommendations: string[];
   processing_ms: number;
 }
+
+// Output-check id → human name + why-it-fires + how-to-fix.
+const PREDICTED: Record<string, { label: string; why: string; fix: string }> = {
+  cx_yplus_wall: { label: "Wall y+ resolution", why: "The near-wall mesh does not match the turbulence model's y+ requirement, so wall shear and heat transfer will be computed on an unresolved boundary layer.", fix: "Re-mesh the near-wall region to hit y+≈1 for low-Re models (k-ω SST, Spalart-Allmaras) or 30<y+<300 for wall functions (k-ε)." },
+  th_heat_transfer_coeff: { label: "Heat-transfer coefficient", why: "Unresolved near-wall cells make the temperature gradient at the wall inaccurate, so the reported heat-transfer coefficient will be off.", fix: "Refine the boundary-layer mesh and confirm y+ is in range for your model." },
+  turb_tke_pos: { label: "Turbulent kinetic energy positivity", why: "Poor near-wall resolution or a Re/turbulence-model mismatch produces negative or spurious turbulent kinetic energy in the output.", fix: "Fix the y+ / turbulence-model pairing and ensure the inlet turbulence intensity is physical." },
+  ns_nan: { label: "NaN in the solution field", why: "The timestep violates the CFL condition or the residual target is too loose, so the solver diverges and writes NaN.", fix: "Lower the timestep to satisfy CFL, or tighten the convergence tolerance to ≤1e-4." },
+  ns_inf: { label: "Infinite value in the solution field", why: "Aggressive relaxation or CFL violation causes the solution to blow up to Inf before it converges.", fix: "Reduce relaxation factors into 0.2–0.9 and cut the timestep." },
+  ns_spike: { label: "Velocity spike outlier", why: "High-aspect-ratio, skewed, or non-orthogonal cells inject spurious velocity spikes into the field.", fix: "Repair the offending cells — lower aspect ratio, skewness, and non-orthogonality." },
+  outlier_velocity: { label: "Velocity outlier detection", why: "Degenerate cells produce a handful of trials whose velocity sits far outside the physical distribution.", fix: "Improve mesh quality near the flagged regions before running." },
+  conv_res_momentum_residual: { label: "Momentum residual convergence", why: "Mesh quality issues stall the momentum residual, so it never reaches the target and the run is under-converged.", fix: "Improve cell quality and add non-orthogonal correctors, then re-check residuals." },
+  conv_res_continuity_residual: { label: "Continuity residual convergence", why: "Loose tolerances, too few iterations, or an under-resolved mesh leave the continuity residual above target.", fix: "Tighten the residual target, raise max iterations, and refine the mesh where needed." },
+  input_forward_fill: { label: "Forward-filled (stalled) output", why: "When the solver diverges or stops early, monitors forward-fill the last value — a tell-tale corruption pattern.", fix: "Ensure the run actually converges (CFL, tolerance, iterations) so no values are held constant." },
+  cx_re_velocity: { label: "Reynolds ↔ velocity consistency", why: "The turbulence model doesn't match the Reynolds regime, so the reported Re is inconsistent with the velocity field.", fix: "Pick a turbulence model appropriate for the Re regime (laminar vs RANS model)." },
+  aero_drag_coefficient: { label: "Drag coefficient plausibility", why: "An inappropriate turbulence model for external aero mispredicts separation, corrupting the drag coefficient.", fix: "Use k-ω SST or Spalart-Allmaras for external aerodynamics instead of k-ε." },
+  cx_gas_constant_check: { label: "Gas-constant unit consistency", why: "Reference pressure/density/temperature don't satisfy P/(ρT)=287 J/kg·K — usually a Pa vs kPa unit slip that propagates through the output.", fix: "Correct the reference-value units so P/(ρT) equals ~287." },
+  cx_mach_vel: { label: "Mach ↔ velocity consistency", why: "A compressibility or reference mismatch makes the reported Mach number inconsistent with velocity.", fix: "Use a compressible solver above Ma 0.3 and verify reference speed of sound." },
+  dim_pressure_units: { label: "Pressure dimensional check", why: "The pressure reference is off by an order of magnitude, so pressure-derived quantities carry a unit error.", fix: "Fix the pressure units in the reference values (Pa, not kPa)." },
+  stat_high_variance: { label: "High output variance", why: "An under-resolved mesh leaves the run under-converged, so outputs show variance unrelated to the physics.", fix: "Refine the mesh for the Reynolds number and confirm convergence." },
+  th_energy_balance: { label: "Energy balance", why: "A missing heat-transfer / radiation / buoyancy model breaks the energy balance in the output.", fix: "Enable the appropriate thermal model for your boundary conditions and temperature range." },
+  th_heat_flux_sign: { label: "Heat-flux sign", why: "Without the right thermal model, the heat-flux direction can come out physically wrong.", fix: "Enable radiation/buoyancy/heat-transfer as required by the setup." },
+};
 
 const HUMAN: Record<string, string> = {
   mesh_yplus_model_compat: "Near-wall resolution (y+) matches the turbulence model",
@@ -233,6 +263,10 @@ export function validateSetupConfig(config: Record<string, any>, meshStats?: Rec
     failed: failed.length,
     issues: issues.map((i) => ({ ...i, human_name: humanizeMeshCheck(i.name) })) as MeshIssue[],
     predicted_error_types: predicted,
+    predicted_failures: predicted.map((c) => {
+      const d = PREDICTED[c];
+      return { check: c, label: d?.label ?? c, why: d?.why ?? "", fix: d?.fix ?? "" };
+    }),
     estimated_corruption_risk: Math.round(risk * 1000) / 1000,
     recommendations,
     processing_ms: Math.round((performance.now() - t0) * 100) / 100,

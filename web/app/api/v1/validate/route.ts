@@ -56,6 +56,29 @@ function mapAi(review: AiReview): Record<string, unknown> | null {
   };
 }
 
+/** Strongest pairwise Pearson correlations among numeric columns (for the AI profile). */
+function topCorrelations(rows: Record<string, unknown>[]): { pair: string; r: number }[] {
+  if (rows.length < 5) return [];
+  const cols: Record<string, number[]> = {};
+  for (const row of rows) for (const [k, v] of Object.entries(row)) {
+    if (typeof v === "number" && Number.isFinite(v)) (cols[k] ??= []).push(v);
+  }
+  const names = Object.keys(cols).filter((k) => cols[k].length === rows.length);
+  const out: { pair: string; r: number }[] = [];
+  for (let i = 0; i < names.length; i++)
+    for (let j = i + 1; j < names.length; j++) {
+      const r = pearson(cols[names[i]], cols[names[j]]);
+      if (Number.isFinite(r) && Math.abs(r) > 0.3) out.push({ pair: `${names[i]}~${names[j]}`, r: Math.round(r * 100) / 100 });
+    }
+  return out.sort((a, b) => Math.abs(b.r) - Math.abs(a.r)).slice(0, 6);
+}
+function pearson(a: number[], b: number[]): number {
+  const n = a.length, ma = a.reduce((x, y) => x + y, 0) / n, mb = b.reduce((x, y) => x + y, 0) / n;
+  let num = 0, da = 0, db = 0;
+  for (let i = 0; i < n; i++) { const x = a[i] - ma, y = b[i] - mb; num += x * y; da += x * x; db += y * y; }
+  return da && db ? num / Math.sqrt(da * db) : NaN;
+}
+
 export async function POST(req: Request) {
   const requestId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
 
@@ -77,6 +100,16 @@ export async function POST(req: Request) {
 
   const result = richValidate(rows, simType, requestId.slice(0, 8));
 
+  const excludedIdx = new Set(result.exclusions.map((e) => e.trial_index));
+  const profile = {
+    trials_submitted: result.trials_submitted,
+    trials_excluded: result.trials_excluded,
+    statistics: result.statistics,
+    correlations: topCorrelations(rows),
+    sample_rows: rows.slice(0, 4),
+    violating_rows: rows.filter((_, i) => excludedIdx.has(i)).slice(0, 4),
+  };
+
   const review =
     body.run_ai === false
       ? ({ enabled: false } as AiReview)
@@ -90,6 +123,7 @@ export async function POST(req: Request) {
             checks: [],
           },
           body.conditions ?? {},
+          profile,
         );
 
   return NextResponse.json(

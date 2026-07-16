@@ -162,12 +162,19 @@ function PreflightResult({ r, onGotoOutput }: { r: SetupResult; onGotoOutput?: (
         </div>
       </div>
 
-      {r.predicted_error_types.length > 0 && (
+      {(r.predicted_failures?.length ?? r.predicted_error_types.length) > 0 && (
         <div className="rounded-2xl border border-amber-400/25 bg-amber-400/5 p-5">
           <p className="text-sm font-medium text-amber-300">If you run this simulation, SimAPI predicts these output checks will fail:</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {r.predicted_error_types.map((t) => (
-              <span key={t} className="rounded-md border border-amber-400/20 bg-black/20 px-2 py-1 font-mono text-[11px] text-amber-200/80">{t}</span>
+          <div className="mt-3 space-y-2">
+            {(r.predicted_failures ?? r.predicted_error_types.map((t) => ({ check: t, label: t, why: "", fix: "" }))).map((p) => (
+              <div key={p.check} className="rounded-xl border border-amber-400/15 bg-black/20 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-amber-200">{p.label}</span>
+                  <code className="font-mono text-[10px] text-amber-200/40">{p.check}</code>
+                </div>
+                {p.why && <p className="mt-1.5 text-xs leading-relaxed text-white/55"><span className="text-white/35">Why:</span> {p.why}</p>}
+                {p.fix && <p className="mt-1 text-xs leading-relaxed text-white/55"><span className="text-accent-cyan">Fix:</span> {p.fix}</p>}
+              </div>
             ))}
           </div>
         </div>
