@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PreflightPanel } from "./preflight-panel";
+import { HistoryPanel } from "./history-panel";
+import { recordRun } from "@/lib/run-history";
 import {
   validate, runDemo, pollAI, generateKey,
   DEMO_KEY, healthCheck,
@@ -192,7 +194,7 @@ export function ValidationDashboard() {
   const [aiPoll,    setAiPoll]      = useState(false);
   const [keyGen,    setKeyGen]      = useState(false);
   const [copied,    setCopied]      = useState(false);
-  const [tab,       setTab]         = useState<"preflight"|"output">("output");
+  const [tab,       setTab]         = useState<"preflight"|"output"|"history">("output");
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -242,6 +244,12 @@ export function ValidationDashboard() {
         res = await validate({ data, simulation_type: selectedSim.value, conditions, run_ai: true }, apiKey);
       }
       setResult(res); setPhase("done");
+      recordRun({
+        simulationType: selectedSim.value, status: res.status,
+        trials_submitted: res.trials_submitted, trials_excluded: res.trials_excluded,
+        unique_checks: (res as { unique_checks?: number }).unique_checks ?? res.all_checks,
+        issues: (res.issues ?? []).map((i) => ({ name: i.name, human_name: i.human_name ?? i.name, status: i.status })),
+      });
       if (res.job_id) startPoll(res.job_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -282,7 +290,7 @@ export function ValidationDashboard() {
 
       {/* Pre-flight / Output tab switcher */}
       <div className="mb-6 flex gap-1 rounded-xl border border-white/[0.06] bg-ink-900/40 p-1">
-        {([["preflight", "Pre-flight"], ["output", "Output validation"]] as const).map(([id, label]) => (
+        {([["preflight", "Pre-flight"], ["output", "Output validation"], ["history", "History / Compare"]] as const).map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)}
             className={cn("flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-colors",
               tab === id ? "bg-white/10 text-white" : "text-white/45 hover:text-white")}>
@@ -293,6 +301,8 @@ export function ValidationDashboard() {
 
       {tab === "preflight" ? (
         <PreflightPanel onGotoOutput={() => setTab("output")} />
+      ) : tab === "history" ? (
+        <HistoryPanel />
       ) : (
       <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
 
