@@ -8,14 +8,14 @@ export const metadata: Metadata = {
   description: "Guides, API reference, SDKs, and examples for the SimAPI simulation validation platform.",
 };
 
-const DOCS = "https://sim-api.mintlify.app";
+const DOCS = "https://simapidocs.github.io";
 
 export default function DocsPage() {
   return (
     <PageHero
       eyebrow="Documentation"
       title={<>Everything you need to build on SimAPI</>}
-      lede="Guides, a complete API reference, SDKs, and copy-paste examples — hosted on Mintlify."
+      lede="Guides, a complete API reference, SDKs, and copy-paste examples."
     >
       <div className="mt-2 flex flex-wrap gap-3">
         <a href={DOCS} className="btn-accent">
