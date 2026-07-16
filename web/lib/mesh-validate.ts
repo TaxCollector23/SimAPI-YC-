@@ -160,6 +160,13 @@ export function validateSetupConfig(config: Record<string, any>, meshStats?: Rec
     const thr = solver === "openfoam" || solver === "su2" ? 0.1 : 0.05;
     f("mesh_min_cell_quality", mq >= thr, `Minimum cell quality ≥ ${thr}`, mq < thr ? `min quality ${mq.toFixed(3)} below ${solver} threshold ${thr}` : "", mq, "mesh_quality");
   }
+  // Watertight (surface meshes / uploaded geometry).
+  const oe = num(mesh.open_edges), du = num(mesh.duplicate_faces), si = num(mesh.self_intersections);
+  if (oe !== null || du !== null || si !== null) {
+    const bad = (oe ?? 0) + (du ?? 0) + (si ?? 0);
+    f("mesh_watertight", bad === 0, "Surface mesh watertight",
+      bad ? `non-watertight geometry: ${oe ?? 0} open edges, ${si ?? 0} self-intersections, ${du ?? 0} duplicate faces — meshing will fail or leak` : "", bad, "mesh_quality");
+  }
 
   // ── Boundary conditions ──
   const inlet = String(bc.inlet ?? "").toLowerCase(), outlet = String(bc.outlet ?? "").toLowerCase();
@@ -238,6 +245,7 @@ export function validateSetupConfig(config: Record<string, any>, meshStats?: Rec
     mesh_nonortho: "Reduce mesh non-orthogonality or add non-orthogonal correctors.",
     mesh_skewness: "Repair degenerate cells before running — they inject numerical noise.",
     mesh_min_cell_quality: "Repair low-quality cells before running.",
+    mesh_watertight: "Close the surface mesh — seal open edges and remove duplicate/intersecting faces before meshing the volume.",
     mesh_aspect_ratio: "Lower peak cell aspect ratio to curb numerical diffusion.",
     mesh_cfl_explicit: "Reduce the timestep (or switch to implicit) to satisfy the CFL condition.",
     mesh_convergence_criterion: "Tighten residual targets to ≤1e-4 (≤1e-6 for incompressible pressure).",

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Play, Loader2, CheckCircle, AlertTriangle, XCircle, ArrowRight, Code2, Sliders } from "lucide-react";
+import { Play, Loader2, CheckCircle, AlertTriangle, XCircle, ArrowRight, Code2, Sliders, Upload, Plus, Trash2, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { validateSetup, type SetupResult } from "@/lib/api";
+import { parseMeshFile, type ParsedMesh } from "@/lib/mesh-parse";
 
 const DEFAULTS = {
   solver: "openfoam",
@@ -41,15 +42,34 @@ export function PreflightPanel({ onGotoOutput }: { onGotoOutput?: () => void }) 
   const [phase, setPhase] = useState<"idle" | "running" | "done" | "error">("idle");
   const [result, setResult] = useState<SetupResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mesh, setMesh] = useState<ParsedMesh | null>(null);
+  const [meshErr, setMeshErr] = useState<string | null>(null);
+  const [custom, setCustom] = useState<{ k: string; v: string }[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const set = (k: keyof typeof DEFAULTS, val: string) =>
     setForm((f) => ({ ...f, [k]: k === "solver" || k === "turbulence_model" ? val : Number(val) }));
 
+  async function onFile(file: File) {
+    setMeshErr(null); setMesh(null);
+    const res = await parseMeshFile(file);
+    if ("error" in res) setMeshErr(res.error);
+    else setMesh(res);
+  }
+
   async function run() {
     setPhase("running"); setError(null); setResult(null);
     try {
-      const config = mode === "json" ? JSON.parse(raw) : buildConfig(form);
-      const res = await validateSetup(config, undefined, config.simulation_type ?? "aerodynamics");
+      const config: Record<string, any> = mode === "json" ? JSON.parse(raw) : buildConfig(form);
+      // Merge uploaded geometry stats (real watertight / cell-count analysis).
+      if (mesh) config.mesh = { ...config.mesh, total_cells: mesh.total_cells, open_edges: mesh.open_edges, duplicate_faces: mesh.duplicate_faces };
+      // Merge user-defined custom conditions.
+      for (const { k, v } of custom) {
+        if (!k.trim()) continue;
+        const num = Number(v);
+        (config.flow_conditions ??= {})[k.trim()] = Number.isFinite(num) && v.trim() !== "" ? num : v;
+      }
+      const res = await validateSetup(config, mesh ? { total_cells: mesh.total_cells, open_edges: mesh.open_edges, duplicate_faces: mesh.duplicate_faces } : undefined, config.simulation_type ?? "aerodynamics");
       setResult(res); setPhase("done");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e)); setPhase("error");
@@ -99,6 +119,47 @@ export function PreflightPanel({ onGotoOutput }: { onGotoOutput?: () => void }) 
             <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={18} spellCheck={false}
               className="w-full resize-y rounded-xl border border-white/[0.06] bg-black/20 p-3 font-mono text-xs leading-relaxed text-white/60 outline-none focus:border-accent-blue/40" />
           )}
+
+          {/* Custom conditions (fully variable input parameters) */}
+          {mode === "form" && (
+            <div className="mt-4">
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="text-[11px] text-white/45">Custom parameters</label>
+                <button onClick={() => setCustom((c) => [...c, { k: "", v: "" }])} className="flex items-center gap-1 text-[11px] text-accent-cyan hover:text-white">
+                  <Plus className="h-3 w-3" /> Add
+                </button>
+              </div>
+              <div className="space-y-1.5">
+                {custom.map((row, i) => (
+                  <div key={i} className="flex items-center gap-1.5">
+                    <input value={row.k} onChange={(e) => setCustom((c) => c.map((x, j) => (j === i ? { ...x, k: e.target.value } : x)))} placeholder="parameter" className={cn(inputCls, "flex-1 font-mono text-xs")} />
+                    <input value={row.v} onChange={(e) => setCustom((c) => c.map((x, j) => (j === i ? { ...x, v: e.target.value } : x)))} placeholder="value" className={cn(inputCls, "w-24 font-mono text-xs")} />
+                    <button onClick={() => setCustom((c) => c.filter((_, j) => j !== i))} className="rounded-lg p-1.5 text-white/30 hover:text-fail"><Trash2 className="h-3.5 w-3.5" /></button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Geometric mesh upload */}
+          <div className="mt-4">
+            <label className="mb-1.5 block text-[11px] text-white/45">Geometry (optional)</label>
+            <input ref={fileRef} type="file" accept=".stl,.json" className="hidden" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} />
+            <button onClick={() => fileRef.current?.click()} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 py-2.5 text-xs text-white/55 hover:border-white/30 hover:text-white">
+              <Upload className="h-3.5 w-3.5" /> Upload mesh (.stl) or mesh-stats (.json)
+            </button>
+            {meshErr && <p className="mt-1.5 text-[11px] text-fail">{meshErr}</p>}
+            {mesh && (
+              <div className="mt-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5 text-[11px] text-white/55">
+                <div className="flex items-center gap-1.5">
+                  {mesh.watertight ? <Check className="h-3.5 w-3.5 text-pass" /> : <XCircle className="h-3.5 w-3.5 text-red-400" />}
+                  <span className="font-mono">{mesh.total_cells.toLocaleString()} facets</span>
+                  <span className={mesh.watertight ? "text-pass" : "text-red-400"}>· {mesh.watertight ? "watertight" : `${mesh.open_edges} open edges`}</span>
+                  {mesh.duplicate_faces > 0 && <span className="text-amber-400">· {mesh.duplicate_faces} dup faces</span>}
+                </div>
+              </div>
+            )}
+          </div>
 
           <button onClick={run} disabled={phase === "running"} className="btn-accent mt-4 flex w-full items-center justify-center gap-2 text-sm">
             {phase === "running" ? <><Loader2 className="h-4 w-4 animate-spin" /> Analyzing setup…</> : <><Play className="h-4 w-4" /> Validate setup</>}
