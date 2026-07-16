@@ -37,18 +37,20 @@ export function Hero() {
 
           <motion.h1
             variants={item}
-            className="mt-7 w-full text-balance text-3xl font-semibold leading-[1.1] tracking-tight text-white sm:text-6xl md:text-7xl"
+            className="mt-7 w-full text-balance text-3xl font-semibold leading-[1.08] tracking-tight text-white sm:text-6xl md:text-[68px]"
           >
-            Validate simulation results before they reach{" "}
-            <span className="text-gradient">production</span>.
+            Your solver won&apos;t tell you the run is{" "}
+            <span className="text-gradient">wrong</span>.
+            <br className="hidden sm:block" /> SimAPI will.
           </motion.h1>
 
           <motion.p
             variants={item}
-            className="mt-6 w-full max-w-2xl text-base leading-relaxed text-white/58 sm:text-lg"
+            className="mt-6 w-full max-w-2xl text-base leading-relaxed text-white/60 sm:text-lg"
           >
-            Catch impossible outputs, constraint failures, and physics regressions
-            before simulation data feeds design reviews, autonomy stacks, or ML training.
+            SimAPI checks simulation output and setup against physical law — catching
+            diverged runs, unit-conversion slips, sensor drift, and impossible values
+            before the data reaches a design review, an autonomy stack, or an ML pipeline.
           </motion.p>
 
           <motion.div variants={item} className="mt-9 flex w-full flex-wrap items-center justify-center gap-3">
