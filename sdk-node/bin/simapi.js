@@ -270,6 +270,41 @@ const commands = {
     stdout.write("\n");
   },
 
+  async domains() {
+    const list = [
+      "aerodynamics", "fluid_dynamics", "structural", "thermodynamics", "robotics",
+      "combustion", "acoustics", "electromagnetics", "geomechanics", "biomechanics",
+      "nuclear", "plasma", "chemical", "hydrodynamics", "meteorology", "astrophysics",
+      "materials", "tribology", "aeroelasticity", "cryogenics", "multiphysics",
+    ];
+    stdout.write(`\n  ${c.bold("Supported simulation types")} ${c.dim(`(${list.length})`)}\n`);
+    for (const d of list) stdout.write(`   ${c.cyan("•")} ${d}\n`);
+    stdout.write(`\n  Use with: ${c.cyan("simapi validate run.json --type <domain>")}\n\n`);
+  },
+
+  async doctor() {
+    banner();
+    const nodeMajor = Number(process.versions.node.split(".")[0]);
+    ok(`Node ${process.version} ${nodeMajor >= 18 ? "" : c.red("(need 18+)")}`);
+    const key = await resolveKey();
+    key ? ok(`API key configured (${mask(key)})`) : info(`${c.amber("○")} Not logged in — run ${c.cyan("simapi login")}`);
+    stdout.write(`  ${c.dim("Checking API…")}\r`);
+    try {
+      const t = Date.now();
+      const res = await api("/v1/health");
+      res.ok ? ok(`API reachable at ${API_BASE} (${Date.now() - t}ms)          `) : fail(`API returned ${res.status}`);
+    } catch (e) {
+      fail(`API unreachable: ${e.message}`);
+    }
+    stdout.write(`  ${c.dim(`config: ${CONFIG_PATH}`)}\n\n`);
+  },
+
+  async open() {
+    const url = `${WEB_BASE}/dashboard`;
+    ok(`Opening ${c.cyan(url)}`);
+    openBrowser(url);
+  },
+
   version() {
     banner();
     stdout.write(`  ${c.bold(`v${VERSION}`)}  ${c.dim(`node ${process.version}`)}\n\n`);
@@ -280,15 +315,32 @@ const commands = {
   },
 };
 
+async function loadPayload(file, key, args) {
+  const raw = await readFile(file, "utf8");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Not JSON (e.g. simulations.txt / a log dump) → convert with AI.
+    stdout.write(`  ${c.dim(`Parsing ${file} with AI…`)}\n`);
+    const pr = await api("/v1/parse", { method: "POST", body: { text: raw, simulation_type: args.type }, key });
+    if (!pr.ok) {
+      if (pr.json && pr.json.enabled === false)
+        throw new Error("AI text parsing isn't enabled yet (server needs OPENROUTER_API_KEY). Use a .json file for now.");
+      throw new Error(`Could not parse ${file}: ${(pr.json && pr.json.error) || pr.status}`);
+    }
+    return pr.json; // { simulation_type, conditions, data }
+  }
+}
+
 async function runValidation(file, key, args) {
   if (!existsSync(file)) return fail(`File not found: ${file}`);
+  const cfg = await readConfig();
   let payload;
   try {
-    payload = JSON.parse(await readFile(file, "utf8"));
+    payload = await loadPayload(file, key, args);
   } catch (e) {
-    return fail(`Could not read ${file}: ${e.message}`);
+    return fail(e.message);
   }
-  const cfg = await readConfig();
   const body = Array.isArray(payload)
     ? { data: payload, simulation_type: args.type || cfg.simulation_type || "aerodynamics" }
     : {
@@ -296,6 +348,7 @@ async function runValidation(file, key, args) {
         conditions: payload.conditions || {},
         data: payload.data || payload.trials || [],
       };
+  if (args["no-ai"]) body.run_ai = false;
 
   const t0 = Date.now();
   let res;
@@ -313,37 +366,64 @@ async function runValidation(file, key, args) {
   const r = res.json;
   if (args.json) return stdout.write(JSON.stringify(r, null, 2) + "\n");
 
-  const tone = r.status === "passed" ? c.green : r.status === "warning" ? c.amber : c.red;
-  const physics = (r.issues || []).filter((i) => /physic|bound|conserv|dimension|cross/i.test(i.category || ""));
-  const constraints = (r.issues || []).filter((i) => !physics.includes(i));
-  stdout.write(`\n  ${c.bold("Validation report")}  ${c.dim(file)}\n`);
-  stdout.write(`  ${"─".repeat(46)}\n`);
-  row("Validation score", tone(String(r.validation_score ?? scoreFrom(r))));
-  row("Status", tone((r.status || "").toUpperCase()));
-  row("Warnings", String(r.warnings ?? 0));
-  row("Constraint violations", String(constraints.length));
-  row("Physics violations", String(physics.length));
-  row("Execution time", `${r.processing_ms ?? "—"}ms`);
-  if ((r.issues || []).length) {
-    stdout.write(`\n  ${c.bold("Issues")}\n`);
-    for (const i of r.issues.slice(0, 10)) {
-      const mk = i.status === "failed" ? c.red("✗") : c.amber("⚠");
-      stdout.write(`   ${mk} ${i.human_name || i.detail || i.name}\n`);
-    }
-  }
-  const recs = r.ai?.recommendations || r.recommendations || [];
-  if (recs.length) {
-    stdout.write(`\n  ${c.bold("Recommendations")}\n`);
-    for (const rec of recs.slice(0, 6)) stdout.write(`   ${c.cyan("→")} ${rec}\n`);
-  }
-  stdout.write("\n");
+  renderReport(r, file, body.simulation_type);
 
   if (args["fail-on"] === "warning" && r.status !== "passed") process.exitCode = 1;
   if (args["fail-on"] === "failed" && r.status === "failed") process.exitCode = 1;
 }
 
-function scoreFrom(r) {
-  return r.status === "passed" ? 100 : r.status === "warning" ? 70 : 35;
+function renderReport(r, file, simType) {
+  const status = (r.status || "").toUpperCase();
+  const tone = r.status === "passed" ? c.green : r.status === "warning" ? c.amber : c.red;
+  const mark = r.status === "passed" ? "✓" : r.status === "warning" ? "⚠" : "✗";
+  const failures = (r.issues || []).filter((i) => i.status === "failed").length;
+  const warns = (r.issues || []).filter((i) => i.status === "warning").length;
+
+  // Status banner
+  const title = ` ${mark}  ${status}`;
+  const right = file;
+  const width = Math.max(48, title.length + right.length + 6);
+  stdout.write("\n  " + c.dim("╭" + "─".repeat(width) + "╮") + "\n");
+  const pad = width - title.length - right.length - 2;
+  stdout.write("  " + c.dim("│") + tone(c.bold(title)) + " ".repeat(Math.max(1, pad)) + c.dim(right) + " " + c.dim("│") + "\n");
+  stdout.write("  " + c.dim("╰" + "─".repeat(width) + "╯") + "\n\n");
+
+  // Summary
+  const excl = r.trials_excluded ?? 0;
+  row("Simulation", simType);
+  row("Trials", `${c.bold(String(r.trials_valid ?? "—"))} valid / ${r.trials_submitted ?? "—"}` + (excl ? c.dim(`   (${excl} excluded)`) : ""));
+  row("Rules", `${r.unique_checks ?? r.all_checks ?? "—"} unique` + c.dim(`   ·  ${(r.all_checks ?? 0).toLocaleString()} evaluations`));
+  row("Findings", `${failures ? c.red(failures + " failed") : "0 failed"}   ${warns ? c.amber(warns + " warnings") : "0 warnings"}`);
+  row("Training ready", r.training_ready ? c.green("yes") : c.red("no"));
+  row("Time", `${r.processing_ms ?? "—"}ms`);
+
+  const issues = r.issues || [];
+  if (issues.length) {
+    stdout.write(`\n  ${c.bold(`Issues (${issues.length})`)}\n`);
+    for (const i of issues.slice(0, 12)) {
+      const mk = i.status === "failed" ? c.red("✗") : c.amber("⚠");
+      stdout.write(`   ${mk} ${i.human_name || i.name}\n`);
+      if (i.detail && i.detail !== i.human_name) stdout.write(`     ${c.dim(i.detail)}\n`);
+    }
+    if (issues.length > 12) stdout.write(`   ${c.dim(`… and ${issues.length - 12} more`)}\n`);
+  }
+
+  const ex = r.exclusions || [];
+  if (ex.length) {
+    stdout.write(`\n  ${c.bold(`Excluded trials (${excl})`)}\n`);
+    for (const e of ex.slice(0, 6)) stdout.write(`   ${c.dim("#" + (e.trial_index + 1))}  ${e.reason}\n`);
+    if (ex.length > 6) stdout.write(`   ${c.dim(`… and ${ex.length - 6} more`)}\n`);
+  }
+
+  const recs = r.ai?.recommendations || r.recommendations || [];
+  if (recs.length) {
+    stdout.write(`\n  ${c.bold("Recommendations")}\n`);
+    for (const rec of recs.slice(0, 6)) stdout.write(`   ${c.cyan("→")} ${rec}\n`);
+  }
+  if (r.ai && r.ai.dataset_summary) {
+    stdout.write(`\n  ${c.bold("AI review")}  ${c.dim(r.ai.model ? r.ai.model.split("/").pop() : "")}\n   ${c.dim(r.ai.dataset_summary)}\n`);
+  }
+  stdout.write("\n");
 }
 
 // ── Help ──────────────────────────────────────────────────────────────────────
@@ -352,7 +432,10 @@ const HELP = {
   logout: { usage: "simapi logout", desc: "Remove locally stored credentials." },
   whoami: { usage: "simapi whoami", desc: "Show the authenticated account, plan, and masked API key." },
   init: { usage: "simapi init", desc: "Create a simapi.json config in the current project." },
-  validate: { usage: "simapi validate <file>", desc: "Validate a simulation file and print the report.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate run.json --type structural --fail-on warning"] },
+  validate: { usage: "simapi validate <file>", desc: "Validate a .json or .txt simulation file and print the report. Plain-text/log files are converted to JSON with AI.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--no-ai", "skip the AI second pass"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate simulations.txt --type aerodynamics", "simapi validate run.json --fail-on warning"] },
+  domains: { usage: "simapi domains", desc: "List the supported simulation types." },
+  doctor: { usage: "simapi doctor", desc: "Check your Node version, saved key, and API connectivity." },
+  open: { usage: "simapi open", desc: "Open the SimAPI dashboard in your browser." },
   watch: { usage: "simapi watch <file>", desc: "Re-run validation automatically whenever the file changes.", ex: ["simapi watch simulation.json"] },
   usage: { usage: "simapi usage", desc: "Show requests today/this month, remaining quota, and average time." },
   "api-key": { usage: "simapi api-key <show|rotate|delete>", desc: "Manage your API key.", ex: ["simapi api-key show", "simapi api-key rotate", "simapi api-key delete"] },
@@ -370,11 +453,14 @@ function printHelp() {
     ["logout", "Remove stored credentials"],
     ["whoami", "Show account, plan, and masked key"],
     ["init", "Create a simapi.json config"],
-    ["validate <file>", "Validate a simulation file"],
+    ["validate <file>", "Validate a .json or .txt simulation file"],
     ["watch <file>", "Re-validate on file change"],
+    ["domains", "List supported simulation types"],
     ["usage", "Show API usage statistics"],
     ["api-key <cmd>", "show · rotate · delete"],
     ["config [set]", "Show or update configuration"],
+    ["doctor", "Check environment, key, and API connectivity"],
+    ["open", "Open the dashboard in your browser"],
     ["version", "Show the CLI version"],
     ["help", "Show this help"],
   ];
