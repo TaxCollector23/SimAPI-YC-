@@ -67,6 +67,12 @@ jobs:
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets[matrix.project_id_secret] }}
+    # These mirror projects don't have "Root Directory" configured on Vercel's
+    # side (unlike the main sim-api project) -- run every step from web/ to
+    # match exactly what works via the local CLI (`cd web && vercel --prod`).
+    defaults:
+      run:
+        working-directory: web
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
