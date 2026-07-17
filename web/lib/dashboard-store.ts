@@ -7,6 +7,7 @@
  * to) — Overview/Analytics/Logs/Request Inspector all read from there.
  */
 import { generateApiKey, sha256 } from "./crypto";
+import { recordEvent } from "./telemetry";
 
 export interface ApiKeyRecord {
   id: string;
@@ -48,11 +49,14 @@ export async function createKey(uid: string, name: string): Promise<{ raw: strin
   };
   const keys = read<ApiKeyRecord>(keysKey(uid));
   write(keysKey(uid), [...keys, record]);
+  // Metadata only — the raw key itself is never sent anywhere, including telemetry.
+  recordEvent(uid, "api_key_created", { name: record.name, prefix: record.prefix });
   return { raw, record };
 }
 
 export function revokeKey(uid: string, id: string) {
   write(keysKey(uid), read<ApiKeyRecord>(keysKey(uid)).filter((k) => k.id !== id));
+  recordEvent(uid, "api_key_revoked", { id });
 }
 
 /** Mark the most recently created key as used — called after a real API request. */

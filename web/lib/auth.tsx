@@ -10,6 +10,7 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase";
 import { hashPassword } from "./crypto";
+import { upsertUserProfile, recordEvent } from "./telemetry";
 
 export interface User {
   uid: string;
@@ -120,6 +121,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
           persistUser(u);
           setUser(u);
+          upsertUserProfile({ uid: u.uid, email: u.email, name: u.name, provider: u.provider });
+          recordEvent(u.uid, "sign_in", { provider: u.provider });
         } else {
           persistUser(null);
           setUser(null);
