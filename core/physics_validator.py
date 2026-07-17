@@ -307,7 +307,7 @@ class PhysicsValidator:
             self._cross_variable, self._conservation_laws, self._dimensional,
             self._temporal, self._monotonicity, self._symmetry, self._scaling_laws,
             self._information_entropy, self._autocorrelation, self._stationarity,
-            self._layer_temporal_drift,
+            self._layer_temporal_drift, self._layer_universal_conservation,
             self._multicollinearity, self._regression_quality, self._signal_quality,
             self._sensor_fusion, self._boundary_conditions, self._convergence,
             self._energy_balance, self._phase_consistency, self._material_microstructure,
@@ -1253,6 +1253,42 @@ class PhysicsValidator:
                             E.append(TrialExclusion(int(idx), f"Distribution shift in {col} window {win_i + 1} ({z:.1f}σ)", "warning"))
             except Exception:
                 pass
+        return self._r(C, E)
+
+    def _layer_universal_conservation(self, data, sim, cond):
+        """
+        RANSAC-discovered conservation-law invariants + non-dimensional coupling
+        + state-space observation (core/universal_validator.py). A standalone
+        precision/recall check against benchmark/run_benchmark.py's corruption
+        ground truth looked strong, but that number has NOT yet been through
+        the full benchmark harness (GBT/MLP MAPE, multi-seed) or published to
+        results.json / the /benchmark page — do not cite a number from this
+        docstring. See benchmark/results.json for the current published,
+        harness-verified numbers.
+        """
+        C, E = [], []
+        if len(data) < 10:
+            return self._r(C, E)
+        try:
+            from core.universal_validator import UniversalSimulationValidator
+            result = UniversalSimulationValidator().validate(
+                data.reset_index(drop=True).to_dict(orient="records"), sim.value if hasattr(sim, "value") else str(sim)
+            )
+            for a in result.get("anomalies_detected", []):
+                status = ValidationStatus.FAILED if a["severity"] == "critical" else ValidationStatus.WARNING
+                C.append(PhysicsCheck(
+                    name=f"uc_{a['invariant_equation'].split()[0] if a['invariant_equation'] else 'anomaly'}",
+                    status=status, description=a["root_cause"],
+                    value=a["divergence_delta"], detail=a["root_cause"],
+                    category="universal_conservation",
+                ))
+            for idx in result.get("excluded_indices", []):
+                if 0 <= int(idx) < len(data):
+                    E.append(TrialExclusion(
+                        int(idx), "Universal conservation-law invariant violated (RANSAC-discovered)", "warning",
+                    ))
+        except Exception:
+            pass
         return self._r(C, E)
 
     # ── Layer 16: Multicollinearity ───────────────────────────────────────────

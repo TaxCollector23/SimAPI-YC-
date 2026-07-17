@@ -11,39 +11,39 @@
   "test_trials": 600,
   "models": {
     "gbt": {
-      "mape_improvement_mean": -8.13,
-      "mape_improvement_std": 12.27,
+      "mape_improvement_mean": 19.91,
+      "mape_improvement_std": 9.42,
       "mape_corrupted_mean": 0.56,
-      "mape_simapi_mean": 0.59,
+      "mape_simapi_mean": 0.44,
       "mape_naive_mean": 0.57,
       "mape_clean_mean": 0.42,
       "naive_improvement_mean": -4.04,
-      "simapi_vs_naive_mean": -3.75,
+      "simapi_vs_naive_mean": 23.17,
       "interpretation": "Conservative estimate \u2014 GBT is robust to distribution shift. Primarily measures SimAPI's ability to remove outlier and unit-error corruptions."
     },
     "mlp": {
-      "mape_improvement_mean": 57.75,
-      "mape_improvement_std": 16.02,
+      "mape_improvement_mean": 67.04,
+      "mape_improvement_std": 10.94,
       "mape_corrupted_mean": 8.16,
-      "mape_simapi_mean": 2.93,
+      "mape_simapi_mean": 2.32,
       "mape_naive_mean": 2.5,
       "mape_clean_mean": 2.12,
       "naive_improvement_mean": 64.54,
-      "simapi_vs_naive_mean": -18.73,
+      "simapi_vs_naive_mean": 6.16,
       "interpretation": "Upper-bound estimate \u2014 MLP is sensitive to the sensor drift distribution shift that SimAPI removes. Represents real-world impact for deep learning training pipelines."
     }
   },
   "exclusion": {
     "precision": 0.994,
-    "recall": 0.712,
+    "recall": 0.95,
     "per_category_recall_pct": {
       "solver_divergence": 100.0,
       "unit_conversion": 100.0,
-      "sensor_drift": 65.9,
-      "copy_paste": 98.2,
+      "sensor_drift": 98.7,
+      "copy_paste": 100.0,
       "cross_variable": 100.0,
-      "measurement_noise": 14.6
+      "measurement_noise": 70.2
     }
   },
-  "elapsed_s": 10.8
+  "elapsed_s": 12.1
 }

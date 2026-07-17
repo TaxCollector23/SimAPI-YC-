@@ -6,21 +6,17 @@ export const site = {
   description:
     "Validate CFD, FEA, robotics, and multiphysics simulation outputs with deterministic physics checks, statistical analysis, and AI review before they reach production, design review, or ML pipelines.",
   github: "https://github.com/TaxCollector23/SimAPI-YC-",
-  nav: [
-    { label: "Platform", href: "/platform" },
-    { label: "Benchmarks", href: "/benchmark" },
-    { label: "Pricing", href: "/pricing" },
-    { label: "Docs", href: "/docs" },
-    { label: "Changelog", href: "/changelog" },
-    { label: "Blog", href: "/blog" },
+  // Not hidden behind a dropdown — always visible, first two items on the navbar.
+  quickLinks: [
     { label: "Dashboard", href: "/dashboard" },
+    { label: "Playground", href: "/dashboard?tab=playground" },
   ],
   navGroups: [
     {
       label: "Product",
       items: [
         { label: "Platform", href: "/platform", desc: "The validation engine, AI orchestrator, and pre-flight checks." },
-        { label: "Benchmarks", href: "/benchmark", desc: "Full methodology, dataset, and honest limitations." },
+        { label: "Benchmarks", href: "/benchmark", desc: "Detection precision, recall, and model impact." },
         { label: "Pricing", href: "/pricing", desc: "Plans and API quotas." },
       ],
     },
@@ -30,7 +26,6 @@ export const site = {
         { label: "Documentation", href: "/docs", desc: "Quick start, API reference, CLI." },
         { label: "API reference", href: "https://simapidocs.github.io", desc: "Full endpoint docs.", external: true },
         { label: "GitHub", href: "https://github.com/TaxCollector23/SimAPI-YC-", desc: "Source, issues, and PRs.", external: true },
-        { label: "npm — simapi-cli", href: "https://www.npmjs.com/package/simapi-cli", desc: "`npm install -g simapi-cli`", external: true },
       ],
     },
     {
@@ -51,6 +46,7 @@ export const site = {
       { label: "Benchmarks", href: "/benchmark" },
       { label: "Pricing", href: "/pricing" },
       { label: "Dashboard", href: "/dashboard" },
+      { label: "Playground", href: "/dashboard?tab=playground" },
       { label: "Changelog", href: "/changelog" },
       { label: "Status", href: "/status" },
     ] },
@@ -58,7 +54,6 @@ export const site = {
       { label: "Documentation", href: "/docs" },
       { label: "API reference", href: "https://simapidocs.github.io" },
       { label: "GitHub", href: "https://github.com/TaxCollector23/SimAPI-YC-" },
-      { label: "npm", href: "https://www.npmjs.com/package/simapi-cli" },
     ] },
     { title: "Company", links: [
       { label: "Blog", href: "/blog" },

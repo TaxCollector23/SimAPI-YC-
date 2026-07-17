@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   LayoutDashboard, KeyRound, Activity, FlaskConical, BookOpen, Settings as SettingsIcon,
   Copy, Check, Trash2, Plus, LogOut, ExternalLink, Loader2, BarChart3, ScrollText, Radar,
@@ -36,10 +37,18 @@ const NAV: { id: Section; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
+const TAB_TO_SECTION: Record<string, Section> = { playground: "run" };
+
 export function DashboardApp() {
   const { user, loading } = useAuth();
-  const [section, setSection] = useState<Section>("overview");
+  const searchParams = useSearchParams();
+  const [section, setSection] = useState<Section>(() => TAB_TO_SECTION[searchParams.get("tab") ?? ""] ?? "overview");
   const [inspectRunId, setInspectRunId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const mapped = TAB_TO_SECTION[searchParams.get("tab") ?? ""];
+    if (mapped) setSection(mapped);
+  }, [searchParams]);
 
   function goInspect(id: string) {
     setInspectRunId(id);
@@ -147,12 +156,12 @@ function Overview({ onNavigate }: { onNavigate: (s: Section) => void }) {
       )}
 
       <div>
-        <h2 className="text-base font-semibold text-white">Quickstart — Run the simulations in your browser</h2>
+        <h2 className="text-base font-semibold text-white">Quickstart — the Playground</h2>
         <p className="mt-1 text-sm text-white/50">
-          No install needed. Configure conditions and validate right here.
+          No install needed. Configure conditions and validate right here in the browser.
         </p>
         <button onClick={() => onNavigate("run")} className="btn-accent mt-4">
-          <FlaskConical className="h-4 w-4" /> Run simulation in browser
+          <FlaskConical className="h-4 w-4" /> Open the Playground
         </button>
 
         <p className="mb-3 mt-8 text-sm text-white/50">or, use the CLI</p>
@@ -189,7 +198,7 @@ function RecentRuns({ runs, onRun }: { runs: RunRecord[]; onRun: () => void }) {
     <div>
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-white">Recent validations</h2>
-        <button onClick={onRun} className="text-xs text-accent-cyan hover:text-white">Run a validation →</button>
+        <button onClick={onRun} className="text-xs text-accent-cyan hover:text-white">Open the Playground →</button>
       </div>
       {runs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 py-10 text-center text-sm text-white/35">
@@ -377,7 +386,7 @@ function Usage() {
   );
 }
 
-// ── Run Simulation ────────────────────────────────────────────────────────────
+// ── Playground ────────────────────────────────────────────────────────────────
 function RunSimulation() {
   return <ValidationDashboard />;
 }

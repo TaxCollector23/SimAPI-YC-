@@ -34,6 +34,15 @@ export function Nav() {
         </Link>
 
         <div className="hidden items-center gap-1 md:flex">
+          {site.quickLinks.map((item) => (
+            <Link
+              key={item.href}
+              href={item.href}
+              className="rounded-full px-3.5 py-1.5 text-sm text-white/60 transition-colors hover:text-white"
+            >
+              {item.label}
+            </Link>
+          ))}
           {site.navGroups.map((group) => (
             <div
               key={group.label}
@@ -93,6 +102,16 @@ export function Nav() {
       {open && (
         <div className="max-h-[calc(100vh-4rem)] overflow-y-auto border-t border-white/[0.06] bg-ink-950/95 px-6 py-4 md:hidden">
           <div className="flex flex-col gap-1">
+            {site.quickLinks.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setOpen(false)}
+                className="rounded-lg px-3 py-2.5 text-sm font-medium text-white/80 hover:bg-white/5 hover:text-white"
+              >
+                {item.label}
+              </Link>
+            ))}
             {site.navGroups.map((group) => (
               <div key={group.label}>
                 <button
