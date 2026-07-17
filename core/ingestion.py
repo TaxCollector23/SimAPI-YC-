@@ -12,8 +12,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import tomllib
 import yaml
+
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ModuleNotFoundError:
+    import tomli as tomllib  # Python 3.10 backport
 
 # ── Exhaustive alias map ───────────────────────────────────────────────────────
 # Every common variant → canonical SimAPI name.
