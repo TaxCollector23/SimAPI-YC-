@@ -10,13 +10,13 @@ export const metadata: Metadata = {
 interface LinkEntry { label: string; href: string; desc: string; external?: boolean }
 
 // Update this list every time a new SimAPI domain goes live. Deliberately
-// excludes the admin console and the raw Swagger/API backend — those aren't
-// public-facing.
+// excludes the admin console — that's not public-facing.
 const LINKS: LinkEntry[] = [
   { label: "Website", href: "https://sim-api.vercel.app", desc: "Main site, dashboard, and playground.", external: true },
-  { label: "Playground", href: "https://sim-api.vercel.app/dashboard?tab=playground", desc: "Run validations in the browser, no install needed.", external: true },
+  { label: "Playground", href: "https://simapiplayground.vercel.app", desc: "Run validations in the browser, no account needed.", external: true },
   { label: "Documentation", href: "https://simapidocs.github.io", desc: "Quick start, API reference, CLI docs.", external: true },
-  { label: "Status", href: "https://sim-api.vercel.app/status", desc: "Live system status and latency.", external: true },
+  { label: "Status", href: "https://simapistatus.vercel.app", desc: "Live system status and latency.", external: true },
+  { label: "API backend", href: "https://simapi-yc.onrender.com", desc: "Full Python engine — interactive docs, OpenAPI schema.", external: true },
   { label: "GitHub", href: "https://github.com/TaxCollector23/SimAPI-YC-", desc: "Source code, issues, and pull requests.", external: true },
 ];
 
