@@ -162,8 +162,10 @@ export async function POST(req: Request) {
     violating_rows: rows.filter((_, i) => excludedIdx.has(i)).slice(0, 4),
   };
 
+  // AI logic-check pass is opt-in, not default -- physics validation is
+  // deterministic and complete on its own. Explicitly pass run_ai: true to enable.
   const review =
-    body.run_ai === false
+    body.run_ai !== true
       ? ({ enabled: false } as AiReview)
       : await aiReview(
           {

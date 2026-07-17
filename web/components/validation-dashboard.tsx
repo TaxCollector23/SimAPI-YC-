@@ -281,7 +281,9 @@ export function ValidationDashboard() {
         try { data = JSON.parse(rawInput); }
         catch { throw new Error("Invalid JSON. Check your input above."); }
         if (!Array.isArray(data)) throw new Error("Input must be a JSON array: [{...}, {...}, ...]");
-        res = await validate({ data, simulation_type: selectedSim.value, conditions, run_ai: true }, apiKey);
+        // AI logic-check pass is disabled for now (kept in the codebase, not wired
+        // by default) -- physics validation is deterministic and complete on its own.
+        res = await validate({ data, simulation_type: selectedSim.value, conditions, run_ai: false }, apiKey);
       }
       setResult(res); setPhase("done");
       recordRun({
