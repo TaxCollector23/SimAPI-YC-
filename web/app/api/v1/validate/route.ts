@@ -35,6 +35,7 @@ function mapAi(review: AiReview): Record<string, unknown> | null {
   const concerns = review.concerns ?? [];
   return {
     status: "completed",
+    verdict: review.verdict ?? "",
     model: review.model ?? "",
     processing_ms: 0,
     anomaly_score: anomaly,

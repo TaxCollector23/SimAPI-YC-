@@ -28,7 +28,7 @@ import pandas as pd
 from fastapi import Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -81,6 +81,19 @@ validator = PhysicsValidator()
 mesh_validator = MeshValidator()
 ingester = DataIngester()
 
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """
+    This server (port 8000 by default) is the Python validation API, not the
+    website. The dashboard / website frontend runs separately via `npm run
+    dev` in web/ (http://localhost:3000) and talks to this API when
+    PYTHON_API_URL is set. Redirect here to the interactive API docs instead
+    of a bare 404, since that's the closest thing to a "frontend" this
+    service has.
+    """
+    return RedirectResponse(url="/docs")
+
 # Job store: {job_id: {physics: dict, ai_running: bool, ts: float}}
 JOBS: dict[str, dict[str, Any]] = {}
 _JOBS_LOCK = threading.Lock()
@@ -97,6 +110,11 @@ class ValidateRequest(BaseModel):
     conditions: dict[str, float] = Field(default_factory=dict, description="Input boundary conditions.")
     job_id: str | None = Field(default=None, description="Optional caller-supplied tracking id.")
     run_ai: bool = Field(default=True, description="Run the async AI reasoning layer.")
+    deep_ai: bool = Field(
+        default=False,
+        description="Use the 5-phase AI orchestrator (root-cause analysis, ~10-90s) instead of "
+        "the default quick sanity check (~2-18s, 'normal'/'not normal' verdict).",
+    )
     geometry_description: str | None = Field(default=None, description="Free text geometry description.")
     what_are_you_measuring: str | None = Field(default=None, description="What the simulation is studying.")
     expected_output_ranges: dict[str, list[float]] | None = Field(default=None, description="Expected value ranges.")
@@ -310,14 +328,22 @@ def _ai_exclusion_indices(df: pd.DataFrame, ai_findings: list[dict]) -> list[int
 def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                   conditions: dict, physics_issues: list[dict],
                   physics_result: dict | None = None,
-                  context: dict | None = None) -> None:
-    """Background worker: run the AI orchestrator and fold its verdict into the job."""
+                  context: dict | None = None,
+                  deep_ai: bool = False) -> None:
+    """
+    Background worker: run the AI check and fold its verdict into the job.
+
+    Default path is the fast quick check (validate_with_ai, ~2-18s, small
+    model) — a second opinion, not a bottleneck. The 5-phase orchestrator
+    (deep root-cause analysis, ~10-90s, larger model) only runs when the
+    caller explicitly opts in with deep_ai=true.
+    """
     try:
         with _JOBS_LOCK:
             if job_id in JOBS:
                 JOBS[job_id]["ai_running"] = True
 
-        if ORCHESTRATOR_ENABLED and physics_result:
+        if deep_ai and ORCHESTRATOR_ENABLED and physics_result:
             orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
             ai_data = orchestrator_dict(orch_result)
             ai_data["status"] = orch_result.verdict
@@ -404,7 +430,7 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
         threading.Thread(
             target=_run_ai_async,
             args=(jid, df, req.simulation_type.value, req.conditions, result["issues"]),
-            kwargs={"physics_result": result, "context": context or None},
+            kwargs={"physics_result": result, "context": context or None, "deep_ai": req.deep_ai},
             daemon=True,
         ).start()
 
@@ -555,7 +581,14 @@ async def get_job(job_id: str, _: str = Depends(caller_identity)):
 
 @app.get("/v1/job/{job_id}/ai", tags=["jobs"])
 async def get_job_ai(job_id: str, _: str = Depends(caller_identity)):
-    """Poll for the AI result once it is ready."""
+    """
+    Poll for the AI result once it is ready.
+
+    The AI worker (_run_ai_async) folds AI-flagged trials into the job's
+    exclusion set and can escalate status/training_ready — return those
+    fields too, or a client that only reads `ai` will silently miss any
+    trial the physics engine passed but the AI orchestrator excluded.
+    """
     with _JOBS_LOCK:
         if job_id not in JOBS:
             raise NotFoundError(f"Job {job_id} not found.")
@@ -565,6 +598,13 @@ async def get_job_ai(job_id: str, _: str = Depends(caller_identity)):
             "ai_running": JOBS[job_id]["ai_running"],
             "ai_status": physics.get("ai_status", "pending"),
             "ai": physics.get("ai"),
+            "ai_exclusions": physics.get("ai_exclusions", []),
+            "exclusions": physics.get("exclusions", []),
+            "trials_excluded": physics.get("trials_excluded"),
+            "trials_valid": physics.get("trials_valid"),
+            "exclusion_rate": physics.get("exclusion_rate"),
+            "status": physics.get("status"),
+            "training_ready": physics.get("training_ready"),
         }
 
 

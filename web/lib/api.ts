@@ -49,6 +49,7 @@ export interface AIFinding {
 
 export interface AIResult {
   status: string;
+  verdict?: string; // terse headline: "Normal" / "Not Normal" (quick check) or a deep-orchestrator verdict
   model: string;
   processing_ms: number;
   anomaly_score: number;
@@ -59,6 +60,14 @@ export interface AIResult {
   recommendations: string[];
   timed_out: boolean;
   error: string | null;
+  // Present only when the full Python orchestrator ran (not the lite TS review).
+  corruption_probability?: Record<string, number>;
+  root_causes?: { name: string; confidence: number; evidence: string; affected_columns?: string[]; severity?: string }[];
+  what_only_ai_sees?: string;
+  what_physics_caught?: string;
+  what_physics_missed?: string;
+  phase_timings?: Record<string, number>;
+  recommended_action?: string;
 }
 
 export interface ValidationResult {
@@ -84,6 +93,7 @@ export interface ValidationResult {
   ai: AIResult | null;
   ai_status: string;
   ai_running?: boolean;
+  ai_exclusions?: number[];
 }
 
 export interface GeneratedKey {
@@ -121,6 +131,9 @@ export async function runDemo(): Promise<ValidationResult> {
 
 export async function pollAI(jobId: string): Promise<{
   ai_running: boolean; ai_status: string; ai: AIResult | null;
+  ai_exclusions?: number[]; exclusions?: Exclusion[];
+  trials_excluded?: number; trials_valid?: number; exclusion_rate?: number;
+  status?: "passed" | "warning" | "failed"; training_ready?: boolean;
 }> {
   const r = await fetch(`${API_BASE}/v1/job/${jobId}/ai`);
   if (!r.ok) throw new Error(await r.text());

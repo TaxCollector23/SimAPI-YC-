@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, RefreshCw, Loader2, CheckCircle, XCircle,
   AlertTriangle, ChevronDown, ChevronUp, Key, Copy,
-  Check, Plus, Trash2, Info,
+  Check, Plus, Trash2, Info, Sparkles, Timer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PreflightPanel } from "./preflight-panel";
@@ -179,6 +179,29 @@ function IssueRow({ issue }: { issue: Issue & { human_name?: string } }) {
   );
 }
 
+/** Time-based progress bar for the AI quick check (~2-18s budget). Not tied to
+ * a real byte count — there's nothing to stream — but gives useful feedback
+ * that the check is progressing rather than hung. Caps at 92% until the
+ * result actually arrives, so it never falsely implies completion. */
+function AiProgressBar({ budgetMs = 18000 }: { budgetMs?: number }) {
+  const [pct, setPct] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const t = setInterval(() => {
+      setPct(Math.min(92, Math.round(((Date.now() - start) / budgetMs) * 100)));
+    }, 200);
+    return () => clearInterval(t);
+  }, [budgetMs]);
+  return (
+    <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+      <div
+        className="h-full rounded-full bg-purple-400/70 transition-[width] duration-200 ease-linear"
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
 export function ValidationDashboard() {
   const { user } = useAuth();
   const simConfig  = SIM_TYPES[0];
@@ -218,7 +241,20 @@ export function ValidationDashboard() {
         const d = await pollAI(jobId);
         if (!d.ai_running) {
           stopPoll();
-          if (d.ai) setResult(prev => prev ? { ...prev, ai: d.ai, ai_status: d.ai_status } : prev);
+          if (d.ai) {
+            setResult(prev => prev ? {
+              ...prev,
+              ai: d.ai,
+              ai_status: d.ai_status,
+              ai_exclusions: d.ai_exclusions ?? prev.ai_exclusions,
+              exclusions: d.exclusions ?? prev.exclusions,
+              trials_excluded: d.trials_excluded ?? prev.trials_excluded,
+              trials_valid: d.trials_valid ?? prev.trials_valid,
+              exclusion_rate: d.exclusion_rate ?? prev.exclusion_rate,
+              status: d.status ?? prev.status,
+              training_ready: d.training_ready ?? prev.training_ready,
+            } : prev);
+          }
         }
       } catch { stopPoll(); }
     }, 1500);
@@ -573,7 +609,8 @@ export function ValidationDashboard() {
                   )}
                 </div>
 
-                {/* Excluded trials — 1-indexed */}
+                {/* Excluded trials — 1-indexed. Physics exclusions are rule-based (no false
+                    positives); AI exclusions are reasoning-based (higher recall, clearly labeled). */}
                 {result.exclusions.length > 0 && (
                   <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
                     <p className="text-xs uppercase tracking-widest text-white/30 mb-3">
@@ -581,12 +618,23 @@ export function ValidationDashboard() {
                     </p>
                     <div className="space-y-1.5">
                       {result.exclusions.slice(0, 8).map((e, i) => {
-                        const trialNum = (e as { trial_number?: number; trial_index?: number }).trial_number
-                                      ?? ((e as { trial_index?: number }).trial_index ?? 0) + 1;
+                        const trialIndex = (e as { trial_index?: number }).trial_index ?? -1;
+                        const trialNum = (e as { trial_number?: number }).trial_number ?? trialIndex + 1;
+                        const isAiFlagged = (result.ai_exclusions ?? []).includes(trialIndex);
                         return (
-                          <div key={i} className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2 text-xs flex items-start gap-2">
-                            <span className="text-red-400 font-mono shrink-0">Trial {trialNum}</span>
-                            <span className="text-white/40">{(e as { reason?: string }).reason}</span>
+                          <div key={i} className={cn(
+                            "rounded-lg border px-3 py-2 text-xs flex items-start gap-2",
+                            isAiFlagged ? "border-purple-400/15 bg-purple-400/[0.04]" : "border-white/[0.06] bg-white/[0.02]",
+                          )}>
+                            <span className={cn("font-mono shrink-0", isAiFlagged ? "text-purple-400" : "text-red-400")}>
+                              Trial {trialNum}
+                            </span>
+                            <span className="text-white/40 flex-1">{(e as { reason?: string }).reason}</span>
+                            {isAiFlagged && (
+                              <span className="text-[10px] text-purple-400/60 shrink-0 flex items-center gap-1">
+                                <Sparkles className="h-2.5 w-2.5" /> AI
+                              </span>
+                            )}
                           </div>
                         );
                       })}
@@ -601,15 +649,28 @@ export function ValidationDashboard() {
                 <div className="rounded-2xl border border-purple-400/25 bg-purple-400/5 p-5">
                   <div className="flex items-center justify-between mb-4">
                     <p className="text-sm font-medium text-purple-400 flex items-center gap-2">
-                      🤖 AI Second-Pass Analysis
+                      <Sparkles className="h-4 w-4" /> AI Check
                     </p>
                     {result.ai && <span className="text-xs text-white/30 font-mono">{result.ai.processing_ms}ms · {result.ai.model?.split("/").pop()}</span>}
                   </div>
 
                   {(!result.ai || result.ai_status === "pending") && aiPoll && (
-                    <div className="flex items-center gap-3 text-xs text-purple-400/70">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      Performing expert analysis — comparing physics findings, checking distributions, reasoning about ML readiness...
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 text-xs text-purple-400/70">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        Checking whether this dataset looks normal…
+                      </div>
+                      <AiProgressBar />
+                    </div>
+                  )}
+
+                  {result.ai?.verdict && result.ai.status !== "error" && (
+                    <div className={cn(
+                      "mb-4 flex items-center gap-2 rounded-xl px-4 py-3 text-lg font-semibold",
+                      result.ai.verdict === "Normal" ? "bg-pass/10 text-pass" : "bg-amber-400/10 text-amber-400",
+                    )}>
+                      {result.ai.verdict === "Normal" ? <CheckCircle className="h-5 w-5" /> : <AlertTriangle className="h-5 w-5" />}
+                      {result.ai.verdict}
                     </div>
                   )}
 
@@ -640,6 +701,62 @@ export function ValidationDashboard() {
                         <div className="bg-white/[0.03] rounded-xl p-4 border border-purple-400/10">
                           <p className="text-[10px] uppercase tracking-widest text-purple-400/60 mb-2">Expert Assessment</p>
                           <p className="text-sm text-white/60 leading-relaxed">{result.ai.dataset_summary}</p>
+                        </div>
+                      )}
+
+                      {/* Corruption probability distribution — only present when the full orchestrator ran */}
+                      {result.ai.corruption_probability && Object.keys(result.ai.corruption_probability).length > 0 && (
+                        <div className="bg-white/[0.03] rounded-xl p-4 border border-purple-400/10">
+                          <p className="text-[10px] uppercase tracking-widest text-purple-400/60 mb-3">Corruption probability distribution</p>
+                          <div className="space-y-2">
+                            {Object.entries(result.ai.corruption_probability)
+                              .sort(([, a], [, b]) => b - a)
+                              .map(([label, prob]) => (
+                                <div key={label}>
+                                  <div className="flex items-center justify-between text-xs text-white/50 mb-1">
+                                    <span className="capitalize">{label.replace(/_/g, " ")}</span>
+                                    <span className="font-mono">{Math.round(prob * 100)}%</span>
+                                  </div>
+                                  <div className="h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+                                    <div
+                                      className="h-full rounded-full bg-purple-400/70"
+                                      style={{ width: `${Math.round(prob * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* What only AI can see — the most compelling demonstration of value */}
+                      {result.ai.what_only_ai_sees && (
+                        <div className="rounded-xl border border-purple-400/25 bg-purple-400/[0.08] p-4">
+                          <p className="text-[10px] uppercase tracking-widest text-purple-400 mb-2 flex items-center gap-1.5">
+                            <Sparkles className="h-3 w-3" /> What only AI can see
+                          </p>
+                          <p className="text-sm text-white/70 leading-relaxed">{result.ai.what_only_ai_sees}</p>
+                        </div>
+                      )}
+
+                      {/* Root causes — collapsed individual issues into diagnoses */}
+                      {result.ai.root_causes && result.ai.root_causes.length > 0 && (
+                        <div className="space-y-2">
+                          <p className="text-[10px] uppercase tracking-widest text-white/30">Root causes</p>
+                          {result.ai.root_causes.map((rc, i) => (
+                            <div key={i} className="rounded-xl border border-red-400/15 bg-red-400/5 p-3">
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="text-xs font-medium text-white/75">{rc.name}</span>
+                                <span className="text-[10px] text-white/25 shrink-0">{Math.round(rc.confidence * 100)}% conf</span>
+                              </div>
+                              <p className="text-xs text-white/45 leading-relaxed">{rc.evidence}</p>
+                              {rc.affected_columns && rc.affected_columns.length > 0 && (
+                                <p className="mt-1 text-[10px] font-mono text-white/25">
+                                  columns: {rc.affected_columns.join(", ")}
+                                </p>
+                              )}
+                            </div>
+                          ))}
                         </div>
                       )}
 
@@ -708,6 +825,23 @@ export function ValidationDashboard() {
                             </div>
                           ))}
                         </div>
+                      )}
+
+                      {/* Phase timings — collapsed debug info */}
+                      {result.ai.phase_timings && Object.keys(result.ai.phase_timings).length > 0 && (
+                        <details className="rounded-xl border border-white/[0.06] bg-black/20 p-3">
+                          <summary className="cursor-pointer text-[10px] uppercase tracking-widest text-white/30 flex items-center gap-1.5">
+                            <Timer className="h-3 w-3" /> Debug: orchestrator phase timings
+                          </summary>
+                          <div className="mt-2 space-y-1">
+                            {Object.entries(result.ai.phase_timings).map(([phase, ms]) => (
+                              <div key={phase} className="flex justify-between text-[11px] font-mono text-white/40">
+                                <span>{phase.replace(/_/g, " ")}</span>
+                                <span>{ms}ms</span>
+                              </div>
+                            ))}
+                          </div>
+                        </details>
                       )}
                     </div>
                   )}

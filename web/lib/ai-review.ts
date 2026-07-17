@@ -1,17 +1,20 @@
 /**
- * Server-side AI review of a validation result via OpenRouter.
+ * Server-side AI check of a validation result via OpenRouter.
  *
- * Runs only when OPENROUTER_API_KEY is set (server env). The model is given the
- * deterministic verdict AND the actual data characteristics — per-column
- * statistics, the strongest correlations, and sample rows (including violating
- * ones) — so it can reason like an engineer-in-charge rather than rubber-stamp a
- * score. The key never reaches the browser (imported only by route handlers).
+ * This is a FAST sanity pass ("is this normal or not"), not a deep
+ * investigation — the physics engine is the source of truth, the AI layer is
+ * a second opinion. Runs only when OPENROUTER_API_KEY is set (server env).
+ * The key never reaches the browser (imported only by route handlers).
+ *
+ * Token budgets are deliberately small: this answers a yes/no question, not a
+ * report, so a few hundred tokens is enough and keeps latency under ~18s.
  */
 import type { ValidationReport } from "./validation-engine";
 
 export interface AiReview {
   enabled: boolean;
   status?: "agree" | "concern" | "disagree";
+  verdict?: "Normal" | "Not Normal";
   assessment?: string;
   concerns?: string[];
   model?: string;
@@ -28,17 +31,54 @@ export interface DataProfile {
 }
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+const QUICK_MODEL = "nvidia/nemotron-nano-9b-v2:free";
+const TOKENS_SHORT = 400;
+// This route is synchronous (no polling) and shares the Vercel function's
+// 30s maxDuration with physics validation. One retry means worst case is
+// 2x this budget, so keep it well under half of 30s.
+const TIMEOUT_MS = 12_000;
 
-function statsTable(stats: DataProfile["statistics"]): string {
-  if (!stats || !Object.keys(stats).length) return "(none)";
-  const rows = Object.entries(stats).slice(0, 20).map(([k, s]) =>
-    `  ${k}: mean=${fmt(s.mean)} std=${fmt(s.std)} min=${fmt(s.min)} max=${fmt(s.max)} cv=${fmt(s.cv)}${s.skewness !== undefined ? ` skew=${fmt(s.skewness)}` : ""}`);
-  return rows.join("\n");
+/** High-cv columns are the cheapest signal that something might be off — no
+ * need to send the model a full statistics table for a yes/no check. */
+function highVarianceColumns(stats: DataProfile["statistics"]): string[] {
+  if (!stats) return [];
+  return Object.entries(stats)
+    .filter(([, s]) => Number.isFinite(s.cv) && Math.abs(s.cv) > 0.5)
+    .slice(0, 5)
+    .map(([k, s]) => `${k} (cv=${s.cv.toFixed(2)})`);
 }
-function fmt(n: number): string {
-  if (!Number.isFinite(n)) return String(n);
-  if (Math.abs(n) >= 1e5 || (Math.abs(n) < 1e-3 && n !== 0)) return n.toExponential(2);
-  return Number.isInteger(n) ? String(n) : n.toFixed(4);
+
+async function callQuick(prompt: string, maxTokens: number, key: string): Promise<string> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(OPENROUTER_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://sim-api.vercel.app",
+        "X-Title": "SimAPI",
+      },
+      body: JSON.stringify({
+        model: QUICK_MODEL,
+        max_tokens: maxTokens,
+        // Cap hidden reasoning tokens explicitly — some free models reason even
+        // with exclude=true, and an uncapped budget can eat the whole response.
+        reasoning: { exclude: true, max_tokens: Math.min(250, Math.floor(maxTokens / 2)) },
+        temperature: 0.1,
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`OpenRouter ${res.status}`);
+    const data = await res.json();
+    const content: string | undefined = data?.choices?.[0]?.message?.content;
+    if (!content) throw new Error("Model returned no content (likely exhausted its token budget on hidden reasoning)");
+    return content.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function aiReview(
@@ -49,76 +89,38 @@ export async function aiReview(
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) return { enabled: false };
 
-  const model = process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-ultra-550b-a55b:free";
-  const corr = profile?.correlations?.length
-    ? profile.correlations.slice(0, 6).map((c) => `  ${c.pair}: r=${c.r.toFixed(2)}`).join("\n")
-    : "(not computed)";
+  const highCv = highVarianceColumns(profile?.statistics);
+  const failedChecks = (report.violations ?? []).slice(0, 8).map((v) => v.field ?? v.reason).filter(Boolean);
 
-  const prompt = `You are a senior CFD/simulation engineer reviewing a ${report.simulationType} dataset that a deterministic physics engine has already screened. Verdict: "${report.status}" (score ${report.score}/100)${profile?.trials_submitted ? `, ${profile.trials_excluded ?? 0}/${profile.trials_submitted} trials excluded` : ""}.
+  const prompt = `You are sanity-checking a ${report.simulationType} simulation dataset that a deterministic physics engine already validated (verdict: "${report.status}", score ${report.score}/100${profile?.trials_submitted ? `, ${profile.trials_excluded ?? 0}/${profile.trials_submitted} trials excluded` : ""}).
 
-You are given the ACTUAL DATA — use it. Look for problems the rule engine may have missed: implausible magnitudes, distribution shape (skew/heavy tails via cv & skew), suspicious correlations or their absence, values clustered at unit-conversion boundaries, and rows that violate physics.
+Failed/flagged checks: ${failedChecks.length ? JSON.stringify(failedChecks) : "none"}
+High-variance columns (cv>0.5): ${highCv.length ? highCv.join(", ") : "none"}
+Conditions: ${JSON.stringify(conditions)}
 
-Boundary conditions:
-${JSON.stringify(conditions, null, 2)}
+Is this dataset normal (safe to use as-is) or not normal (has a real problem)? Be terse.
 
-Per-column statistics:
-${statsTable(profile?.statistics)}
-
-Strongest correlations:
-${corr}
-
-Sample rows:
-${JSON.stringify((profile?.sample_rows ?? []).slice(0, 4), null, 0)}
-
-Rows that failed a rule (if any):
-${JSON.stringify((profile?.violating_rows ?? []).slice(0, 4), null, 0)}
-
-Checks the engine already flagged:
-${JSON.stringify((report.violations ?? []).slice(0, 12), null, 0)}
-
-Respond ONLY with JSON:
-{
-  "status": "agree" | "concern" | "disagree",
-  "assessment": "2-4 sentence expert judgement that references specific numbers from the data",
-  "concerns": ["specific, data-grounded issues the rules may have missed"]
-}`;
+Respond ONLY with this JSON, no other text:
+{"verdict": "normal" | "not normal", "reason": "one short sentence"}`;
 
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 22_000);
-    const res = await fetch(OPENROUTER_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://sim-api.vercel.app",
-        "X-Title": "SimAPI",
-      },
-      body: JSON.stringify({
-        model,
-        // The default free model is a reasoning model — hidden chain-of-thought
-        // tokens count against max_tokens, so a low budget can exhaust the whole
-        // response before any visible JSON is emitted. Exclude reasoning from
-        // the response and give enough headroom for both.
-        max_tokens: 2500,
-        reasoning: { exclude: true },
-        temperature: 0.1,
-        messages: [{ role: "user", content: prompt }],
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return { enabled: true, error: `OpenRouter ${res.status}` };
-    const data = await res.json();
-    let content: string = data?.choices?.[0]?.message?.content ?? "";
-    content = content.trim().replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+    let content: string;
+    try {
+      content = await callQuick(prompt, TOKENS_SHORT, key);
+    } catch {
+      // One retry with a larger budget — free-tier reasoning models occasionally
+      // burn their whole budget on hidden chain-of-thought.
+      content = await callQuick(prompt, TOKENS_SHORT * 2, key);
+    }
     const parsed = JSON.parse(content);
+    const isNormal = String(parsed.verdict ?? "").trim().toLowerCase() === "normal";
     return {
       enabled: true,
-      status: parsed.status,
-      assessment: parsed.assessment,
-      concerns: Array.isArray(parsed.concerns) ? parsed.concerns : [],
-      model,
+      status: isNormal ? "agree" : "concern",
+      verdict: isNormal ? "Normal" : "Not Normal",
+      assessment: String(parsed.reason ?? ""),
+      concerns: isNormal ? [] : [String(parsed.reason ?? "")],
+      model: QUICK_MODEL,
     };
   } catch (e) {
     return { enabled: true, error: e instanceof Error ? e.message : "AI review failed" };

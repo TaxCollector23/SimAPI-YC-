@@ -74,6 +74,18 @@ def test_jobs_pagination(client, sample_payload):
     assert page["limit"] == 1
 
 
+def test_job_ai_poll_exposes_exclusion_fields(client, sample_payload):
+    """Regression test: the AI worker folds new exclusions into the job, but the
+    poll endpoint used to only return `ai` — silently dropping any trial the AI
+    orchestrator excluded that the physics engine had passed."""
+    job_id = client.post("/v1/validate/physics-only", json=sample_payload).json()["job_id"]
+    r = client.get(f"/v1/job/{job_id}/ai")
+    assert r.status_code == 200
+    body = r.json()
+    for key in ("ai_exclusions", "exclusions", "trials_excluded", "trials_valid", "exclusion_rate", "status", "training_ready"):
+        assert key in body
+
+
 def test_demo_runs(client):
     r = client.post("/v1/demo")
     assert r.status_code == 200

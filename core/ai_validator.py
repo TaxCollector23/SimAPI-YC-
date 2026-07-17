@@ -1,11 +1,21 @@
 """
-SimAPI — AI Validation Layer v2 (legacy shim over core/ai_orchestrator.py)
+SimAPI — AI Validation Layer v2
 
-- Sends full distribution data, not just samples
-- Configurable timeout (SIMAPI_AI_TIMEOUT_SECONDS) with graceful degradation
-- Async-friendly: returns immediately, AI result polled separately
-- Uses OpenRouter with the model set by SIMAPI_AI_MODEL (defaults to the
-  strongest free-tier model available)
+This is the DEFAULT AI check that runs after every physics validation: a fast
+sanity pass ("is this normal or not"), not a deep investigation. It uses a
+small, non-reasoning-heavy free model and a strict timeout so it never
+becomes the bottleneck in a validation request — the physics engine is the
+source of truth; the AI layer is a second opinion, not a blocker.
+
+For deep multi-phase root-cause analysis (5-phase pipeline, larger model,
+longer budget), see core/ai_orchestrator.py — opt-in via `deep_ai: true` on
+the validate request, not the default path.
+
+Token budgets are deliberately different by purpose:
+- TOKENS_SHORT: quick verdicts (CLI output, playground headline) — a few
+  hundred tokens is enough for "normal" / "not normal" + one reason.
+- TOKENS_LONG: detailed explanations (sim explain, deep orchestrator phases)
+  — up to ~3000 tokens so a real diagnosis isn't truncated mid-sentence.
 """
 
 import json
@@ -23,8 +33,16 @@ import pandas as pd
 # See .env.example for the full list of supported variables.
 OPENROUTER_API_KEY = os.environ.get("SIMAPI_OPENROUTER_API_KEY", "")
 OPENROUTER_URL     = os.environ.get("SIMAPI_OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
-MODEL              = os.environ.get("SIMAPI_AI_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
-TIMEOUT_SECONDS    = int(os.environ.get("SIMAPI_AI_TIMEOUT_SECONDS", "75"))
+
+# The quick model prioritizes latency (< 20s) over depth — it's answering a
+# single yes/no question, not writing a diagnosis. The deep orchestrator
+# (core/ai_orchestrator.py) uses a separate, larger model via SIMAPI_AI_MODEL.
+QUICK_MODEL        = os.environ.get("SIMAPI_AI_QUICK_MODEL", "nvidia/nemotron-nano-9b-v2:free")
+MODEL              = QUICK_MODEL  # backwards-compat alias used by report_to_dict/tests
+TIMEOUT_SECONDS    = int(os.environ.get("SIMAPI_AI_QUICK_TIMEOUT_SECONDS", "18"))
+
+TOKENS_SHORT = 400   # quick verdict: "normal"/"not normal" + one-sentence reason
+TOKENS_LONG  = 3000  # detailed explanations (deep orchestrator phases)
 
 # When no key is configured the AI layer is disabled and reports its status
 # cleanly rather than failing a validation run. Physics validation is unaffected.
@@ -50,165 +68,64 @@ class AIValidationReport:
     recommendations: list[str]
     timed_out:       bool = False
     error:           str | None = None
+    verdict:         str = ""  # terse 2-3 word headline: "Normal" / "Not Normal"
 
 
-def _distribution_summary(s: pd.Series) -> dict:
-    """Full distribution: percentiles, shape, tail behaviour."""
-    if len(s) == 0:
-        return {}
-    s = s.dropna()
+def _quick_summary(data: pd.DataFrame, physics_issues: list[dict]) -> dict:
+    """Compact signal for the quick check — not a full distribution dump.
+
+    The quick model only needs to answer "is this normal", so it gets counts
+    and a handful of the most extreme values, not every percentile of every
+    column. Keeping the input small is most of why this path is fast.
+    """
+    nc = list(data.select_dtypes(include=[np.number]).columns)
+    n = len(data)
+    failed = [i for i in physics_issues if i.get("status") == "failed"]
+    warned = [i for i in physics_issues if i.get("status") == "warning"]
+
+    # Highest coefficient-of-variation columns are the most likely to look "off".
+    notable_cv = []
+    for col in nc[:15]:
+        s = data[col].dropna()
+        if len(s) > 1 and s.mean() != 0:
+            cv = abs(float(s.std() / s.mean()))
+            if cv > 0.5:
+                notable_cv.append(f"{col} (cv={cv:.2f})")
+
     return {
-        "mean":   round(float(s.mean()), 8),
-        "std":    round(float(s.std()), 8),
-        "min":    round(float(s.min()), 8),
-        "p1":     round(float(s.quantile(.01)), 8),
-        "p5":     round(float(s.quantile(.05)), 8),
-        "p10":    round(float(s.quantile(.10)), 8),
-        "p25":    round(float(s.quantile(.25)), 8),
-        "median": round(float(s.median()), 8),
-        "p75":    round(float(s.quantile(.75)), 8),
-        "p90":    round(float(s.quantile(.90)), 8),
-        "p95":    round(float(s.quantile(.95)), 8),
-        "p99":    round(float(s.quantile(.99)), 8),
-        "max":    round(float(s.max()), 8),
-        "skew":   round(float(s.skew()), 4),
-        "kurt":   round(float(s.kurtosis()), 4),
-        "cv":     round(float(s.std()/s.mean()), 4) if s.mean() != 0 else None,
-        "n":      int(len(s)),
+        "trials": n,
+        "columns": len(nc),
+        "failed_checks": [i.get("name", "") for i in failed[:8]],
+        "warning_checks": [i.get("name", "") for i in warned[:8]],
+        "high_variance_columns": notable_cv[:5],
     }
 
 
 def _build_prompt(data: pd.DataFrame, sim_type: str, conditions: dict, physics_issues: list[dict]) -> str:
-    nc = list(data.select_dtypes(include=[np.number]).columns)
-    n  = len(data)
+    """Minimal prompt for the fast default check: is this dataset normal or not."""
+    summary = _quick_summary(data, physics_issues)
+    return f"""You are sanity-checking a {sim_type} simulation dataset that a deterministic physics engine already validated with {summary['trials']} trials across {summary['columns']} columns.
 
-    # Full distributions for every column
-    distributions = {}
-    for col in nc[:25]:
-        distributions[col] = _distribution_summary(data[col])
+Failed checks: {summary['failed_checks'] or 'none'}
+Warning checks: {summary['warning_checks'] or 'none'}
+High-variance columns (cv>0.5): {summary['high_variance_columns'] or 'none'}
+Conditions: {json.dumps(conditions)}
 
-    # Correlation matrix (key relationships)
-    corr = {}
-    if len(nc) >= 2:
-        cm = data[nc[:15]].corr()
-        for i in range(len(cm.columns)):
-            for j in range(i+1, len(cm.columns)):
-                r = float(cm.iloc[i,j])
-                if not np.isnan(r) and abs(r) > 0.3:
-                    corr[f"{cm.columns[i]} ↔ {cm.columns[j]}"] = round(r, 4)
+Is this dataset normal (safe to use as-is) or not normal (has a real problem)? Be terse.
 
-    # Flagged trial rows (from physics exclusions)
-    flagged = []
-    for issue in physics_issues:
-        if issue.get("status") == "failed":
-            ti = issue.get("value")
-            if ti is not None:
-                try:
-                    idx = int(ti)
-                    if 0 <= idx < len(data):
-                        row = {k: round(float(v), 6) if isinstance(v, float) and not np.isnan(v) else v
-                               for k, v in data.iloc[idx].items() if k in nc[:20]}
-                        flagged.append({"trial": idx, "data": row})
-                except: pass
+Respond ONLY with this JSON, no other text:
+{{"verdict": "normal" | "not normal", "reason": "one short sentence", "anomaly_score": 0.0}}
 
-    # Also grab first 3 rows as anchors
-    anchor_rows = []
-    for i in range(min(3, n)):
-        row = {k: round(float(v), 6) if isinstance(v, float) and not np.isnan(v) else v
-               for k, v in data.iloc[i].items() if k in nc[:20]}
-        anchor_rows.append({"trial": i, "data": row})
-
-    # Physics issues summary (warnings + failures only)
-    ph_summary = [{"check": i.get("name",""), "status": i.get("status",""),
-                   "detail": i.get("detail",""), "cat": i.get("category","")}
-                  for i in physics_issues[:40]]
-
-    return f"""You are a world-class physics simulation data scientist performing expert second-pass validation. A deterministic rule engine has already run 280+ checks. Your job: find what it MISSED using domain expertise and holistic reasoning.
-
-## Context
-- Simulation type: **{sim_type}**
-- Trials: **{n}**
-- Columns: {', '.join(nc[:25])}
-- Input conditions: {json.dumps(conditions)}
-
-## Full Statistical Distributions
-```json
-{json.dumps(distributions, indent=2)}
-```
-
-## Notable Correlations (|r|>0.3)
-```json
-{json.dumps(corr, indent=2)}
-```
-
-## Anchor Rows (first 3 trials)
-```json
-{json.dumps(anchor_rows, indent=2)}
-```
-
-## Flagged Rows (physics engine exclusions)
-```json
-{json.dumps(flagged[:10], indent=2)}
-```
-
-## Physics Engine Already Found
-```json
-{json.dumps(ph_summary, indent=2)}
-```
-
-## Your Expert Analysis — Find What the Rules Missed
-
-Think deeply about:
-
-1. **Magnitude realism**: Are the absolute values physically achievable for {sim_type}? E.g. drag coefficients of 0.312 for what geometry? Is that consistent with the Reynolds number?
-
-2. **Distribution shape**: Real CFD/FEA data has characteristic distributions. Perfectly Gaussian data with suspiciously low variance often indicates synthetic generation. High CV in quantities that should be nearly constant (e.g. material elastic modulus) suggests dataset mixing.
-
-3. **Cross-variable physics not in the rule engine**: Beyond simple pairwise checks — does the combination of ALL these quantities tell a physically coherent story? Could a real simulation produce this joint distribution?
-
-4. **Temporal/sequential patterns**: If this is convergence data, do residuals decrease monotonically? If this is parametric sweep data, are sweep variables clearly the dominant source of variance?
-
-5. **ML training quality**: Will a model trained on this data generalize? Are there biases (only one flow regime, one material, narrow parameter space)? Is there enough variance in target variables?
-
-6. **Dataset provenance signals**: Signs of copy-paste, scaling errors (unit conversion mistakes create suspicious round numbers or exact factors of 1000), truncation artifacts, sensor saturation.
-
-7. **Domain expert intuition for {sim_type}**: Apply deep specialist knowledge that no rule engine can encode.
-
-DO NOT repeat issues the physics engine already found. Find genuinely NEW insights.
-
-Respond ONLY with valid JSON, no other text:
-
-{{
-  "overall_assessment": "2-3 sentence plain English summary of data quality and key concerns",
-  "anomaly_score": 0.0,
-  "status": "passed|warning|failed",
-  "findings": [
-    {{
-      "severity": "critical|warning|info",
-      "category": "magnitude_realism|distribution_shape|cross_variable_physics|temporal_pattern|ml_quality|dataset_provenance|domain_expert",
-      "title": "Concise finding title",
-      "detail": "Specific technical explanation with column names, values, and why it matters for {sim_type}",
-      "trials": [],
-      "confidence": 0.85
-    }}
-  ],
-  "recommendations": [
-    "Specific actionable recommendation"
-  ]
-}}
-
-Rules:
-- anomaly_score: 0.0=perfect, 1.0=invalid. passed<0.2, warning 0.2-0.5, failed>0.5
-- 0 findings if data is genuinely clean (say so clearly in overall_assessment)
-- Maximum 12 findings, ranked by severity
-- Be specific: cite column names and numerical values
-- Do NOT hallucinate issues that aren't supported by the data"""
+anomaly_score: 0.0=clean, 1.0=seriously corrupted. "normal" implies anomaly_score < 0.4."""
 
 
-def _call_api(prompt: str) -> tuple:
+def _call_api(prompt: str, max_tokens: int = TOKENS_SHORT, model: str = QUICK_MODEL, timeout: int = TIMEOUT_SECONDS) -> tuple:
     payload = json.dumps({
-        "model": MODEL, "max_tokens": 3000, "temperature": 0.1,
-        "reasoning": {"exclude": True},
+        "model": model, "max_tokens": max_tokens, "temperature": 0.1,
+        # Cap hidden reasoning tokens explicitly — some free models reason
+        # even with exclude=true, and an uncapped reasoning budget can eat
+        # the whole response before any visible content is emitted.
+        "reasoning": {"exclude": True, "max_tokens": min(250, max_tokens // 2)},
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 
@@ -221,14 +138,21 @@ def _call_api(prompt: str) -> tuple:
         method="POST",
     )
     t0 = time.time()
-    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         raw = resp.read().decode("utf-8")
     return raw, (time.time()-t0)*1000
 
 
 def _parse(raw: str) -> dict:
     data = json.loads(raw)
-    content = data["choices"][0]["message"]["content"].strip()
+    content = data["choices"][0]["message"].get("content")
+    if not content:
+        # Some free models still burn part of the reasoning budget on hidden
+        # chain-of-thought even with reasoning.exclude=true, occasionally
+        # leaving zero tokens for the visible answer. Fail with a clear,
+        # specific error rather than an AttributeError on None.
+        raise ValueError("Model returned no content (likely exhausted its token budget on hidden reasoning)")
+    content = content.strip()
     if content.startswith("```"):
         lines = content.split("\n")
         end = -1 if lines[-1].strip() in ("```","```json") else len(lines)
@@ -255,24 +179,29 @@ def validate_with_ai(data: pd.DataFrame, simulation_type: str,
     def _run():
         try:
             prompt = _build_prompt(data, simulation_type, conditions, physics_issues)
-            raw, api_ms = _call_api(prompt)
-            parsed = _parse(raw)
-            findings = [AIFinding(
-                severity=f.get("severity","warning"),
-                category=f.get("category","general"),
-                title=f.get("title",""),
-                detail=f.get("detail",""),
-                trials=f.get("trials",[]),
-                confidence=float(f.get("confidence",0.7)),
-            ) for f in parsed.get("findings",[])]
+            try:
+                raw, api_ms = _call_api(prompt)
+                parsed = _parse(raw)
+            except (ValueError, KeyError):
+                # One retry with a larger token budget — free-tier reasoning
+                # models occasionally burn their whole budget on hidden
+                # chain-of-thought and leave nothing for the visible answer.
+                raw, api_ms = _call_api(prompt, max_tokens=TOKENS_SHORT * 2)
+                parsed = _parse(raw)
+            is_normal = str(parsed.get("verdict", "")).strip().lower() == "normal"
+            anomaly = float(parsed.get("anomaly_score", 0.1 if is_normal else 0.6))
             result["report"] = AIValidationReport(
-                status=parsed.get("status","warning"),
-                model=MODEL,
+                status="passed" if is_normal else ("failed" if anomaly > 0.7 else "warning"),
+                verdict="Normal" if is_normal else "Not Normal",
+                model=QUICK_MODEL,
                 processing_ms=round((time.time()-t0)*1000, 1),
-                findings=findings,
-                dataset_summary=parsed.get("overall_assessment",""),
-                anomaly_score=float(parsed.get("anomaly_score",0.5)),
-                recommendations=parsed.get("recommendations",[]),
+                findings=[] if is_normal else [AIFinding(
+                    severity="warning", category="ai_quick_check", title="AI flagged this dataset",
+                    detail=str(parsed.get("reason", "")), trials=[], confidence=1.0 - anomaly,
+                )],
+                dataset_summary=str(parsed.get("reason", "")),
+                anomaly_score=anomaly,
+                recommendations=[],
                 timed_out=False,
                 error=None,
             )
@@ -289,7 +218,7 @@ def validate_with_ai(data: pd.DataFrame, simulation_type: str,
         err = result.get("error") or "Request timed out"
         timed = not result["done"]
         return AIValidationReport(
-            status="error", model=MODEL,
+            status="error", verdict="Unavailable", model=QUICK_MODEL,
             processing_ms=round((time.time()-t0)*1000, 1),
             findings=[], dataset_summary="",
             anomaly_score=0.0, recommendations=[],
@@ -301,6 +230,7 @@ def validate_with_ai(data: pd.DataFrame, simulation_type: str,
 def report_to_dict(report: AIValidationReport) -> dict:
     return {
         "status":          report.status,
+        "verdict":         report.verdict,
         "model":           report.model,
         "processing_ms":   report.processing_ms,
         "anomaly_score":   report.anomaly_score,
