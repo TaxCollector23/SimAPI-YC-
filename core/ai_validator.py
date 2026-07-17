@@ -1,9 +1,11 @@
 """
-SimAPI — AI Validation Layer v2
+SimAPI — AI Validation Layer v2 (legacy shim over core/ai_orchestrator.py)
+
 - Sends full distribution data, not just samples
-- 8-second timeout with graceful degradation
+- Configurable timeout (SIMAPI_AI_TIMEOUT_SECONDS) with graceful degradation
 - Async-friendly: returns immediately, AI result polled separately
-- Uses OpenRouter with Claude 3.5 Haiku
+- Uses OpenRouter with the model set by SIMAPI_AI_MODEL (defaults to the
+  strongest free-tier model available)
 """
 
 import json
@@ -21,8 +23,8 @@ import pandas as pd
 # See .env.example for the full list of supported variables.
 OPENROUTER_API_KEY = os.environ.get("SIMAPI_OPENROUTER_API_KEY", "")
 OPENROUTER_URL     = os.environ.get("SIMAPI_OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
-MODEL              = os.environ.get("SIMAPI_AI_MODEL", "anthropic/claude-3.5-haiku")
-TIMEOUT_SECONDS    = int(os.environ.get("SIMAPI_AI_TIMEOUT_SECONDS", "30"))
+MODEL              = os.environ.get("SIMAPI_AI_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+TIMEOUT_SECONDS    = int(os.environ.get("SIMAPI_AI_TIMEOUT_SECONDS", "75"))
 
 # When no key is configured the AI layer is disabled and reports its status
 # cleanly rather than failing a validation run. Physics validation is unaffected.
@@ -205,7 +207,8 @@ Rules:
 
 def _call_api(prompt: str) -> tuple:
     payload = json.dumps({
-        "model": MODEL, "max_tokens": 2500, "temperature": 0.1,
+        "model": MODEL, "max_tokens": 3000, "temperature": 0.1,
+        "reasoning": {"exclude": True},
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 

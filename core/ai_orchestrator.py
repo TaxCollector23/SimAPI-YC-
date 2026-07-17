@@ -35,8 +35,8 @@ from core.followup_probes import (
 
 OPENROUTER_API_KEY = os.environ.get("SIMAPI_OPENROUTER_API_KEY", "")
 OPENROUTER_URL = os.environ.get("SIMAPI_OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
-MODEL = os.environ.get("SIMAPI_AI_MODEL", "meta-llama/llama-4-maverick:free")
-TIMEOUT_SECONDS = int(os.environ.get("SIMAPI_AI_TIMEOUT_SECONDS", "30"))
+MODEL = os.environ.get("SIMAPI_AI_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
+TIMEOUT_SECONDS = int(os.environ.get("SIMAPI_AI_TIMEOUT_SECONDS", "75"))
 AI_ENABLED = bool(OPENROUTER_API_KEY)
 
 
@@ -59,10 +59,17 @@ class OrchestratorResult:
     error: str | None = None
 
 
-def _call_llm(prompt: str, max_tokens: int = 2000) -> dict:
-    """Call OpenRouter and return parsed JSON from the model's response."""
+def _call_llm(prompt: str, max_tokens: int = 3000) -> dict:
+    """Call OpenRouter and return parsed JSON from the model's response.
+
+    The default free model is a reasoning model — hidden chain-of-thought
+    tokens count against max_tokens, so a low budget can exhaust the whole
+    response before any visible JSON is emitted. Exclude reasoning from the
+    response and give enough headroom for both.
+    """
     payload = json.dumps({
         "model": MODEL, "max_tokens": max_tokens, "temperature": 0.1,
+        "reasoning": {"exclude": True},
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 
@@ -168,7 +175,7 @@ Produce a JSON test plan:
 Respond ONLY with valid JSON."""
 
     try:
-        result = _call_llm(prompt, max_tokens=1200)
+        result = _call_llm(prompt, max_tokens=2500)
         result["_timing_ms"] = round((time.time() - t0) * 1000, 1)
         return result
     except Exception as e:
@@ -241,7 +248,7 @@ Respond ONLY with valid JSON:
 }}"""
 
     try:
-        result = _call_llm(prompt, max_tokens=1500)
+        result = _call_llm(prompt, max_tokens=2800)
         result["_timing_ms"] = round((time.time() - t0) * 1000, 1)
         return result
     except Exception as e:
@@ -323,7 +330,7 @@ Produce the FINAL verdict. Respond ONLY with valid JSON:
 }}"""
 
     try:
-        result = _call_llm(prompt, max_tokens=1200)
+        result = _call_llm(prompt, max_tokens=2500)
         result["_timing_ms"] = round((time.time() - t0) * 1000, 1)
         return result
     except Exception as e:

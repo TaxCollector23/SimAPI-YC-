@@ -49,7 +49,7 @@ export async function aiReview(
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) return { enabled: false };
 
-  const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-haiku";
+  const model = process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-ultra-550b-a55b:free";
   const corr = profile?.correlations?.length
     ? profile.correlations.slice(0, 6).map((c) => `  ${c.pair}: r=${c.r.toFixed(2)}`).join("\n")
     : "(not computed)";
@@ -96,7 +96,12 @@ Respond ONLY with JSON:
       },
       body: JSON.stringify({
         model,
-        max_tokens: 900,
+        // The default free model is a reasoning model — hidden chain-of-thought
+        // tokens count against max_tokens, so a low budget can exhaust the whole
+        // response before any visible JSON is emitted. Exclude reasoning from
+        // the response and give enough headroom for both.
+        max_tokens: 2500,
+        reasoning: { exclude: true },
         temperature: 0.1,
         messages: [{ role: "user", content: prompt }],
       }),
