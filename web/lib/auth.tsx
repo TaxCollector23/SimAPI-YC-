@@ -81,14 +81,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Restore a session on load.
+    if (!isFirebaseConfigured) {
+      // Local fallback: the browser-session copy in localStorage is the source of truth.
+      try {
+        const raw = localStorage.getItem(USER_KEY);
+        if (raw) setUser(JSON.parse(raw));
+      } catch {
+        /* ignore */
+      }
+      setLoading(false);
+      return;
+    }
+
+    // Firebase is configured: localStorage is only a paint-fast cache. The
+    // Firebase SDK's own persisted session (IndexedDB) is the source of truth,
+    // and onIdTokenChanged fires on sign-in/out, token refresh, and expiry —
+    // without this listener the UI can drift out of sync with the real auth
+    // state (e.g. showing "signed in" after Firebase invalidates the session).
     try {
       const raw = localStorage.getItem(USER_KEY);
       if (raw) setUser(JSON.parse(raw));
     } catch {
       /* ignore */
     }
-    setLoading(false);
+
+    let unsubscribe = () => {};
+    (async () => {
+      const auth = await getFirebaseAuth();
+      const { onIdTokenChanged } = await import("firebase/auth");
+      unsubscribe = onIdTokenChanged(auth, (fbUser) => {
+        if (fbUser) {
+          const provider = fbUser.providerData[0]?.providerId === "google.com" ? "google" : "password";
+          const u: User = {
+            uid: fbUser.uid,
+            email: fbUser.email ?? "",
+            name: fbUser.displayName ?? fbUser.email ?? "User",
+            provider,
+          };
+          persistUser(u);
+          setUser(u);
+        } else {
+          persistUser(null);
+          setUser(null);
+        }
+        setLoading(false);
+      });
+    })().catch(() => setLoading(false));
+
+    return () => unsubscribe();
   }, []);
 
   const signInGoogle = useCallback(async () => {

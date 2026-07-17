@@ -43,12 +43,16 @@ from api.errors import (
 )
 from api.observability import log, metrics, request_id_ctx
 from api.security import authenticate, enforce_rate_limit
+from core.ai_orchestrator import AI_ENABLED as ORCHESTRATOR_ENABLED
+from core.ai_orchestrator import orchestrate as ai_orchestrate
+from core.ai_orchestrator import result_to_dict as orchestrator_dict
 from core.ai_validator import AI_ENABLED, validate_with_ai
 from core.ai_validator import MODEL as AI_MODEL
 from core.ai_validator import report_to_dict as ai_dict
 from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name
 from core.physics_validator import PhysicsValidator, SimulationType
+from core.repair import analyze as repair_analyze
 
 API_VERSION = "3.1.0"
 
@@ -93,6 +97,19 @@ class ValidateRequest(BaseModel):
     conditions: dict[str, float] = Field(default_factory=dict, description="Input boundary conditions.")
     job_id: str | None = Field(default=None, description="Optional caller-supplied tracking id.")
     run_ai: bool = Field(default=True, description="Run the async AI reasoning layer.")
+    geometry_description: str | None = Field(default=None, description="Free text geometry description.")
+    what_are_you_measuring: str | None = Field(default=None, description="What the simulation is studying.")
+    expected_output_ranges: dict[str, list[float]] | None = Field(default=None, description="Expected value ranges.")
+    reference_dataset_id: str | None = Field(default=None, description="Previous clean validation job ID.")
+    known_issues: str | None = Field(default=None, description="Known data issues to ignore.")
+    ml_model_type: str | None = Field(default=None, description="tree|neural_network|linear|other")
+
+
+class RepairRequest(BaseModel):
+    """Payload for the automatic-repair endpoint."""
+
+    data: list[dict[str, Any]] = Field(..., description="Trials as a list of records.")
+    apply: bool = Field(default=False, description="If true, return the repaired dataset. If false (default), preview only.")
 
 
 class SetupValidateRequest(BaseModel):
@@ -291,14 +308,23 @@ def _ai_exclusion_indices(df: pd.DataFrame, ai_findings: list[dict]) -> list[int
 
 
 def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
-                  conditions: dict, physics_issues: list[dict]) -> None:
-    """Background worker: run the AI layer and fold its verdict into the job."""
+                  conditions: dict, physics_issues: list[dict],
+                  physics_result: dict | None = None,
+                  context: dict | None = None) -> None:
+    """Background worker: run the AI orchestrator and fold its verdict into the job."""
     try:
         with _JOBS_LOCK:
             if job_id in JOBS:
                 JOBS[job_id]["ai_running"] = True
-        ai_report = validate_with_ai(df, sim_type, conditions, physics_issues)
-        ai_data = ai_dict(ai_report)
+
+        if ORCHESTRATOR_ENABLED and physics_result:
+            orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
+            ai_data = orchestrator_dict(orch_result)
+            ai_data["status"] = orch_result.verdict
+            ai_data["anomaly_score"] = 1.0 - orch_result.overall_confidence
+        else:
+            ai_report = validate_with_ai(df, sim_type, conditions, physics_issues)
+            ai_data = ai_dict(ai_report)
         ai_excl = _ai_exclusion_indices(df, ai_data.get("findings", []))
         with _JOBS_LOCK:
             if job_id not in JOBS:
@@ -363,10 +389,22 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
 
     metrics.incr("physics_validations_total", status=result["status"])
 
-    if req.run_ai and AI_ENABLED:
+    if req.run_ai and (AI_ENABLED or ORCHESTRATOR_ENABLED):
+        context = {}
+        if req.geometry_description:
+            context["geometry_description"] = req.geometry_description
+        if req.what_are_you_measuring:
+            context["what_are_you_measuring"] = req.what_are_you_measuring
+        if req.expected_output_ranges:
+            context["expected_output_ranges"] = req.expected_output_ranges
+        if req.known_issues:
+            context["known_issues"] = req.known_issues
+        if req.ml_model_type:
+            context["ml_model_type"] = req.ml_model_type
         threading.Thread(
             target=_run_ai_async,
             args=(jid, df, req.simulation_type.value, req.conditions, result["issues"]),
+            kwargs={"physics_result": result, "context": context or None},
             daemon=True,
         ).start()
 
@@ -482,6 +520,27 @@ async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_iden
         "recommendations": report.recommendations,
         "processing_ms": report.processing_ms,
     })
+
+
+@app.post("/v1/repair", tags=["validation"])
+async def repair(req: RepairRequest, _: str = Depends(caller_identity)):
+    """
+    Automatic repair: deterministic, reversible fixes for structural data
+    problems (duplicate rows, missing/duplicate IDs, out-of-order timestamps,
+    wrapped angles, short NaN gaps). This never touches physics violations —
+    those are the user's data quality problem to investigate, not something
+    SimAPI silently rewrites.
+
+    By default this only previews proposed changes (`apply=false`). Set
+    `apply=true` to receive the repaired dataset in the response.
+    """
+    df, _meta = ingester.ingest(req.data, format_hint="json")
+    report = repair_analyze(df)
+    result = _json_safe(report.to_dict())
+    metrics.incr("repairs_total", proposals=str(len(report.proposals)))
+    if req.apply:
+        result["repaired_data"] = report.apply(df).to_dict(orient="records")
+    return result
 
 
 @app.get("/v1/job/{job_id}", tags=["jobs"])

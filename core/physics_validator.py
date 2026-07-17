@@ -307,6 +307,7 @@ class PhysicsValidator:
             self._cross_variable, self._conservation_laws, self._dimensional,
             self._temporal, self._monotonicity, self._symmetry, self._scaling_laws,
             self._information_entropy, self._autocorrelation, self._stationarity,
+            self._layer_temporal_drift,
             self._multicollinearity, self._regression_quality, self._signal_quality,
             self._sensor_fusion, self._boundary_conditions, self._convergence,
             self._energy_balance, self._phase_consistency, self._material_microstructure,
@@ -357,6 +358,12 @@ class PhysicsValidator:
         failed  = [c for c in all_checks if c.status == ValidationStatus.FAILED]
         issues  = warned + failed  # only surface these
 
+        # Count unique check names, not total invocations
+        unique_names = {c.name for c in all_checks}
+        unique_passed = {c.name for c in passed}
+        unique_warned = {c.name for c in warned}
+        unique_failed = {c.name for c in failed}
+
         cats = {}
         for c in all_checks:
             sv = c.status.value if hasattr(c.status, "value") else str(c.status)
@@ -378,12 +385,12 @@ class PhysicsValidator:
             job_id=job_id, timestamp=time.time(), simulation_type=simulation_type.value,
             trials_submitted=n_sub, trials_valid=n_val, trials_excluded=n_excl,
             exclusion_rate=round(excl_rate,4), confidence=conf, overall_status=overall,
-            issues=issues, all_checks_count=len(all_checks),
-            passed_count=len(passed), warning_count=len(warned), failed_count=len(failed),
+            issues=issues, all_checks_count=len(unique_names),
+            passed_count=len(unique_passed), warning_count=len(unique_warned), failed_count=len(unique_failed),
             exclusions=all_excl[:max_exclusions], statistics=statistics, warnings=warnings_list,
-            provenance={"validator_version":"3.0.0","simulation_type":simulation_type.value,
+            provenance={"validator_version":"3.1.0","simulation_type":simulation_type.value,
                        "conditions":conditions,"columns_validated":list(data.columns),
-                       "total_checks":len(all_checks)},
+                       "total_checks":len(unique_names),"total_invocations":len(all_checks)},
             training_ready=training_ready, processing_time_ms=round(ms,2),
             checks_by_category=cats,
         )
@@ -1177,6 +1184,76 @@ class PhysicsValidator:
                 C.append(self._w(f"stat_skew_stab_{col}",abs(h1k-h2k)<2.0,f"Skewness stable in {col}",f"Δskew={abs(h1k-h2k):.3f}",abs(h1k-h2k),2.0,cat))
             except: pass
         return self._r(C)
+
+    # ── Layer 15b: Temporal Drift (Mann-Kendall + Sliding Window) ────────────
+    def _layer_temporal_drift(self, data, sim, cond):
+        C=[]; E=[]; cat="temporal_drift"
+        if len(data) < 30:
+            return self._r(C, E)
+        nc = self._nc(data)
+        excluded_by_mk = set()
+        for col in nc:
+            s = data[col].dropna()
+            if len(s) < 30:
+                continue
+            # Mann-Kendall trend test via scipy kendalltau
+            # Only exclude if the drift is strong (tau > 0.30) to avoid over-exclusion
+            try:
+                idx_seq = np.arange(len(s))
+                tau, p = stats.kendalltau(idx_seq, s.values)
+                if p < 0.01 and abs(tau) > 0.30:
+                    C.append(PhysicsCheck(
+                        f"temp_mk_{col}", ValidationStatus.WARNING,
+                        f"{col} shows statistically significant monotonic drift (Mann-Kendall τ={tau:.3f}, p={p:.4f}) — possible sensor degradation or condition change",
+                        float(abs(tau)), 0.30,
+                        f"τ={tau:.3f}, p={p:.4f}", cat))
+                    # Only exclude the trailing portion where drift is concentrated.
+                    # Use a sliding comparison to find where the drift begins.
+                    n_pts = len(s)
+                    baseline_mean = float(np.mean(s.values[:n_pts//4]))
+                    baseline_std = float(np.std(s.values[:n_pts//4]))
+                    if baseline_std > 0:
+                        for k in range(n_pts//4, n_pts):
+                            if abs(s.values[k] - baseline_mean) / baseline_std > 3.0:
+                                for idx in s.index[k:]:
+                                    if int(idx) not in excluded_by_mk:
+                                        excluded_by_mk.add(int(idx))
+                                        E.append(TrialExclusion(int(idx), f"Mann-Kendall drift in {col} (τ={tau:.3f})", "warning"))
+                                break
+            except Exception:
+                pass
+
+            # Sliding window distribution shift (8 windows)
+            # Higher threshold (3.0σ) to avoid false positives on natural variation
+            try:
+                vals = s.values
+                overall_mean = float(np.mean(vals))
+                overall_std = float(np.std(vals))
+                if overall_std == 0:
+                    continue
+                n_windows = 8
+                w_size = len(vals) // n_windows
+                if w_size < 4:
+                    continue
+                for win_i in range(n_windows):
+                    chunk = vals[win_i * w_size:(win_i + 1) * w_size]
+                    if len(chunk) == 0:
+                        continue
+                    win_mean = float(np.mean(chunk))
+                    z = abs(win_mean - overall_mean) / overall_std
+                    if z > 3.0:
+                        C.append(PhysicsCheck(
+                            f"temp_shift_{col}_w{win_i}", ValidationStatus.WARNING,
+                            f"{col} distribution shifts in window {win_i + 1} of 8 (mean deviates {z:.1f}σ from dataset mean) — possible condition change or run boundary",
+                            float(z), 3.0,
+                            f"window {win_i + 1} z={z:.1f}", cat))
+                        start_idx = win_i * w_size
+                        end_idx = (win_i + 1) * w_size
+                        for idx in s.index[start_idx:end_idx]:
+                            E.append(TrialExclusion(int(idx), f"Distribution shift in {col} window {win_i + 1} ({z:.1f}σ)", "warning"))
+            except Exception:
+                pass
+        return self._r(C, E)
 
     # ── Layer 16: Multicollinearity ───────────────────────────────────────────
     def _multicollinearity(self, data, sim, cond):

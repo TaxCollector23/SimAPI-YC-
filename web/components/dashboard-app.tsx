@@ -4,31 +4,47 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   LayoutDashboard, KeyRound, Activity, FlaskConical, BookOpen, Settings as SettingsIcon,
-  Copy, Check, Trash2, Plus, LogOut, ExternalLink, Loader2,
+  Copy, Check, Trash2, Plus, LogOut, ExternalLink, Loader2, BarChart3, ScrollText, Radar,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import {
-  listKeys, createKey, revokeKey, usageStats, listRuns,
-  type ApiKeyRecord, type UsageStats, type ValidationRecord,
+  listKeys, createKey, revokeKey,
+  type ApiKeyRecord,
 } from "@/lib/dashboard-store";
+import {
+  usageStats, listRuns as listRunHistory,
+  type UsageStats, type RunRecord,
+} from "@/lib/run-history";
 import { AuthScreen } from "./auth-screen";
 import { ValidationDashboard } from "./validation-dashboard";
+import { AnalyticsPanel } from "./analytics-panel";
+import { LogsPanel } from "./logs-panel";
+import { RequestInspectorPanel } from "./request-inspector-panel";
 import { cn } from "@/lib/utils";
 import { site } from "@/lib/site";
 
-type Section = "overview" | "keys" | "usage" | "run" | "settings";
+type Section = "overview" | "keys" | "usage" | "analytics" | "logs" | "inspector" | "run" | "settings";
 
 const NAV: { id: Section; label: string; icon: typeof LayoutDashboard }[] = [
   { id: "overview", label: "Overview", icon: LayoutDashboard },
-  { id: "keys", label: "API Keys", icon: KeyRound },
+  { id: "analytics", label: "Analytics", icon: BarChart3 },
+  { id: "logs", label: "Logs", icon: ScrollText },
+  { id: "inspector", label: "Request Inspector", icon: Radar },
   { id: "usage", label: "Usage", icon: Activity },
-  { id: "run", label: "Run Simulation", icon: FlaskConical },
+  { id: "keys", label: "API Keys", icon: KeyRound },
+  { id: "run", label: "Playground", icon: FlaskConical },
   { id: "settings", label: "Settings", icon: SettingsIcon },
 ];
 
 export function DashboardApp() {
   const { user, loading } = useAuth();
   const [section, setSection] = useState<Section>("overview");
+  const [inspectRunId, setInspectRunId] = useState<string | null>(null);
+
+  function goInspect(id: string) {
+    setInspectRunId(id);
+    setSection("inspector");
+  }
 
   if (loading) {
     return (
@@ -76,6 +92,11 @@ export function DashboardApp() {
         {/* Content */}
         <div>
           {section === "overview" && <Overview onNavigate={setSection} />}
+          {section === "analytics" && <AnalyticsPanel />}
+          {section === "logs" && <LogsPanel onInspect={goInspect} />}
+          {section === "inspector" && (
+            <RequestInspectorPanel runId={inspectRunId} onBack={() => setInspectRunId(null)} />
+          )}
           {section === "keys" && <ApiKeys />}
           {section === "usage" && <Usage />}
           {section === "run" && <RunSimulation />}
@@ -94,7 +115,7 @@ function Overview({ onNavigate }: { onNavigate: (s: Section) => void }) {
 
   useEffect(() => {
     if (!user) return;
-    setStats(usageStats(user.uid));
+    setStats(usageStats());
     setHasKey(listKeys(user.uid).length > 0);
   }, [user]);
 
@@ -163,7 +184,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function RecentRuns({ runs, onRun }: { runs: ValidationRecord[]; onRun: () => void }) {
+function RecentRuns({ runs, onRun }: { runs: RunRecord[]; onRun: () => void }) {
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
@@ -172,7 +193,7 @@ function RecentRuns({ runs, onRun }: { runs: ValidationRecord[]; onRun: () => vo
       </div>
       {runs.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-white/10 py-10 text-center text-sm text-white/35">
-          No validations yet. Run one from the Run Simulation tab.
+          No validations yet. Run one from the Playground tab.
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-white/[0.07]">
@@ -181,7 +202,7 @@ function RecentRuns({ runs, onRun }: { runs: ValidationRecord[]; onRun: () => vo
               <tr className="border-b border-white/[0.07] bg-white/[0.02] text-left text-xs text-white/45">
                 <th className="p-3 font-medium">Type</th>
                 <th className="p-3 font-medium">Status</th>
-                <th className="p-3 font-medium">Score</th>
+                <th className="p-3 font-medium">Trials</th>
                 <th className="p-3 font-medium">Time</th>
                 <th className="p-3 font-medium">When</th>
               </tr>
@@ -191,8 +212,8 @@ function RecentRuns({ runs, onRun }: { runs: ValidationRecord[]; onRun: () => vo
                 <tr key={r.id} className="border-b border-white/[0.05] last:border-0">
                   <td className="p-3 text-white/70">{r.simulationType}</td>
                   <td className="p-3"><StatusPill status={r.status} /></td>
-                  <td className="p-3 text-white/60">{r.score}</td>
-                  <td className="p-3 text-white/50">{r.executionMs}ms</td>
+                  <td className="p-3 text-white/60">{r.trials_submitted - r.trials_excluded} / {r.trials_submitted}</td>
+                  <td className="p-3 text-white/50">{r.executionMs ? `${r.executionMs}ms` : "—"}</td>
                   <td className="p-3 text-white/40">{timeAgo(r.ts)}</td>
                 </tr>
               ))}
@@ -329,13 +350,13 @@ function ApiKeys() {
 // ── Usage ─────────────────────────────────────────────────────────────────────
 function Usage() {
   const { user } = useAuth();
-  const [runs, setRuns] = useState<ValidationRecord[]>([]);
+  const [runs, setRuns] = useState<RunRecord[]>([]);
   const [stats, setStats] = useState<UsageStats | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    setRuns(listRuns(user.uid));
-    setStats(usageStats(user.uid));
+    setRuns(listRunHistory());
+    setStats(usageStats());
   }, [user]);
 
   if (!stats) return null;
@@ -345,10 +366,11 @@ function Usage() {
         <h1 className="text-2xl font-semibold text-white">Usage</h1>
         <p className="mt-1 text-sm text-white/50">Derived from validations you&apos;ve run in this browser.</p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-4">
         <Stat label="Requests today" value={String(stats.requestsToday)} />
         <Stat label="Total validations" value={String(stats.totalValidations)} />
         <Stat label="Pass rate" value={stats.totalValidations ? `${stats.successRate}%` : "—"} />
+        <Stat label="Avg. exclusion rate" value={stats.totalValidations ? `${stats.avgExclusionRate}%` : "—"} />
       </div>
       <RecentRuns runs={runs.slice(0, 20)} onRun={() => { /* stays on usage */ }} />
     </div>

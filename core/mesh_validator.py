@@ -465,29 +465,35 @@ class MeshValidator:
         return self._r(C)
 
     # ── Category 5: Predicted output corruption ──────────────────────────────────
-    def _predict_output_errors(self, c: _Ctx, issues: list[MeshCheck]) -> list[str]:
+    def _predict_output_errors(self, c: _Ctx, issues: list[MeshCheck]) -> list[dict[str, str] | str]:
         names = {i.name for i in issues}
-        predicted: list[str] = []
+        predicted: list[dict[str, str]] = []
+        seen: set[str] = set()
 
-        def add(*checks: str) -> None:
-            for ch in checks:
-                if ch not in predicted:
-                    predicted.append(ch)
+        def add(check_name: str) -> None:
+            if check_name not in seen:
+                seen.add(check_name)
+                predicted.append(humanize_mesh_check(check_name, c.config))
 
         if {"mesh_yplus_model_compat", "mesh_boundary_layer_present"} & names:
-            add("cx_yplus_wall", "th_heat_transfer_coeff", "turb_tke_pos")
+            add("cx_yplus_wallth")
+            add("turb_tke_pos")
         if "mesh_cfl_explicit" in names or "mesh_convergence_criterion" in names or "mesh_max_iterations" in names:
-            add("ns_nan", "ns_inf", "conv_res_continuity_residual", "input_forward_fill")
+            add("ns_spike")
+            add("conv_res_momentum_residual")
         if "mesh_aspect_ratio" in names or "mesh_skewness" in names or "mesh_nonortho" in names:
-            add("ns_spike", "outlier_velocity", "conv_res_momentum_residual")
+            add("ns_spike")
+            add("outlier_velocity")
+            add("conv_res_momentum_residual")
         if "mesh_bc_reynolds_turbulence_match" in names or "mesh_turbulence_model_appropriate" in names:
-            add("cx_re_velocity", "turb_tke_pos", "aero_drag_coefficient")
+            add("turbulence_model_mismatch")
         if "mesh_bc_reference_values" in names or "mesh_compressibility" in names:
-            add("cx_gas_constant_check", "cx_mach_vel", "dim_pressure_units")
+            add("compressibility_mismatch")
         if "mesh_cell_count_adequacy" in names:
-            add("stat_high_variance", "conv_res_continuity_residual")
+            add("mesh_nonortho")
+            add("conv_res_momentum_residual")
         if {"mesh_heat_transfer_model", "mesh_radiation_model", "mesh_buoyancy_model"} & names:
-            add("th_energy_balance", "th_heat_flux_sign")
+            add("heat_transfer_missing")
         return predicted
 
     def _corruption_risk(self, n_pass: int, warned: list, failed: list) -> float:
@@ -533,6 +539,94 @@ class MeshValidator:
                 seen.add(r)
                 out.append(r)
         return out
+
+
+def humanize_mesh_check(check_name: str, config: dict[str, Any]) -> dict[str, str]:
+    """Return a humanized description of a predicted output failure."""
+    flow = (config.get("flow_conditions") or {})
+    mesh = (config.get("mesh") or {})
+    solv = (config.get("solver_settings") or {})
+    yplus = mesh.get("estimated_yplus", "unknown")
+    velocity = flow.get("inlet_velocity", flow.get("velocity", "unknown"))
+    turb_model = solv.get("turbulence_model", "unknown")
+
+    CHECKS = {
+        "cx_yplus_wallth": {
+            "plain_english": "Near-wall mesh too coarse for heat transfer calculations",
+            "why_it_will_fail": f"Your y+ estimate of {yplus} is in the wall-function range, but heat transfer coefficient calculations require y+ < 5 for accurate near-wall temperature gradients. The mesh cannot resolve the thermal boundary layer.",
+            "proposed_fix": f"Refine the boundary layer mesh to achieve y+ ≈ 1. Add at least 10 inflation layers with a growth ratio of 1.2 and first cell height appropriate for your inlet velocity of {velocity} m/s.",
+        },
+        "turb_tke_pos": {
+            "plain_english": "Turbulent kinetic energy may go negative (unphysical)",
+            "why_it_will_fail": f"With {turb_model} on an under-resolved mesh, TKE can become negative near walls where the production/dissipation balance is poorly approximated. This causes NaN propagation.",
+            "proposed_fix": "Ensure the near-wall mesh resolves the viscous sublayer (y+ ≈ 1) or switch to a realizability-constrained turbulence model that clips negative TKE.",
+        },
+        "ns_spike": {
+            "plain_english": "Sudden spikes in output fields (numerical instability)",
+            "why_it_will_fail": "Poor cell quality (high aspect ratio, skewness, or non-orthogonality) causes the discretization to produce oscillations that appear as spikes in velocity or pressure fields.",
+            "proposed_fix": "Repair the worst cells — reduce max aspect ratio below 100, max skewness below 0.85, and max non-orthogonality below 70°. Add non-orthogonal correctors if using OpenFOAM.",
+        },
+        "outlier_velocity": {
+            "plain_english": "Velocity field will contain unrealistic outlier values",
+            "why_it_will_fail": "Degenerate cells (high skewness or aspect ratio) cause local numerical errors that manifest as velocity values far outside the expected range, polluting downstream statistics.",
+            "proposed_fix": "Identify and fix the worst-quality cells. Use mesh quality tools (checkMesh in OpenFOAM) to locate specific cells, then re-mesh those regions with tighter quality constraints.",
+        },
+        "conv_res_momentum_residual": {
+            "plain_english": "Momentum residuals will not converge to target tolerance",
+            "why_it_will_fail": "The combination of mesh quality issues and solver settings makes it unlikely that momentum residuals will drop below your convergence target. The solver will exhaust its iteration budget.",
+            "proposed_fix": "Fix the underlying mesh quality issues first. If the mesh is acceptable, increase max iterations to at least 500, ensure second-order discretization, and tighten under-relaxation factors to 0.5–0.7.",
+        },
+        "turbulence_model_mismatch": {
+            "plain_english": "Turbulence model is inappropriate for this flow regime",
+            "why_it_will_fail": f"The selected model ({turb_model}) does not match the flow's Reynolds number regime. This produces incorrect eddy viscosity, leading to wrong drag/lift predictions and possible divergence.",
+            "proposed_fix": "For external aerodynamics use k-ω SST or Spalart-Allmaras. For internal flows with strong recirculation use k-ω SST. Only use k-ε for simple internal flows without separation.",
+        },
+        "compressibility_mismatch": {
+            "plain_english": "Compressibility assumption does not match the flow speed",
+            "why_it_will_fail": f"At the current velocity ({velocity} m/s), density variations are significant but the incompressible solver ignores them. Pressure and velocity fields will be wrong, and the gas constant check will flag inconsistencies.",
+            "proposed_fix": "Switch to a compressible solver (rhoSimpleFoam, density-based solver) for Mach > 0.3. For Mach 0.3–0.8, a low-Mach preconditioning approach also works.",
+        },
+        "mesh_nonortho": {
+            "plain_english": "High mesh non-orthogonality degrades solution accuracy",
+            "why_it_will_fail": "Non-orthogonality above 70° introduces significant interpolation errors in face gradients. Without correction, pressure and velocity gradients are computed inaccurately.",
+            "proposed_fix": "Re-mesh to reduce non-orthogonality below 70° (ideally below 50°). If unavoidable, add at least 2 non-orthogonal correctors and use limited gradient schemes.",
+        },
+        "mesh_skewness": {
+            "plain_english": "High cell skewness will inject numerical noise",
+            "why_it_will_fail": "Skewed cells cause the face center to deviate significantly from the cell-connecting line, making gradient interpolation inaccurate and creating local oscillations.",
+            "proposed_fix": "Identify cells with skewness > 0.85 and re-mesh those regions. Use hex-dominant meshing near critical areas. Set decomposition method to preserve cell quality at processor boundaries.",
+        },
+        "mesh_aspect_ratio": {
+            "plain_english": "Extreme cell aspect ratios will cause numerical diffusion",
+            "why_it_will_fail": "Cells stretched beyond 100:1 cause the numerical scheme to behave as first-order in the stretched direction, smearing gradients and producing artificially smooth fields.",
+            "proposed_fix": "Reduce aspect ratios in the flow direction to below 100:1. In boundary layers, high aspect ratio in the wall-parallel direction is acceptable, but wall-normal stretching should stay below 50:1.",
+        },
+        "bc_inlet_outlet": {
+            "plain_english": "Inlet/outlet boundary conditions are overdetermined",
+            "why_it_will_fail": "Fixing velocity at both inlet and outlet leaves no pressure reference. The system is mathematically overdetermined and the solver will either diverge or produce a non-physical pressure field.",
+            "proposed_fix": "Set velocity at the inlet and pressure at the outlet (or vice versa). One boundary must float to absorb the pressure level.",
+        },
+        "solver_cfl": {
+            "plain_english": "CFL condition violated — solver will diverge",
+            "why_it_will_fail": "The explicit time-advancement scheme requires CFL ≤ 1 for stability. Exceeding this causes exponential error growth that destroys the solution within a few timesteps.",
+            "proposed_fix": "Reduce the timestep to satisfy CFL ≤ 0.8 at all cells, or switch to an implicit time-advancement scheme (which is unconditionally stable for CFL > 1).",
+        },
+        "heat_transfer_missing": {
+            "plain_english": "Thermal predictions will be missing or wrong",
+            "why_it_will_fail": "Temperature boundary conditions are set but the energy equation is not solved. The temperature field will remain at its initialization value and heat transfer coefficients will be zero.",
+            "proposed_fix": "Enable the energy equation in the solver configuration. For incompressible flow with small temperature differences, enable the Boussinesq approximation. For compressible flow, the energy equation is mandatory.",
+        },
+    }
+
+    if check_name in CHECKS:
+        return {"check_name": check_name, **CHECKS[check_name]}
+
+    return {
+        "check_name": check_name,
+        "plain_english": check_name.replace("_", " ").capitalize(),
+        "why_it_will_fail": "This check is predicted to fail based on the current configuration.",
+        "proposed_fix": "Review the simulation setup for issues related to this check.",
+    }
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────────

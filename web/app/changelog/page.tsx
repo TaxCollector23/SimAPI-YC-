@@ -11,9 +11,24 @@ interface Release { version: string; date: string; tag: string; items: string[] 
 
 const releases: Release[] = [
   {
+    version: "3.4", date: "July 2026", tag: "Honesty",
+    items: [
+      "Re-audited every benchmark claim end-to-end — see the new methodology page at /benchmark for the full write-up, including where SimAPI does NOT help (gradient-boosted trees) and where naive IQR/z-score filtering is competitive.",
+      "Corrected the recall figure from the previous release: with randomized corruption placement and Mann-Kendall + sliding-window drift detection, recall is 71% (up from 55%), not the previously stated 89% — that number didn't hold up under a harder, randomized benchmark and we're not keeping it on the site.",
+      "Exclusion precision holds at 99% — when SimAPI flags a trial, it's genuinely corrupted.",
+      "Added a naive statistical baseline (IQR + z-score) to every benchmark run so the comparison isn't just \"vs. no filtering.\"",
+      "New AI orchestrator: a 5-phase pipeline (dataset profiling → physics checks → pattern recognition → targeted follow-up probes → synthesis) replaces the single-pass AI reviewer.",
+      "New automatic-repair layer (deterministic, reversible): duplicate rows, missing/duplicate IDs, out-of-order timestamps, wrapped angles, short NaN gaps — with a preview before anything is applied. `simapi repair <file> [--apply]` in both CLIs.",
+      "Multi-format ingestion: YAML, TOML, TXT, and Markdown join CSV/JSON/VTK/NumPy/OpenFOAM.",
+      "`simapi doctor [--fix]` and `simapi explain` added to both CLIs — real environment diagnostics and per-issue explanations, not stubs.",
+      "Fixed a real bug where the deployed site's \"Full engine\" health check queried the wrong path and could never report a connected Python backend.",
+      "Fixed Firebase session persistence: added the missing onIdTokenChanged listener so login state and token refresh track Firebase's actual session instead of a stale local cache.",
+    ],
+  },
+  {
     version: "3.3", date: "July 2026", tag: "Detection",
     items: [
-      "Relationship-drift detector: catches sensor drift that breaks a physical ratio (Re/v, Ma/v, P/ρ) even when the raw column looks stationary. Corruption recall 55% → 89%.",
+      "Relationship-drift detector: catches sensor drift that breaks a physical ratio (Re/v, Ma/v, P/ρ) even when the raw column looks stationary.",
       "CUSUM change-point layer for gradual drift in low-noise channels.",
       "Validation engine expanded past 400 deterministic checks across 21 domains.",
     ],

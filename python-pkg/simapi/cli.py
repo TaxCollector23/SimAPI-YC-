@@ -244,6 +244,62 @@ def _run_validation(file, key, args):
     return r
 
 
+LAST_RUN_PATH = CONFIG_DIR / "last_run.json"
+
+
+def cmd_repair(args):
+    """Preview (default) or apply automatic structural repairs to a data file."""
+    file = args["_"][0] if args["_"] else None
+    if not file:
+        _fail(f"Usage: {C['cyan']('simapi repair <file> [--apply]')}")
+    p = Path(file)
+    if not p.exists():
+        _fail(f"File not found: {file}")
+    try:
+        payload = json.loads(p.read_text())
+    except Exception as e:
+        _fail(f"Could not read {file}: {e}")
+    data = payload if isinstance(payload, list) else (payload.get("data") or payload.get("trials") or [])
+    if not data:
+        _fail("No trial records found in file.")
+    key = _resolve_key()
+    apply = bool(args.get("apply"))
+    good, r = _api("/v1/repair", "POST", {"data": data, "apply": apply}, key)
+    if not good:
+        _fail(f"[{r.get('error', {}).get('code', 'error')}] {r.get('error', {}).get('message', 'repair failed')}")
+    proposals = r.get("proposals", [])
+    print(f"\n  {C['bold']('Repair preview')}  {C['dim'](file)}")
+    print("  " + "─" * 46)
+    if not proposals:
+        print(f"  {C['green']('No structural issues found — nothing to repair.')}\n")
+        return
+    for prop in proposals:
+        row_count_label = f"({prop['affected_row_count']} row(s))"
+        print(f"\n  {C['amber']('⚠')} {C['bold'](prop['kind'])} {C['dim'](row_count_label)}")
+        print(f"    {prop['description']}")
+        for ch in prop.get("changes", [])[:5]:
+            row_label = f"row {ch['row']}"
+            print(f"    {C['dim'](row_label)}  {ch['column']}: {ch['before']} → {C['green'](str(ch['after']))}")
+        if prop.get("rows_dropped"):
+            print(f"    {C['dim']('drops rows:')} {prop['rows_dropped'][:10]}")
+    if r.get("unrepairable"):
+        print(f"\n  {C['bold']('Needs manual review')}")
+        for u in r["unrepairable"]:
+            print(f"    {C['red']('✗')} {u['reason']}")
+    print()
+    if apply and r.get("repaired_data") is not None:
+        out_path = p.with_name(p.stem + ".repaired" + p.suffix)
+        out_payload = dict(payload) if isinstance(payload, dict) else {}
+        if isinstance(payload, list):
+            out_path.write_text(json.dumps(r["repaired_data"], indent=2))
+        else:
+            out_payload["data"] = r["repaired_data"]
+            out_path.write_text(json.dumps(out_payload, indent=2))
+        _ok(f"Repaired data written to {out_path}")
+    elif not apply and proposals:
+        print(f"  {C['dim']('Run')} {C['cyan'](f'simapi repair {file} --apply')} {C['dim']('to write a repaired copy.')}\n")
+
+
 def cmd_validate(args):
     file = args["_"][0] if args["_"] else None
     if not file:
@@ -251,7 +307,9 @@ def cmd_validate(args):
     key = _resolve_key()
     if not key:
         _fail(f"Not logged in. Run {C['cyan']('simapi login')} or set SIMAPI_API_KEY.")
-    _run_validation(file, key, args)
+    r = _run_validation(file, key, args)
+    if r is not None:
+        _write_json(LAST_RUN_PATH, {"file": file, "t": time.time() * 1000, "result": r})
 
 
 def cmd_watch(args):
@@ -353,10 +411,106 @@ def cmd_version(args):
     print(f"  {C['bold'](f'v{VERSION}')}  {C['dim'](f'python {sys.version.split()[0]}')}\n")
 
 
+def cmd_doctor(args):
+    """Diagnose the local CLI environment: config, credentials, connectivity, project file."""
+    fix = "--fix" in args["_"] or args.get("fix")
+    print(f"\n  {C['bold']('SimAPI doctor')}")
+    print("  " + "─" * 46)
+    problems = 0
+
+    if CONFIG_DIR.exists() and os.access(CONFIG_DIR, os.W_OK):
+        _ok(f"Config directory writable ({CONFIG_DIR})")
+    else:
+        if fix:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            _ok(f"Created config directory ({CONFIG_DIR})")
+        else:
+            print(f"  {C['red']('✗')} Config directory missing or not writable ({CONFIG_DIR})")
+            print(f"    {C['dim']('fix: simapi doctor --fix')}")
+            problems += 1
+
+    key = _resolve_key()
+    if key:
+        _ok(f"API key configured ({_mask(key)})")
+    else:
+        print(f"  {C['amber']('⚠')} No API key configured")
+        print(f"    {C['dim']('fix: simapi login')}")
+        problems += 1
+
+    py_ok = sys.version_info >= (3, 8)
+    if py_ok:
+        _ok(f"Python {sys.version.split()[0]} (>= 3.8 required)")
+    else:
+        print(f"  {C['red']('✗')} Python {sys.version.split()[0]} is below the minimum supported version (3.8)")
+        problems += 1
+
+    t0 = time.time()
+    good, resp = _api("/v1/health", "GET")
+    latency_ms = int((time.time() - t0) * 1000)
+    if good:
+        engine = resp.get("engine", "unknown")
+        _ok(f"API reachable at {API_BASE} ({latency_ms}ms, engine={engine})")
+    else:
+        print(f"  {C['red']('✗')} API unreachable at {API_BASE}: {resp.get('error', {}).get('message', 'connection failed')}")
+        problems += 1
+
+    cfg_path = Path("simapi.json")
+    if cfg_path.exists():
+        try:
+            json.loads(cfg_path.read_text())
+            _ok("simapi.json found and valid")
+        except Exception as e:
+            print(f"  {C['red']('✗')} simapi.json exists but is not valid JSON: {e}")
+            problems += 1
+    else:
+        print(f"  {C['dim']('·')} No simapi.json in this directory {C['dim']('(optional — run simapi init)')}")
+
+    print("  " + "─" * 46)
+    if problems == 0:
+        print(f"  {C['green']('All checks passed.')}\n")
+    else:
+        suffix = "" if fix else f" — run {C['cyan']('simapi doctor --fix')} to auto-fix what's fixable"
+        print(f"  {C['amber'](f'{problems} issue(s) found')}{suffix}\n")
+
+
+def cmd_explain(args):
+    """Explain the issues from the most recent `simapi validate` run in detail."""
+    cached = _read_json(LAST_RUN_PATH, None)
+    if not cached:
+        _fail(f"No cached validation run. Run {C['cyan']('simapi validate <file>')} first.")
+    r = cached["result"]
+    age_s = time.time() - cached["t"] / 1000
+    print(f"\n  {C['bold']('Explaining')} {C['dim'](cached['file'])} {C['dim'](f'(validated {int(age_s)}s ago)')}")
+    print("  " + "─" * 46)
+    issues = r.get("issues", [])
+    if not issues:
+        print(f"  {C['green']('No issues were found in this run.')}\n")
+        return
+    for i, issue in enumerate(issues, 1):
+        mk = C["red"]("✗") if issue.get("status") == "failed" else C["amber"]("⚠")
+        name = issue.get("human_name") or issue.get("name", "unnamed check")
+        print(f"\n  {mk} {C['bold'](f'{i}. {name}')}")
+        if issue.get("category"):
+            _row("Category", issue["category"])
+        if issue.get("detail"):
+            _row("Detail", issue["detail"])
+        if issue.get("value") is not None:
+            _row("Value", str(issue["value"]))
+    exclusions = r.get("exclusions", [])
+    if exclusions:
+        print(f"\n  {C['bold']('Excluded trials')} {C['dim'](f'({len(exclusions)})')}")
+        for e in exclusions[:10]:
+            _row(f"Trial {e.get('trial_number', e.get('trial_index'))}", e.get("reason", ""))
+        if len(exclusions) > 10:
+            print(f"  {C['dim'](f'… and {len(exclusions) - 10} more')}")
+    print()
+
+
 COMMANDS = {
     "login": cmd_login, "logout": cmd_logout, "whoami": cmd_whoami, "init": cmd_init,
     "validate": cmd_validate, "watch": cmd_watch, "usage": cmd_usage,
     "api-key": cmd_api_key, "config": cmd_config, "version": cmd_version,
+    "doctor": cmd_doctor, "explain": cmd_explain, "repair": cmd_repair,
 }
 
 HELP = {
@@ -370,6 +524,9 @@ HELP = {
     "api-key": ("simapi api-key <show|rotate|delete>", "Manage your API key."),
     "config": ("simapi config [set <key> <value>]", "Show or update CLI configuration."),
     "version": ("simapi version", "Print the installed CLI version."),
+    "doctor": ("simapi doctor [--fix]", "Diagnose config, credentials, connectivity, and project setup."),
+    "explain": ("simapi explain", "Explain the issues from the most recent validation run in detail."),
+    "repair": ("simapi repair <file> [--apply]", "Preview or apply automatic structural repairs to a data file."),
 }
 
 
@@ -387,6 +544,9 @@ def print_help():
         ("usage", "Show API usage statistics"),
         ("api-key <cmd>", "show · rotate · delete"),
         ("config [set]", "Show or update configuration"),
+        ("doctor [--fix]", "Diagnose config, auth, and connectivity"),
+        ("explain", "Explain the last validation run in detail"),
+        ("repair <file> [--apply]", "Preview or apply automatic repairs"),
         ("version", "Show the CLI version"),
         ("help", "Show this help"),
     ]
@@ -404,7 +564,7 @@ def print_command_help(name):
 
 
 def parse(argv):
-    args = {"_": [], "type": None, "json": False, "fail_on": None, "help": False}
+    args = {"_": [], "type": None, "json": False, "fail_on": None, "help": False, "fix": False, "apply": False}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -412,6 +572,10 @@ def parse(argv):
             args["help"] = True
         elif a == "--json":
             args["json"] = True
+        elif a == "--fix":
+            args["fix"] = True
+        elif a == "--apply":
+            args["apply"] = True
         elif a == "--type":
             i += 1
             args["type"] = argv[i] if i < len(argv) else None

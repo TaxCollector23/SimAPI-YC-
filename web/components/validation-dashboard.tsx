@@ -11,6 +11,8 @@ import { cn } from "@/lib/utils";
 import { PreflightPanel } from "./preflight-panel";
 import { HistoryPanel } from "./history-panel";
 import { recordRun } from "@/lib/run-history";
+import { useAuth } from "@/lib/auth";
+import { touchKey } from "@/lib/dashboard-store";
 import {
   validate, runDemo, pollAI, generateKey,
   DEMO_KEY, healthCheck,
@@ -178,6 +180,7 @@ function IssueRow({ issue }: { issue: Issue & { human_name?: string } }) {
 }
 
 export function ValidationDashboard() {
+  const { user } = useAuth();
   const simConfig  = SIM_TYPES[0];
   const [selectedSim, setSelectedSim] = useState(simConfig);
   const [conditions, setConditions]   = useState<Record<string, number>>(
@@ -246,10 +249,14 @@ export function ValidationDashboard() {
       setResult(res); setPhase("done");
       recordRun({
         simulationType: selectedSim.value, status: res.status,
+        engine: (res as { engine?: string }).engine ?? "unknown",
+        executionMs: res.processing_ms ?? 0,
         trials_submitted: res.trials_submitted, trials_excluded: res.trials_excluded,
         unique_checks: (res as { unique_checks?: number }).unique_checks ?? res.all_checks,
         issues: (res.issues ?? []).map((i) => ({ name: i.name, human_name: i.human_name ?? i.name, status: i.status })),
+        raw: res,
       });
+      if (user && apiKey !== DEMO_KEY) touchKey(user.uid);
       if (res.job_id) startPoll(res.job_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -283,8 +290,13 @@ export function ValidationDashboard() {
                                   "border-red-400/30 bg-red-400/5 text-red-400")}>
             <span className={cn("h-1.5 w-1.5 rounded-full",
               serverUp ? "bg-pass animate-pulse" : serverUp === false ? "bg-red-400" : "bg-white/20")} />
-            {serverUp === null ? "Checking..." : serverUp ? "API online — validations are real" : "API offline"}
+            {serverUp === null ? "Checking..." : serverUp ? "API online" : "API offline"}
           </span>
+          {result && "engine" in result && (
+            <span className="rounded-full border border-accent-cyan/30 bg-accent-cyan/5 px-2.5 py-1.5 text-[10px] text-accent-cyan">
+              {String((result as Record<string, unknown>).engine) === "python-470-checks" ? "Full engine (470+ checks)" : "Lite engine (20 checks)"}
+            </span>
+          )}
         </div>
       </div>
 

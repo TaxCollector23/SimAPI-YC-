@@ -98,9 +98,60 @@ export async function POST(req: Request) {
     return NextResponse.json(errorBody("payload_too_large", "Maximum 10,000 trials per request.", requestId), { status: 413 });
   }
 
-  const result = richValidate(rows, simType, requestId.slice(0, 8));
+  const PYTHON_API = process.env.PYTHON_API_URL;
+  let result;
+  let engineSource: "python" | "typescript" = "typescript";
 
-  const excludedIdx = new Set(result.exclusions.map((e) => e.trial_index));
+  if (PYTHON_API) {
+    try {
+      const upstream = await fetch(`${PYTHON_API}/v1/validate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: rows, simulation_type: simType, conditions: body.conditions ?? {}, run_ai: false }),
+        signal: AbortSignal.timeout(25_000),
+      });
+      if (upstream.ok) {
+        const pyResult = await upstream.json();
+        engineSource = "python";
+        result = {
+          job_id: requestId.slice(0, 8),
+          status: pyResult.overall_status ?? pyResult.status ?? "passed",
+          confidence: pyResult.confidence ?? "high",
+          trials_submitted: pyResult.trials_submitted ?? rows.length,
+          trials_valid: pyResult.trials_valid ?? rows.length,
+          trials_excluded: pyResult.trials_excluded ?? 0,
+          exclusion_rate: pyResult.exclusion_rate ?? 0,
+          training_ready: pyResult.training_ready ?? true,
+          processing_ms: pyResult.processing_time_ms ?? 0,
+          all_checks: pyResult.all_checks_count ?? 0,
+          unique_checks: pyResult.all_checks_count ?? 0,
+          passed: pyResult.passed_count ?? 0,
+          warnings: pyResult.warning_count ?? 0,
+          failed: pyResult.failed_count ?? 0,
+          issues: (pyResult.issues ?? []).map((i: Record<string, unknown>) => ({
+            name: i.name, human_name: i.description, status: i.status,
+            description: i.detail ?? i.description, detail: i.detail ?? "",
+            value: i.value, category: i.category,
+          })),
+          exclusions: (pyResult.exclusions ?? []).map((e: Record<string, unknown>) => ({
+            trial_number: (e.trial_index as number) + 1, trial_index: e.trial_index,
+            reason: e.reason, severity: e.severity,
+          })),
+          statistics: pyResult.statistics ?? {},
+          checks_by_category: pyResult.checks_by_category ?? {},
+          columns_renamed: {},
+        };
+      } else {
+        result = richValidate(rows, simType, requestId.slice(0, 8));
+      }
+    } catch {
+      result = richValidate(rows, simType, requestId.slice(0, 8));
+    }
+  } else {
+    result = richValidate(rows, simType, requestId.slice(0, 8));
+  }
+
+  const excludedIdx = new Set(result.exclusions.map((e: { trial_index: number }) => e.trial_index));
   const profile = {
     trials_submitted: result.trials_submitted,
     trials_excluded: result.trials_excluded,
@@ -117,7 +168,7 @@ export async function POST(req: Request) {
           {
             status: result.status,
             score: result.status === "passed" ? 100 : result.status === "warning" ? 70 : 35,
-            violations: result.issues.filter((i) => i.status === "failed").map((i) => ({ field: i.name, value: "", reason: i.detail, severity: "critical" as const })),
+            violations: result.issues.filter((i: { status: string }) => i.status === "failed").map((i: { name: string; detail: string }) => ({ field: i.name, value: "", reason: i.detail, severity: "critical" as const })),
             recommendations: [],
             simulationType: simType,
             checks: [],
@@ -129,6 +180,8 @@ export async function POST(req: Request) {
   return NextResponse.json(
     {
       ...result,
+      engine: engineSource === "python" ? "python-470-checks" : "typescript-20-checks",
+      python_backend: engineSource === "python",
       ai: mapAi(review),
       ai_status: review.enabled ? (review.error ? "error" : "completed") : "disabled",
       ai_running: false,

@@ -1,6 +1,6 @@
 """
 SimAPI — Data Ingestion Layer v2
-Handles CSV, JSON, VTK, NumPy, OpenFOAM.
+Handles CSV, JSON, YAML, TOML, TXT/Markdown, VTK, NumPy, OpenFOAM.
 Aggressive column alias normalization so physics checks fire
 regardless of what naming convention the user's sim tool uses.
 """
@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import tomllib
+import yaml
 
 # ── Exhaustive alias map ───────────────────────────────────────────────────────
 # Every common variant → canonical SimAPI name.
@@ -627,6 +629,12 @@ def _normalize_col(col: str) -> str:
     return col.strip().lower().replace(" ", "_").replace("-", "_").replace(".", "_")
 
 
+def _coerce_numeric(series: pd.Series) -> pd.Series:
+    """Convert a column to numeric where possible, leaving it untouched otherwise."""
+    converted = pd.to_numeric(series, errors="coerce")
+    return converted if converted.notna().any() else series
+
+
 class DataIngester:
     def ingest(self, data, format_hint=None, filename=None):
         metadata = {"original_format": format_hint, "filename": filename,
@@ -637,6 +645,9 @@ class DataIngester:
 
         if fmt == "csv":           df = self._csv(data)
         elif fmt == "json":        df = self._json(data)
+        elif fmt == "yaml":        df = self._yaml(data)
+        elif fmt == "toml":        df = self._toml(data)
+        elif fmt in ("txt", "md"): df = self._text(data)
         elif fmt == "vtk":         df = self._vtk(data)
         elif fmt == "numpy":       df = self._numpy(data)
         elif fmt == "openfoam":    df = self._openfoam(data)
@@ -659,13 +670,29 @@ class DataIngester:
         if hint: return hint.lower()
         if filename:
             ext = Path(filename).suffix.lower()
-            return {".csv":"csv",".json":"json",".vtk":"vtk",".npy":"numpy",".npz":"numpy"}.get(ext,"csv")
+            return {
+                ".csv": "csv", ".json": "json", ".vtk": "vtk", ".npy": "numpy", ".npz": "numpy",
+                ".yaml": "yaml", ".yml": "yaml", ".toml": "toml", ".sim": "yaml",
+                ".txt": "txt", ".md": "md", ".markdown": "md",
+            }.get(ext, "csv")
         if isinstance(data, (dict, list)): return "json"
         if isinstance(data, (str, bytes)):
             text = data.decode() if isinstance(data, bytes) else data
-            if text.strip().startswith(("{","[")): return "json"
+            stripped = text.strip()
+            if stripped.startswith(("{", "[")): return "json"
             if "vtk datafile" in text.lower():     return "vtk"
-            if text.strip().startswith("FoamFile"): return "openfoam"
+            if stripped.startswith("FoamFile"): return "openfoam"
+            if re.match(r"^[A-Za-z0-9_.\-\[\]\"' ]+\s*=", stripped) and "\n---" not in stripped and ":" not in stripped.split("\n", 1)[0]:
+                return "toml"
+            if re.search(r"^[A-Za-z][\w \-]*:\s*(.+)?$", stripped, re.MULTILINE) and not stripped.startswith("|") and "," not in stripped.split("\n", 1)[0]:
+                # Looks like key: value structure — could be YAML or loose text/markdown.
+                if stripped.startswith("#") or "**" in stripped or stripped.count("|") > 2:
+                    return "md"
+                try:
+                    yaml.safe_load(stripped)
+                    return "yaml"
+                except yaml.YAMLError:
+                    return "txt"
             return "csv"
         return "csv"
 
@@ -679,6 +706,74 @@ class DataIngester:
         for key in ("trials","results","data"):
             if key in data: return pd.DataFrame(data[key])
         return pd.DataFrame([data])
+
+    def _yaml(self, data):
+        if isinstance(data, bytes): data = data.decode("utf-8", errors="replace")
+        parsed = yaml.safe_load(data)
+        if isinstance(parsed, list):
+            return pd.DataFrame(parsed)
+        if isinstance(parsed, dict):
+            for key in ("trials", "results", "data"):
+                if key in parsed and isinstance(parsed[key], list):
+                    return pd.DataFrame(parsed[key])
+            return pd.DataFrame([parsed])
+        raise ValueError("YAML document must be a list of trials or a dict containing one")
+
+    def _toml(self, data):
+        if isinstance(data, str): data = data.encode("utf-8")
+        parsed = tomllib.loads(data.decode("utf-8")) if isinstance(data, bytes) else tomllib.load(data)
+        for key in ("trials", "results", "data"):
+            if key in parsed and isinstance(parsed[key], list):
+                return pd.DataFrame(parsed[key])
+        # TOML array-of-tables at the top level, e.g. [[trial]] blocks.
+        for v in parsed.values():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                return pd.DataFrame(v)
+        return pd.DataFrame([parsed])
+
+    def _text(self, data):
+        """Parse loose TXT/Markdown into trial records.
+
+        Supports three shapes, tried in order: a Markdown/pipe table, a CSV-like
+        whitespace table, and free-form "key: value" or "key = value" blocks
+        (one trial per blank-line-separated paragraph — the common shape when
+        someone pastes simulation output or writes results in prose).
+        """
+        if isinstance(data, bytes): data = data.decode("utf-8", errors="replace")
+        lines = [ln for ln in data.split("\n") if ln.strip() and not ln.strip().startswith("#")]
+
+        table_lines = [ln for ln in lines if ln.strip().startswith("|")]
+        if len(table_lines) >= 2:
+            rows = [
+                [c.strip() for c in ln.strip().strip("|").split("|")]
+                for ln in table_lines
+                if not re.match(r"^[\s:|-]+$", ln.strip().strip("|"))
+            ]
+            if len(rows) >= 2:
+                header, *body = rows
+                return pd.DataFrame(body, columns=header).apply(_coerce_numeric)
+
+        kv_pattern = re.compile(r"^\s*[\w][\w \-/%]*\s*[:=]\s*.+$")
+        if lines and all(kv_pattern.match(ln) or ln.strip() == "" for ln in lines[:20]):
+            records, current = [], {}
+            for ln in data.split("\n"):
+                if not ln.strip():
+                    if current: records.append(current); current = {}
+                    continue
+                m = re.match(r"^\s*([\w][\w \-/%]*?)\s*[:=]\s*(.+?)\s*$", ln)
+                if m:
+                    key = _normalize_col(m.group(1))
+                    val = m.group(2).strip().strip('"\'')
+                    current[key] = val
+            if current: records.append(current)
+            if records:
+                return pd.DataFrame(records).apply(_coerce_numeric)
+
+        # Whitespace/CSV-like table fallback (first line = header).
+        try:
+            return pd.read_csv(io.StringIO(data), sep=r"\s+|,", engine="python")
+        except Exception as e:
+            raise ValueError("Could not parse text/markdown input as trial records") from e
 
     def _numpy(self, data):
         if isinstance(data, (str, bytes, Path)):

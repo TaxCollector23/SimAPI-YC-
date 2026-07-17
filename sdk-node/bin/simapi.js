@@ -21,6 +21,7 @@ const API_BASE = env.SIMAPI_BASE_URL || "https://sim-api.vercel.app/api";
 const CONFIG_DIR = join(homedir(), ".simapi");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 const USAGE_PATH = join(CONFIG_DIR, "usage.json");
+const LAST_RUN_PATH = join(CONFIG_DIR, "last_run.json");
 
 // ── Colors ────────────────────────────────────────────────────────────────────
 const COLOR = stdout.isTTY && !env.NO_COLOR && env.TERM !== "dumb";
@@ -282,21 +283,146 @@ const commands = {
     stdout.write(`\n  Use with: ${c.cyan("simapi validate run.json --type <domain>")}\n\n`);
   },
 
-  async doctor() {
-    banner();
+  async doctor(args) {
+    const fix = !!args["fix"] || args._.includes("--fix");
+    stdout.write(`\n  ${c.bold("SimAPI doctor")}\n`);
+    stdout.write("  " + "─".repeat(46) + "\n");
+    let problems = 0;
+
+    if (existsSync(CONFIG_DIR)) {
+      ok(`Config directory writable (${CONFIG_DIR})`);
+    } else if (fix) {
+      await mkdir(CONFIG_DIR, { recursive: true });
+      ok(`Created config directory (${CONFIG_DIR})`);
+    } else {
+      stdout.write(`  ${c.red("✗")} Config directory missing (${CONFIG_DIR})\n    ${c.dim("fix: simapi doctor --fix")}\n`);
+      problems++;
+    }
+
     const nodeMajor = Number(process.versions.node.split(".")[0]);
-    ok(`Node ${process.version} ${nodeMajor >= 18 ? "" : c.red("(need 18+)")}`);
+    if (nodeMajor >= 18) ok(`Node ${process.version} (>= 18 required)`);
+    else {
+      stdout.write(`  ${c.red("✗")} Node ${process.version} is below the minimum supported version (18)\n`);
+      problems++;
+    }
+
     const key = await resolveKey();
-    key ? ok(`API key configured (${mask(key)})`) : info(`${c.amber("○")} Not logged in — run ${c.cyan("simapi login")}`);
-    stdout.write(`  ${c.dim("Checking API…")}\r`);
+    if (key) ok(`API key configured (${mask(key)})`);
+    else {
+      stdout.write(`  ${c.amber("⚠")} No API key configured\n    ${c.dim("fix: simapi login")}\n`);
+      problems++;
+    }
+
     try {
       const t = Date.now();
       const res = await api("/v1/health");
-      res.ok ? ok(`API reachable at ${API_BASE} (${Date.now() - t}ms)          `) : fail(`API returned ${res.status}`);
+      if (res.ok) ok(`API reachable at ${API_BASE} (${Date.now() - t}ms, engine=${res.json.engine || "unknown"})`);
+      else {
+        stdout.write(`  ${c.red("✗")} API returned HTTP ${res.status} at ${API_BASE}\n`);
+        problems++;
+      }
     } catch (e) {
-      fail(`API unreachable: ${e.message}`);
+      stdout.write(`  ${c.red("✗")} API unreachable at ${API_BASE}: ${e.message}\n`);
+      problems++;
     }
-    stdout.write(`  ${c.dim(`config: ${CONFIG_PATH}`)}\n\n`);
+
+    if (existsSync("simapi.json")) {
+      try {
+        JSON.parse(await readFile("simapi.json", "utf8"));
+        ok("simapi.json found and valid");
+      } catch (e) {
+        stdout.write(`  ${c.red("✗")} simapi.json exists but is not valid JSON: ${e.message}\n`);
+        problems++;
+      }
+    } else {
+      stdout.write(`  ${c.dim("·")} No simapi.json in this directory ${c.dim("(optional — run simapi init)")}\n`);
+    }
+
+    stdout.write("  " + "─".repeat(46) + "\n");
+    if (problems === 0) stdout.write(`  ${c.green("All checks passed.")}\n\n`);
+    else stdout.write(`  ${c.amber(`${problems} issue(s) found`)}${fix ? "" : ` — run ${c.cyan("simapi doctor --fix")} to auto-fix what's fixable`}\n\n`);
+  },
+
+  async repair(args) {
+    const file = args._[0];
+    if (!file) return fail(`Usage: ${c.cyan("simapi repair <file> [--apply]")}`);
+    if (!existsSync(file)) return fail(`File not found: ${file}`);
+    let payload;
+    try {
+      payload = JSON.parse(await readFile(file, "utf8"));
+    } catch (e) {
+      return fail(`Could not read ${file}: ${e.message}`);
+    }
+    const data = Array.isArray(payload) ? payload : payload.data || payload.trials || [];
+    if (!data.length) return fail("No trial records found in file.");
+    const key = await resolveKey();
+    const apply = !!args.apply;
+    const res = await api("/v1/repair", { method: "POST", body: { data, apply }, key });
+    if (!res.ok) {
+      const err = res.json?.error || {};
+      return fail(`[${err.code || res.status}] ${err.message || "repair failed"}`);
+    }
+    const r = res.json;
+    const proposals = r.proposals || [];
+    stdout.write(`\n  ${c.bold("Repair preview")}  ${c.dim(file)}\n`);
+    stdout.write("  " + "─".repeat(46) + "\n");
+    if (!proposals.length) {
+      stdout.write(`  ${c.green("No structural issues found — nothing to repair.")}\n\n`);
+      return;
+    }
+    for (const prop of proposals) {
+      stdout.write(`\n  ${c.amber("⚠")} ${c.bold(prop.kind)} ${c.dim(`(${prop.affected_row_count} row(s))`)}\n`);
+      stdout.write(`    ${prop.description}\n`);
+      for (const ch of (prop.changes || []).slice(0, 5)) {
+        stdout.write(`    ${c.dim(`row ${ch.row}`)}  ${ch.column}: ${ch.before} → ${c.green(String(ch.after))}\n`);
+      }
+      if (prop.rows_dropped && prop.rows_dropped.length) {
+        stdout.write(`    ${c.dim("drops rows:")} ${prop.rows_dropped.slice(0, 10).join(", ")}\n`);
+      }
+    }
+    if (r.unrepairable && r.unrepairable.length) {
+      stdout.write(`\n  ${c.bold("Needs manual review")}\n`);
+      for (const u of r.unrepairable) stdout.write(`    ${c.red("✗")} ${u.reason}\n`);
+    }
+    stdout.write("\n");
+    if (apply && r.repaired_data) {
+      const dot = file.lastIndexOf(".");
+      const outPath = dot > -1 ? `${file.slice(0, dot)}.repaired${file.slice(dot)}` : `${file}.repaired`;
+      const outPayload = Array.isArray(payload) ? r.repaired_data : { ...payload, data: r.repaired_data };
+      await writeFile(outPath, JSON.stringify(outPayload, null, 2));
+      ok(`Repaired data written to ${outPath}`);
+    } else if (!apply && proposals.length) {
+      stdout.write(`  ${c.dim("Run")} ${c.cyan(`simapi repair ${file} --apply`)} ${c.dim("to write a repaired copy.")}\n\n`);
+    }
+  },
+
+  async explain() {
+    const cached = await readJson(LAST_RUN_PATH, null);
+    if (!cached) return fail(`No cached validation run. Run ${c.cyan("simapi validate <file>")} first.`);
+    const r = cached.result;
+    const ageS = Math.round((Date.now() - cached.t) / 1000);
+    stdout.write(`\n  ${c.bold("Explaining")} ${c.dim(cached.file)} ${c.dim(`(validated ${ageS}s ago)`)}\n`);
+    stdout.write("  " + "─".repeat(46) + "\n");
+    const issues = r.issues || [];
+    if (!issues.length) {
+      stdout.write(`  ${c.green("No issues were found in this run.")}\n\n`);
+      return;
+    }
+    issues.forEach((issue, idx) => {
+      const mk = issue.status === "failed" ? c.red("✗") : c.amber("⚠");
+      const name = issue.human_name || issue.name || "unnamed check";
+      stdout.write(`\n  ${mk} ${c.bold(`${idx + 1}. ${name}`)}\n`);
+      if (issue.category) row("Category", issue.category);
+      if (issue.detail) row("Detail", issue.detail);
+      if (issue.value !== undefined && issue.value !== null) row("Value", String(issue.value));
+    });
+    const exclusions = r.exclusions || [];
+    if (exclusions.length) {
+      stdout.write(`\n  ${c.bold(`Excluded trials (${exclusions.length})`)}\n`);
+      for (const e of exclusions.slice(0, 10)) row(`Trial ${e.trial_number ?? e.trial_index}`, e.reason || "");
+      if (exclusions.length > 10) stdout.write(`  ${c.dim(`… and ${exclusions.length - 10} more`)}\n`);
+    }
+    stdout.write("\n");
   },
 
   async open() {
@@ -364,6 +490,7 @@ async function runValidation(file, key, args) {
     return fail(`[${err.code || res.status}] ${err.message || "validation error"}`);
   }
   const r = res.json;
+  await writeJson(LAST_RUN_PATH, { file, t: Date.now(), result: r });
   if (args.json) return stdout.write(JSON.stringify(r, null, 2) + "\n");
 
   renderReport(r, file, body.simulation_type);
@@ -434,7 +561,9 @@ const HELP = {
   init: { usage: "simapi init", desc: "Create a simapi.json config in the current project." },
   validate: { usage: "simapi validate <file>", desc: "Validate a .json or .txt simulation file and print the report. Plain-text/log files are converted to JSON with AI.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--no-ai", "skip the AI second pass"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate simulations.txt --type aerodynamics", "simapi validate run.json --fail-on warning"] },
   domains: { usage: "simapi domains", desc: "List the supported simulation types." },
-  doctor: { usage: "simapi doctor", desc: "Check your Node version, saved key, and API connectivity." },
+  doctor: { usage: "simapi doctor [--fix]", desc: "Diagnose config, credentials, connectivity, and project setup." },
+  explain: { usage: "simapi explain", desc: "Explain the issues from the most recent validation run in detail." },
+  repair: { usage: "simapi repair <file> [--apply]", desc: "Preview or apply automatic structural repairs to a data file.", ex: ["simapi repair simulation.json", "simapi repair simulation.json --apply"] },
   open: { usage: "simapi open", desc: "Open the SimAPI dashboard in your browser." },
   watch: { usage: "simapi watch <file>", desc: "Re-run validation automatically whenever the file changes.", ex: ["simapi watch simulation.json"] },
   usage: { usage: "simapi usage", desc: "Show requests today/this month, remaining quota, and average time." },
@@ -459,7 +588,9 @@ function printHelp() {
     ["usage", "Show API usage statistics"],
     ["api-key <cmd>", "show · rotate · delete"],
     ["config [set]", "Show or update configuration"],
-    ["doctor", "Check environment, key, and API connectivity"],
+    ["doctor [--fix]", "Diagnose config, auth, and connectivity"],
+    ["explain", "Explain the last validation run in detail"],
+    ["repair <file> [--apply]", "Preview or apply automatic repairs"],
     ["open", "Open the dashboard in your browser"],
     ["version", "Show the CLI version"],
     ["help", "Show this help"],
@@ -501,11 +632,13 @@ function fail(msg) {
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────────
 function parse(argv) {
-  const out = { _: [], type: undefined, json: false, "fail-on": undefined, help: false };
+  const out = { _: [], type: undefined, json: false, "fail-on": undefined, help: false, fix: false, apply: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") out.help = true;
     else if (a === "--json") out.json = true;
+    else if (a === "--fix") out.fix = true;
+    else if (a === "--apply") out.apply = true;
     else if (a === "--type") out.type = argv[++i];
     else if (a === "--fail-on") out["fail-on"] = argv[++i];
     else out._.push(a);

@@ -91,3 +91,41 @@ def test_unsupported_simulation_type_upload(client):
     )
     assert r.status_code == 400
     assert r.json()["error"]["code"] == "unsupported_format"
+
+
+def test_repair_preview_finds_duplicate_ids(client):
+    r = client.post(
+        "/v1/repair",
+        json={"data": [{"trial_id": 1, "velocity": 150}, {"trial_id": 1, "velocity": 151}], "apply": False},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    kinds = [p["kind"] for p in body["proposals"]]
+    assert "duplicate_or_missing_ids" in kinds
+    assert "repaired_data" not in body  # preview mode must not include the repaired dataset
+
+
+def test_repair_apply_returns_repaired_data(client):
+    r = client.post(
+        "/v1/repair",
+        json={"data": [{"trial_id": 1, "velocity": 150}, {"trial_id": 1, "velocity": 151}], "apply": True},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    repaired_ids = [row["trial_id"] for row in body["repaired_data"]]
+    assert len(set(repaired_ids)) == len(repaired_ids)  # IDs are unique after repair
+
+
+def test_repair_on_clean_data_has_no_proposals(client):
+    r = client.post(
+        "/v1/repair",
+        json={"data": [{"velocity": 150}, {"velocity": 151}, {"velocity": 152}]},
+    )
+    assert r.status_code == 200
+    assert r.json()["proposals"] == []
+
+
+def test_repair_handles_empty_data_gracefully(client):
+    r = client.post("/v1/repair", json={"data": []})
+    assert r.status_code == 200
+    assert r.json()["proposals"] == []

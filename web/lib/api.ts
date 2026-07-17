@@ -163,3 +163,27 @@ export async function validateSetup(config: Record<string, unknown>, meshStats?:
   }
   return r.json();
 }
+
+export interface RepairChange { row: number; column: string; before: unknown; after: unknown }
+export interface RepairProposal {
+  kind: string; description: string; affected_row_count: number;
+  changes: RepairChange[]; rows_dropped: number[]; reorder_preview: number[] | null;
+}
+export interface RepairResult {
+  proposals: RepairProposal[];
+  unrepairable: { column: string; reason: string; rows: number[] }[];
+  total_changes: number;
+  repaired_data?: Record<string, unknown>[];
+}
+
+/** Preview (or apply) automatic structural repairs. Requires PYTHON_API_URL on this deployment. */
+export async function repair(data: Record<string, unknown>[], apply = false): Promise<RepairResult> {
+  const r = await fetch(`${API_BASE}/v1/repair`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data, apply }),
+  });
+  const json = await r.json();
+  if (!r.ok) throw new Error(json?.error?.message ?? r.statusText);
+  return json;
+}

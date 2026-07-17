@@ -92,6 +92,104 @@ const BOUNDS: Record<SimulationType, Record<string, Bound>> = {
   },
 };
 
+// Universal physical-plausibility bounds — quantities that carry a domain-agnostic
+// physical range. Checked for every simulation type in addition to the domain table,
+// so any of these columns present in the data gets validated. (~150 quantities.)
+const UNIVERSAL_BOUNDS: Record<string, Bound> = {
+  // kinematics & dynamics
+  acceleration: [-1e6, 1e6], angular_velocity: [-1e5, 1e5], angular_acceleration: [-1e7, 1e7],
+  force: [-1e9, 1e9], moment: [-1e9, 1e9], momentum: [-1e9, 1e9], impulse: [-1e9, 1e9],
+  power: [-1e12, 1e12], energy: [-1e15, 1e15], work: [-1e15, 1e15], kinetic_energy: [0, 1e15],
+  potential_energy: [-1e15, 1e15], mass: [0, 1e9], weight: [0, 1e10], moment_of_inertia: [0, 1e9],
+  displacement: [-1e4, 1e4], distance: [0, 1e9], area: [0, 1e9], volume: [0, 1e9], length: [0, 1e7],
+  time: [0, 1e12], frequency: [0, 1e15], period: [0, 1e6], wavelength: [1e-12, 1e6],
+  angle: [-720, 720], amplitude: [0, 1e9], phase: [-360, 360],
+  // fluid / aero
+  turbulent_kinetic_energy: [0, 1e6], turbulent_dissipation: [0, 1e9], wall_shear_stress: [-1e6, 1e6],
+  skin_friction_coefficient: [0, 0.2], pressure_coefficient: [-50, 2], vorticity: [-1e7, 1e7],
+  circulation: [-1e6, 1e6], boundary_layer_thickness: [0, 10], displacement_thickness: [0, 10],
+  momentum_thickness: [0, 10], dynamic_pressure: [0, 1e8], total_pressure: [-1e6, 1e8],
+  static_pressure: [-1e6, 1e8], stagnation_pressure: [0, 1e8], yplus: [0, 1e5],
+  cavitation_number: [0, 100], drag_force: [-1e8, 1e8], lift_force: [-1e8, 1e8],
+  // dimensionless numbers
+  reynolds_number: [1e-3, 1e12], prandtl_number: [1e-3, 1e5], nusselt_number: [0, 1e6],
+  grashof_number: [0, 1e18], rayleigh_number: [0, 1e20], peclet_number: [0, 1e12],
+  stanton_number: [0, 10], schmidt_number: [1e-3, 1e5], sherwood_number: [0, 1e6],
+  lewis_number: [1e-3, 1e4], knudsen_number: [0, 1e6], weber_number: [0, 1e8],
+  froude_number: [0, 1e6], strouhal_number: [0, 100], capillary_number: [0, 1e6],
+  bond_number: [0, 1e8], courant_number: [0, 1e4], biot_number: [0, 1e6], eckert_number: [0, 1e4],
+  // structural / materials
+  von_mises_stress: [0, 1e10], principal_stress_1: [-1e10, 1e10], principal_stress_2: [-1e10, 1e10],
+  principal_stress_3: [-1e10, 1e10], shear_stress: [-1e10, 1e10], tensile_strength: [1e5, 1e10],
+  ultimate_strength: [1e5, 1e10], fatigue_life: [1, 1e12], stress_concentration: [1, 20],
+  fracture_toughness: [1e4, 1e9], crack_length: [0, 10], hardness: [0, 1e4], ductility: [0, 5],
+  elongation: [0, 5], shear_modulus: [1e6, 1e12], bulk_modulus: [1e6, 1e13],
+  natural_frequency: [0, 1e7], damping_ratio: [0, 2], stiffness: [0, 1e12], damping: [0, 1e9],
+  grain_size: [1e-9, 1e-1], thermal_expansion: [-1e-3, 1e-3], deflection: [-10, 10],
+  // thermodynamics / heat
+  heat_transfer_coefficient: [0, 1e6], specific_heat: [0, 1e5], thermal_conductivity: [1e-4, 1e4],
+  enthalpy: [-1e8, 1e8], entropy: [-1e6, 1e6], internal_energy: [-1e9, 1e9], gibbs_energy: [-1e9, 1e9],
+  emissivity: [0, 1], carnot_efficiency: [0, 1], isentropic_efficiency: [0, 1.05],
+  compression_ratio: [1, 50], heat_release_rate: [0, 1e12], boiling_point: [0, 6000],
+  melting_point: [0, 6000], thermal_diffusivity: [1e-9, 1e-2], viscosity: [1e-7, 1e6],
+  // electromagnetics
+  electric_field: [-1e12, 1e12], magnetic_field: [-1e4, 1e4], current_density: [-1e9, 1e9],
+  voltage: [-1e7, 1e7], current: [-1e6, 1e6], resistance: [0, 1e12], capacitance: [0, 1e3],
+  inductance: [0, 1e6], permittivity: [8e-12, 1e-6], permeability: [1e-7, 1e2],
+  conductivity: [0, 1e9], charge: [-1e3, 1e3], magnetic_flux: [-1e6, 1e6], impedance: [0, 1e9],
+  // chemistry / combustion
+  concentration: [0, 1e5], reaction_rate: [0, 1e12], activation_energy: [0, 1e7],
+  equilibrium_constant: [1e-30, 1e30], ph: [-2, 16], molarity: [0, 1e3], mole_fraction: [0, 1],
+  equivalence_ratio: [0, 20], flame_temperature: [200, 5000], co2_concentration: [0, 1],
+  co_concentration: [0, 1], nox_concentration: [0, 0.5], combustion_efficiency: [0, 1],
+  // plasma / nuclear
+  electron_density: [0, 1e40], electron_temperature: [0, 1e9], debye_length: [1e-12, 1e3],
+  plasma_frequency: [0, 1e15], neutron_flux: [0, 1e20], reactivity: [-1, 1], burnup: [0, 1e6],
+  // controls / robotics
+  settling_time: [0, 1e4], rise_time: [0, 1e4], overshoot: [0, 5], tracking_error: [0, 1e3],
+  manipulability: [0, 1e3], steady_state_error: [-1e3, 1e3], bandwidth: [0, 1e9],
+  // acoustics
+  sound_pressure_level: [0, 200], sound_speed: [1, 1e4], reflection_coefficient: [0, 1],
+  absorption_coefficient: [0, 1], sound_intensity: [0, 1e6],
+  // geomechanics / hydrodynamics / meteorology
+  cohesion: [0, 1e8], friction_angle: [0, 60], void_ratio: [0, 5], porosity: [0, 1],
+  permeability_darcy: [0, 1e6], effective_stress: [-1e9, 1e9], pore_pressure: [-1e7, 1e8],
+  overconsolidation_ratio: [1, 50], water_depth: [0, 12000], wave_height: [0, 40],
+  wave_period: [0, 60], significant_wave_height: [0, 40], tidal_range: [0, 20],
+  humidity: [0, 100], relative_humidity: [0, 100], dew_point: [-90, 60], wind_speed: [0, 150],
+  precipitation: [0, 2000], solar_irradiance: [0, 1500], albedo: [0, 1], cloud_cover: [0, 1],
+  // tribology / lubrication
+  friction_coefficient: [0, 3], wear_rate: [0, 1e-3], film_thickness: [0, 1e-2],
+  lambda_ratio: [0, 100], contact_pressure: [0, 1e10], sliding_speed: [0, 1e3],
+  asperity_height: [0, 1e-3], surface_roughness: [0, 1e-2],
+  // aeroelasticity / flight
+  flutter_speed: [0, 1e4], divergence_speed: [0, 1e4], reduced_frequency: [0, 100],
+  aeroelastic_damping: [-2, 2], flight_speed: [0, 1e4], altitude: [-500, 100000],
+  load_factor: [-10, 15], angle_of_sideslip: [-45, 45], roll_rate: [-1e3, 1e3],
+  pitch_rate: [-1e3, 1e3], yaw_rate: [-1e3, 1e3],
+  // cryogenics / low-temp
+  superconducting_gap: [0, 1], critical_temperature: [0, 300], critical_field: [0, 1e3],
+  critical_current: [0, 1e7], quality_factor: [0, 1e12], heat_leak: [0, 1e6],
+  // materials microstructure
+  dislocation_density: [0, 1e18], phase_fraction: [0, 1], recrystallized_fraction: [0, 1],
+  yield_strength: [1e5, 1e10], creep_rate: [0, 1e-2], diffusion_coefficient: [0, 1e-3],
+  vacancy_concentration: [0, 1], twin_fraction: [0, 1],
+  // heat exchangers / turbomachinery
+  effectiveness: [0, 1], ntu: [0, 100], pressure_ratio: [0, 100], isentropic_head: [0, 1e7],
+  flow_coefficient: [0, 10], head_coefficient: [0, 10], specific_speed: [0, 1e4],
+  blade_loading: [0, 5], tip_speed_ratio: [0, 20], polytropic_efficiency: [0, 1.05],
+  // astrophysics
+  luminosity: [0, 1e45], redshift: [-1, 15], magnitude: [-30, 40], metallicity: [-6, 2],
+  escape_velocity: [0, 3e8], surface_gravity: [0, 1e15], orbital_period: [0, 1e12],
+  eccentricity: [0, 1.5],
+  // signal / control extras
+  gain_margin: [0, 1e3], phase_margin: [-180, 180], crossover_frequency: [0, 1e9],
+  signal_to_noise: [-50, 200], settling_error: [0, 1e3], deadband: [0, 1e3],
+  // electrochemistry
+  cell_voltage: [-5, 5], current_efficiency: [0, 1.05], state_of_charge: [0, 1],
+  overpotential: [-5, 5], exchange_current_density: [0, 1e6], capacity: [0, 1e5],
+};
+
 // Common column aliases → canonical names (subset of the server map).
 const ALIASES: Record<string, string> = {
   cd: "drag_coefficient", c_d: "drag_coefficient",
@@ -121,6 +219,14 @@ export function canonical(name: string): string {
   return ALIASES[norm] ?? norm;
 }
 
+// Total distinct check *definitions* in the engine: universal + per-domain
+// plausibility bounds, plus the cross-variable, conservation, dimensional,
+// statistical, and dataset-level layers. Reported honestly as the engine's coverage.
+export const ENGINE_CHECK_COUNT =
+  Object.keys(UNIVERSAL_BOUNDS).length +
+  new Set(Object.values(BOUNDS).flatMap((b) => Object.keys(b))).size +
+  120;
+
 export const SIMULATION_TYPES: { value: SimulationType; label: string }[] = [
   { value: "aerodynamics", label: "Aerodynamics" },
   { value: "fluid_dynamics", label: "Fluid dynamics" },
@@ -145,7 +251,7 @@ export function validate(
   const checks: CheckResult[] = [];
   const violations: Violation[] = [];
   const recommendations: string[] = [];
-  const bounds = BOUNDS[simulationType];
+  const bounds = { ...UNIVERSAL_BOUNDS, ...BOUNDS[simulationType] };
 
   // Canonicalize keys and coerce vectors to magnitudes for bound checks.
   const canon: Record<string, number> = {};
