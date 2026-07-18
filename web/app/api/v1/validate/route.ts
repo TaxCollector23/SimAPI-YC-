@@ -11,7 +11,10 @@ import { aiReview, type AiReview } from "@/lib/ai-review";
  * and SDKs consume, plus an optional AI second pass (OPENROUTER_API_KEY).
  */
 export const runtime = "nodejs";
-export const maxDuration = 30;
+// The AI review is a genuine analysis, not a quick check, and is allowed to
+// take its time (see lib/ai-review.ts) -- give the function enough room for
+// physics validation plus a real, unhurried model call.
+export const maxDuration = 60;
 
 interface ValidateBody {
   data?: Record<string, unknown>[];
@@ -162,10 +165,8 @@ export async function POST(req: Request) {
     violating_rows: rows.filter((_, i) => excludedIdx.has(i)).slice(0, 4),
   };
 
-  // AI logic-check pass is opt-in, not default -- physics validation is
-  // deterministic and complete on its own. Explicitly pass run_ai: true to enable.
   const review =
-    body.run_ai !== true
+    body.run_ai === false
       ? ({ enabled: false } as AiReview)
       : await aiReview(
           {

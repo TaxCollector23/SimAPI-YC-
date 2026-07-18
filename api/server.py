@@ -109,15 +109,12 @@ class ValidateRequest(BaseModel):
     )
     conditions: dict[str, float] = Field(default_factory=dict, description="Input boundary conditions.")
     job_id: str | None = Field(default=None, description="Optional caller-supplied tracking id.")
-    run_ai: bool = Field(
-        default=False,
-        description="Run the async AI reasoning layer. Disabled by default -- physics validation "
-        "is deterministic and complete on its own; the AI layer is an opt-in second pass.",
-    )
+    run_ai: bool = Field(default=True, description="Run the async AI reasoning layer.")
     deep_ai: bool = Field(
-        default=False,
-        description="Use the 5-phase AI orchestrator (root-cause analysis, ~10-90s) instead of "
-        "the default quick sanity check (~2-18s, 'normal'/'not normal' verdict).",
+        default=True,
+        description="Use the 5-phase AI orchestrator (thorough root-cause analysis, allowed to take "
+        "its time -- typically 10-90s) instead of the quick sanity check (~2-18s, 'normal'/'not "
+        "normal' verdict). Runs as a background job either way; poll GET /v1/job/{id}/ai.",
     )
     geometry_description: str | None = Field(default=None, description="Free text geometry description.")
     what_are_you_measuring: str | None = Field(default=None, description="What the simulation is studying.")
@@ -669,7 +666,7 @@ async def demo(_: str = Depends(caller_identity)):
         simulation_type=SimulationType.AERODYNAMICS,
         conditions={"velocity": v, "altitude": 120.0},
         job_id=f"demo_{uuid.uuid4().hex[:6]}",
-        run_ai=False,
+        run_ai=True,
     ))
 
 
