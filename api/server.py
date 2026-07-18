@@ -50,7 +50,7 @@ from core.ai_validator import AI_ENABLED, validate_with_ai
 from core.ai_validator import MODEL as AI_MODEL
 from core.ai_validator import report_to_dict as ai_dict
 from core.ingestion import DataIngester
-from core.mesh_validator import MeshValidator, humanize_mesh_check_name
+from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
 from core.repair import analyze as repair_analyze
 
@@ -535,6 +535,20 @@ async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_iden
         for c in report.issues
     ]
     metrics.incr("setup_validations_total", status=report.status)
+
+    # APIE-powered corruption-risk prediction: what's likely to go wrong in the
+    # OUTPUT, based on the domain's known invariants and this mesh/solver setup —
+    # before any output exists to check. Best-effort; never blocks the response.
+    apie_risk = None
+    try:
+        apie_risk = predict_corruption_risks(
+            simulation_type=req.simulation_type,
+            mesh_stats=req.mesh_stats or {},
+            solver={"name": req.solver}, physics={"name": req.physics},
+        )
+    except Exception as e:
+        apie_risk = {"error": str(e)[:200]}
+
     return _json_safe({
         "status": report.status,
         "all_checks": report.all_checks_count,
@@ -546,6 +560,7 @@ async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_iden
         "estimated_corruption_risk": report.estimated_corruption_risk,
         "recommendations": report.recommendations,
         "processing_ms": report.processing_ms,
+        "apie_risk_prediction": apie_risk,
     })
 
 

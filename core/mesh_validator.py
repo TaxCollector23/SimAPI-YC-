@@ -664,5 +664,89 @@ def _models(config: dict[str, Any]) -> dict[str, bool]:
     return {}
 
 
+def predict_corruption_risks(
+    simulation_type: str,
+    mesh_stats: dict,
+    solver: dict,
+    physics: dict,
+) -> dict:
+    """
+    APIE-powered pre-flight corruption risk prediction.
+
+    Based on the simulation domain, mesh quality, and solver settings,
+    predicts which types of output corruption are most likely and which
+    APIE checks will matter most for post-run validation — before the
+    simulation has even produced output to check.
+    """
+    try:
+        from core.apie import get_profile
+        profile = get_profile(simulation_type)
+    except Exception:
+        profile = None
+
+    risks: dict[str, float] = {}
+    recommendations: list[str] = []
+    required_checks: list[str] = []
+
+    cell_count = mesh_stats.get("cell_count", 0)
+    max_skewness = mesh_stats.get("max_skewness", 0.0)
+    nonortho_avg = mesh_stats.get("average_non_orthogonality", 0.0)
+
+    if max_skewness > 0.8:
+        risks["solver_divergence"] = min(1.0, (max_skewness - 0.8) / 0.2)
+        recommendations.append(
+            f"High skewness ({max_skewness:.2f}) increases solver divergence risk. "
+            "APIE will run joint_skew_outlier and ensemble_predictor with tight thresholds."
+        )
+        required_checks.append("joint_skew_outlier")
+
+    if cell_count < 50000 and "aerodynamics" in simulation_type.lower():
+        risks["measurement_noise"] = 0.6
+        recommendations.append(
+            f"Cell count ({cell_count:,}) may be insufficient for boundary layer resolution. "
+            "APIE will apply local neighborhood anomaly detection on wall-adjacent cells."
+        )
+        required_checks.append("target_neighbor_anomaly")
+
+    if nonortho_avg > 40:
+        risks["cross_variable"] = min(1.0, (nonortho_avg - 40) / 20)
+        recommendations.append(
+            "High non-orthogonality may cause pressure-velocity decoupling. "
+            "APIE will check Re/v and P/(ρT) invariants."
+        )
+        required_checks.append("ratio_invariant")
+
+    solver_name = solver.get("name", "").lower()
+    if any(s in solver_name for s in ["openfoam", "foam"]):
+        risks["unit_conversion"] = 0.3
+        recommendations.append(
+            "OpenFOAM output commonly has Pa/kPa and m/mm unit inconsistencies. "
+            "APIE will apply strict P/(ρT) = 287 check."
+        )
+        required_checks.append("ratio_invariant")
+
+    if profile:
+        invariant_names = [inv.law_name for inv in profile.invariants]
+        recommendations.append(
+            f"Domain '{profile.canonical_name}' has {len(profile.invariants)} known "
+            f"physical invariants: {', '.join(invariant_names[:3])}. "
+            "These will be checked automatically by APIE post-run."
+        )
+        required_checks.extend(inv.check for inv in profile.invariants)
+
+    risk_sorted = sorted(risks.items(), key=lambda x: -x[1])
+    predicted_errors = [k for k, v in risk_sorted if v > 0.3]
+
+    return {
+        "corruption_risk_scores": risks,
+        "predicted_error_types": predicted_errors,
+        "recommended_apie_checks": list(set(required_checks)),
+        "domain_invariants_count": len(profile.invariants) if profile else 0,
+        "domain_canonical": profile.canonical_name if profile else "unknown",
+        "recommendations": recommendations,
+        "overall_corruption_risk": min(1.0, sum(risks.values()) / max(len(risks), 1)),
+    }
+
+
 # Module-level singleton (mirrors PhysicsValidator usage in the server).
 mesh_validator = MeshValidator()

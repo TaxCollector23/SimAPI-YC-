@@ -39,6 +39,8 @@ ignore = ["E741", "E501", "B008"]
 "core/physics_validator.py" = ["E701", "E702", "E722", "UP035", "UP006", "UP045", "B905"]
 "core/ingestion.py" = ["E701", "E702", "F601", "UP035", "UP006"]
 "core/ai_validator.py" = ["E701", "E702", "E722"]
+"core/apie.py" = ["E701", "E702", "E722", "UP035", "UP006", "UP045", "B905", "F841"]
+"core/universal_validator.py" = ["E701", "E702", "E722", "UP035", "UP006", "UP045"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

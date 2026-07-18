@@ -11,11 +11,22 @@ interface Release { version: string; date: string; tag: string; items: string[] 
 
 const releases: Release[] = [
   {
+    version: "3.6", date: "July 2026", tag: "Detection",
+    items: [
+      "New detection engine — APIE (Adaptive Physics Intelligence Engine): a five-layer cascade (domain-invariant library → structural fingerprint → deterministic/AI-assisted test-plan orchestration → iterative precision filter bank → confidence calibration). The AI, when available, only parametrizes which checks to run and how strict to be — it never decides an exclusion directly; a deterministic filter bank does that.",
+      "Replaces the 3.5 universal conservation-law layer, which is now removed — verified, before swapping, that combining both actually performed slightly worse (more false positives without meaningfully better recall) than APIE alone.",
+      "Corruption detection recall: 97% (up from 71% two releases ago), precision 99%. Sensor drift recall 99.5%, measurement noise recall 84% (was 14.6% originally) — the hardest category by a wide margin, now much closer to solved.",
+      "Gradient-boosted trees: +21.2% MAPE vs corrupted (was -8.1% two releases ago, when the older detection layer excluded more data than the residual corruption cost).",
+      "MLP: +66.3% MAPE vs corrupted data.",
+      "AI review restored: a genuine second-pass analysis (not a quick verdict) using a larger reasoning model with the full data profile, allowed to take its time — typically 10-20s for a real request.",
+    ],
+  },
+  {
     version: "3.5", date: "July 2026", tag: "Detection",
     items: [
-      "New universal conservation-law detection layer: RANSAC-discovered physical invariants, non-dimensional coupling analysis, and state-space observation, run alongside the existing 470+ deterministic checks.",
-      "Corruption detection recall: 95% (up from 71%), precision 99% — verified with the same 5-seed, randomized-corruption benchmark harness as every other number on /benchmark. Sensor drift recall 99% (was 66%), measurement noise recall 70% (was 15%).",
-      "Gradient-boosted trees now see a real, positive improvement from SimAPI (+20% MAPE vs corrupted) — previously negative (-8%) because the older detection layers excluded more data than the residual corruption cost. The new layer is more precise about what it excludes.",
+      "New universal conservation-law detection layer: RANSAC-discovered physical invariants, non-dimensional coupling analysis, and state-space observation, run alongside the existing 470+ deterministic checks. (Superseded in 3.6 — see above.)",
+      "Corruption detection recall: 95% (up from 71%), precision 99%. Sensor drift recall 99% (was 66%), measurement noise recall 70% (was 15%).",
+      "Gradient-boosted trees saw a real, positive improvement from SimAPI (+20% MAPE vs corrupted) for the first time — previously negative (-8%) because the older detection layers excluded more data than the residual corruption cost.",
       "MLP improvement: 67% MAPE vs corrupted data (up from 58%).",
     ],
   },
