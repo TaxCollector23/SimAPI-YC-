@@ -330,18 +330,24 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                   physics_result: dict | None = None,
                   context: dict | None = None,
                   deep_ai: bool = False) -> None:
-    """
-    Background worker: run the AI check and fold its verdict into the job.
-
-    Default path is the fast quick check (validate_with_ai, ~2-18s, small
-    model) — a second opinion, not a bottleneck. The 5-phase orchestrator
-    (deep root-cause analysis, ~10-90s, larger model) only runs when the
-    caller explicitly opts in with deep_ai=true.
-    """
     try:
         with _JOBS_LOCK:
             if job_id in JOBS:
                 JOBS[job_id]["ai_running"] = True
+
+        # Build diagnosis context from APIE causal diagnosis engine
+        diagnosis_context = None
+        with _JOBS_LOCK:
+            apie_result = JOBS.get(job_id, {}).get("apie_result")
+        if apie_result and hasattr(apie_result, "diagnosis") and apie_result.diagnosis:
+            dx = apie_result.diagnosis
+            diagnosis_context = {
+                "primary_finding": dx.primary_diagnosis,
+                "pipeline_stage": dx.pipeline_stage,
+                "causal_chain": dx.causal_chain,
+                "investigation_steps": dx.investigation_steps,
+                "confidence": dx.confidence,
+            }
 
         if deep_ai and ORCHESTRATOR_ENABLED and physics_result:
             orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
@@ -349,8 +355,9 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
             ai_data["status"] = orch_result.verdict
             ai_data["anomaly_score"] = 1.0 - orch_result.overall_confidence
         else:
-            ai_report = validate_with_ai(df, sim_type, conditions, physics_issues)
+            ai_report = validate_with_ai(df, sim_type, conditions, physics_issues, diagnosis_context)
             ai_data = ai_dict(ai_report)
+
         ai_excl = _ai_exclusion_indices(df, ai_data.get("findings", []))
         with _JOBS_LOCK:
             if job_id not in JOBS:
@@ -358,7 +365,6 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
             physics = JOBS[job_id]["physics"]
             physics["ai"] = ai_data
             physics["ai_status"] = ai_data["status"]
-            # Fold AI-flagged trials into the exclusion set (physics ∪ ai).
             physics["ai_exclusions"] = ai_excl
             listed = {e["trial_index"] for e in physics["exclusions"]}
             new_ai = [i for i in ai_excl if i not in listed]
@@ -378,7 +384,7 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                 if ai_data.get("anomaly_score", 0) > 0.5:
                     physics["training_ready"] = False
         metrics.incr("ai_validations_total", status=ai_data["status"])
-    except Exception as e:  # noqa: BLE001 - defensive: worker must never crash silently
+    except Exception as e:
         log.exception("ai_worker_failed")
         with _JOBS_LOCK:
             if job_id in JOBS:
@@ -390,7 +396,6 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
         with _JOBS_LOCK:
             if job_id in JOBS:
                 JOBS[job_id]["ai_running"] = False
-
 
 # APIE singleton — loaded once at startup
 try:
