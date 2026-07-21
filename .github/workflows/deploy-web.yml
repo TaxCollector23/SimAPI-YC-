@@ -2,10 +2,6 @@ name: Deploy web + re-alias
 
 # Deploys the marketing site to Vercel production and re-points
 # sim-api.vercel.app at the fresh deployment on every push to main.
-#
-# Also redeploys the mirror projects (simapiplayground/status/quicklinks) —
-# same codebase, gated by the SIMAPI_SITE_MODE env var on each project (see
-# web/middleware.ts) — so they never drift out of sync with the main site.
 
 on:
   push:
@@ -20,7 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy-main:
+  deploy:
     runs-on: ubuntu-latest
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
@@ -52,43 +48,3 @@ jobs:
           vercel alias set "${{ steps.deploy.outputs.url }}" sim-api.vercel.app \
             --token="${{ secrets.VERCEL_TOKEN }}"
           echo "sim-api.vercel.app now points at ${{ steps.deploy.outputs.url }}"
-
-  deploy-mirrors:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - name: simapiplayground
-            project_id_secret: VERCEL_PROJECT_ID_PLAYGROUND
-          - name: simapistatus
-            project_id_secret: VERCEL_PROJECT_ID_STATUS
-          - name: simapiquicklinks
-            project_id_secret: VERCEL_PROJECT_ID_QUICKLINKS
-    env:
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets[matrix.project_id_secret] }}
-    # These mirror projects don't have "Root Directory" configured on Vercel's
-    # side (unlike the main sim-api project) -- run every step from web/ to
-    # match exactly what works via the local CLI (`cd web && vercel --prod`).
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install Vercel CLI
-        run: npm install -g vercel@latest
-
-      - name: Pull Vercel project settings
-        run: vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
-
-      - name: Build
-        run: vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
-
-      - name: Deploy to production
-        run: |
-          url=$(vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}")
-          echo "Deployed ${{ matrix.name }}: $url (production domain: ${{ matrix.name }}.vercel.app)"

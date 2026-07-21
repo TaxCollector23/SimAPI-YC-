@@ -1,0 +1,159 @@
+{
+  "domains": {
+    "drone_aero": {
+      "customer": "Drone / eVTOL companies",
+      "stakes": "Wrong efficiency model \u2192 wrong battery sizing \u2192 aircraft that drops from the sky",
+      "corruption_rate_pct": 2.29,
+      "method_comparison": {
+        "apie": {
+          "recall": 52.0,
+          "precision": 79.9
+        },
+        "iso_forest": {
+          "recall": 10.5,
+          "precision": 10.5
+        },
+        "zscore": {
+          "recall": 43.8,
+          "precision": 31.2
+        },
+        "iqr": {
+          "recall": 41.1,
+          "precision": 19.1
+        }
+      },
+      "per_category_recall": {
+        "solver_divergence": 100.0,
+        "unit_error": 100.0,
+        "sensor_drift": 1.0,
+        "cross_variable": 22.9,
+        "noise_spike": 100.0
+      },
+      "model_mape": {
+        "clean": 4.26,
+        "corrupt": 4.7811,
+        "apie": 4.4854,
+        "iso_forest": 30.8744
+      },
+      "apie_latency_ms": 1196.0
+    },
+    "actuator_fea": {
+      "customer": "Robotics hardware companies",
+      "stakes": "Wrong safety factor \u2192 under-designed joint \u2192 actuator failure in the field",
+      "corruption_rate_pct": 2.09,
+      "method_comparison": {
+        "apie": {
+          "recall": 39.2,
+          "precision": 41.5
+        },
+        "iso_forest": {
+          "recall": 19.5,
+          "precision": 19.5
+        },
+        "zscore": {
+          "recall": 43.2,
+          "precision": 11.2
+        },
+        "iqr": {
+          "recall": 44.0,
+          "precision": 9.2
+        }
+      },
+      "per_category_recall": {
+        "solver_divergence": 97.9,
+        "unit_error": 100.0,
+        "sensor_drift": 2.5,
+        "cross_variable": 2.8,
+        "noise_spike": 0.0
+      },
+      "model_mape": {
+        "clean": 7.208,
+        "corrupt": 7.8187,
+        "apie": 8.262,
+        "iso_forest": 8.0795
+      },
+      "apie_latency_ms": 1121.0
+    },
+    "motor_thermal": {
+      "customer": "EV / motor drive companies",
+      "stakes": "Wrong thermal model \u2192 insulation fails \u2192 motor fire \u2192 recall",
+      "corruption_rate_pct": 2.38,
+      "method_comparison": {
+        "apie": {
+          "recall": 41.6,
+          "precision": 35.5
+        },
+        "iso_forest": {
+          "recall": 4.0,
+          "precision": 4.0
+        },
+        "zscore": {
+          "recall": 44.4,
+          "precision": 23.6
+        },
+        "iqr": {
+          "recall": 47.6,
+          "precision": 33.5
+        }
+      },
+      "per_category_recall": {
+        "solver_divergence": 100.0,
+        "unit_error": 100.0,
+        "sensor_drift": 2.9,
+        "cross_variable": 1.4,
+        "noise_spike": 56.9
+      },
+      "model_mape": {
+        "clean": 2.8909,
+        "corrupt": 5.6871,
+        "apie": 3.1184,
+        "iso_forest": 5.7298
+      },
+      "apie_latency_ms": 1092.0
+    },
+    "joint_dynamics": {
+      "customer": "Industrial robot companies",
+      "stakes": "Wrong power model \u2192 undersized power supply \u2192 production line downtime",
+      "corruption_rate_pct": 2.1,
+      "method_comparison": {
+        "apie": {
+          "recall": 29.0,
+          "precision": 43.4
+        },
+        "iso_forest": {
+          "recall": 7.6,
+          "precision": 7.6
+        },
+        "zscore": {
+          "recall": 41.5,
+          "precision": 21.5
+        },
+        "iqr": {
+          "recall": 42.5,
+          "precision": 11.5
+        }
+      },
+      "per_category_recall": {
+        "solver_divergence": 100.0,
+        "unit_error": 41.7,
+        "sensor_drift": 1.2,
+        "cross_variable": 11.1,
+        "noise_spike": 0.0
+      },
+      "model_mape": {
+        "clean": 10.3319,
+        "corrupt": 12.0554,
+        "apie": 12.0455,
+        "iso_forest": 12.7976
+      },
+      "apie_latency_ms": 1155.0
+    }
+  },
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "n_train": 8000,
+  "n_test": 2000
+}

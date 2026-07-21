@@ -307,7 +307,7 @@ class PhysicsValidator:
             self._cross_variable, self._conservation_laws, self._dimensional,
             self._temporal, self._monotonicity, self._symmetry, self._scaling_laws,
             self._information_entropy, self._autocorrelation, self._stationarity,
-            self._layer_temporal_drift, self._layer_universal_conservation,
+            self._layer_temporal_drift,
             self._multicollinearity, self._regression_quality, self._signal_quality,
             self._sensor_fusion, self._boundary_conditions, self._convergence,
             self._energy_balance, self._phase_consistency, self._material_microstructure,
@@ -1253,50 +1253,6 @@ class PhysicsValidator:
                             E.append(TrialExclusion(int(idx), f"Distribution shift in {col} window {win_i + 1} ({z:.1f}σ)", "warning"))
             except Exception:
                 pass
-        return self._r(C, E)
-
-    def _layer_universal_conservation(self, data, sim, cond):
-        """
-        APIE v3.0 (core/apie.py) — a five-layer cascade: domain-invariant
-        library → structural fingerprint → deterministic/AI-assisted test-plan
-        orchestration → iterative precision filter bank → confidence
-        calibration. The AI (when available) only parametrizes which checks to
-        run and how strict to be — it never decides an exclusion directly; the
-        deterministic filter bank does that. Runs in deterministic mode with no
-        API key configured.
-
-        Verified against benchmark/run_benchmark.py's corruption ground truth
-        (5 seeds, randomized placement) before being wired in here: 99.0%
-        precision, 98.4% recall standalone — replaced the previous
-        core/universal_validator.py layer because the union of both performed
-        slightly *worse* than APIE alone (98.6%/98.2%), i.e. universal_validator
-        was adding false positives without meaningfully improving recall. See
-        benchmark/results.json for the current published, full-harness
-        (GBT/MLP MAPE) numbers — this docstring only covers the standalone
-        precision/recall check.
-        """
-        C, E = [], []
-        if len(data) < 10:
-            return self._r(C, E)
-        try:
-            from core.apie import AdaptivePhysicsIntelligenceEngine
-            domain = sim.value if hasattr(sim, "value") else str(sim)
-            result = AdaptivePhysicsIntelligenceEngine().validate(data.reset_index(drop=True), domain=domain, conditions=cond)
-            scores_by_row = {s.row_index: s for s in result.row_scores}
-            for corruption_type in {s.corruption_type for s in result.row_scores}:
-                C.append(PhysicsCheck(
-                    name=f"apie_{corruption_type}",
-                    status=ValidationStatus.WARNING, description=f"APIE flagged {corruption_type} anomalies",
-                    detail=f"Adaptive Physics Intelligence Engine detected {corruption_type}-pattern anomalies.",
-                    category="universal_conservation",
-                ))
-            for idx in result.excluded_indices:
-                if 0 <= int(idx) < len(data):
-                    score = scores_by_row.get(int(idx))
-                    reason = score.diagnosis if score else "APIE: physics anomaly detected"
-                    E.append(TrialExclusion(int(idx), reason, score.severity if score else "warning"))
-        except Exception:
-            pass
         return self._r(C, E)
 
     # ── Layer 16: Multicollinearity ───────────────────────────────────────────

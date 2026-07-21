@@ -1,0 +1,53 @@
+# SimAPI pre-commit hooks configuration
+# Add to your .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/simapi/simapi
+#       rev: v3.0.0
+#       hooks:
+#         - id: simapi-validate
+
+- id: simapi-validate
+  name: SimAPI Physics Validation
+  description: >
+    Validate simulation output files with physics-informed anomaly detection.
+    Catches solver divergence, unit errors, and physical law violations.
+  entry: simapi ci
+  language: python
+  additional_dependencies: [simapi, pandas, numpy, scikit-learn, scipy]
+  files: \.(csv|json)$
+  exclude: >
+    (?x)^(
+      package\.json|
+      package-lock\.json|
+      tsconfig\.json|
+      \.pre-commit-hooks\.yaml|
+      simapi\.json
+    )$
+  pass_filenames: true
+  always_run: false
+
+- id: simapi-validate-aerodynamics
+  name: SimAPI — Aerodynamics Validation
+  entry: simapi ci --domain aerodynamics
+  language: python
+  additional_dependencies: [simapi, pandas, numpy, scikit-learn, scipy]
+  files: (aero|cfd|wing|naca|drag|lift).*\.(csv|json)$
+  pass_filenames: true
+
+- id: simapi-validate-thermal
+  name: SimAPI — Thermal Validation
+  entry: simapi ci --domain motor_thermal
+  language: python
+  additional_dependencies: [simapi, pandas, numpy, scikit-learn, scipy]
+  files: (thermal|heat|motor|winding|temp).*\.(csv|json)$
+  pass_filenames: true
+
+- id: simapi-report
+  name: SimAPI — Generate Report
+  entry: simapi validate --report simapi-report.md --quiet
+  language: python
+  additional_dependencies: [simapi, pandas, numpy, scikit-learn, scipy]
+  files: \.(csv|json)$
+  always_run: false
+  pass_filenames: true

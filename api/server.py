@@ -61,7 +61,7 @@ app = FastAPI(
     version=API_VERSION,
     description=(
         "The CI/CD layer for engineering simulations. Dual-layer validation: "
-        "470+ deterministic physics checks across 21 domains plus optional LLM "
+        "280+ deterministic physics checks across 21 domains plus optional LLM "
         "reasoning."
     ),
     docs_url="/docs",
@@ -111,10 +111,9 @@ class ValidateRequest(BaseModel):
     job_id: str | None = Field(default=None, description="Optional caller-supplied tracking id.")
     run_ai: bool = Field(default=True, description="Run the async AI reasoning layer.")
     deep_ai: bool = Field(
-        default=True,
-        description="Use the 5-phase AI orchestrator (thorough root-cause analysis, allowed to take "
-        "its time -- typically 10-90s) instead of the quick sanity check (~2-18s, 'normal'/'not "
-        "normal' verdict). Runs as a background job either way; poll GET /v1/job/{id}/ai.",
+        default=False,
+        description="Use the 5-phase AI orchestrator (root-cause analysis, ~10-90s) instead of "
+        "the default quick sanity check (~2-18s, 'normal'/'not normal' verdict).",
     )
     geometry_description: str | None = Field(default=None, description="Free text geometry description.")
     what_are_you_measuring: str | None = Field(default=None, description="What the simulation is studying.")
@@ -393,6 +392,16 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                 JOBS[job_id]["ai_running"] = False
 
 
+# APIE singleton — loaded once at startup
+try:
+    from core.apie import AdaptivePhysicsIntelligenceEngine as _APIE
+    _apie_engine = _APIE()
+    APIE_AVAILABLE = True
+except Exception:
+    _apie_engine = None
+    APIE_AVAILABLE = False
+
+
 async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
     if len(req.data) > settings.max_rows:
         raise PayloadTooLargeError(
@@ -407,6 +416,121 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
     jid = req.job_id or uuid.uuid4().hex[:8]
     physics = validator.validate(df, req.simulation_type, req.conditions, jid)
     result = _serialize(physics, df)
+
+    # ── APIE v3.1: five-layer engine + causal diagnosis + cross-run memory ──
+    if APIE_AVAILABLE and _apie_engine is not None:
+        try:
+            domain_str = (req.simulation_type.value
+                          if hasattr(req.simulation_type, "value")
+                          else str(req.simulation_type))
+            conditions_dict = dict(req.conditions or {})
+
+            apie_result = _apie_engine.validate(
+                df, domain=domain_str, conditions=conditions_dict, risk_mode="precision",
+            )
+
+            # Cross-run history check
+            cross_run = None
+            config_key = req.job_id or domain_str
+            try:
+                from core.run_history import get_default_tracker
+                tracker = get_default_tracker()
+                cross_run = tracker.check_and_update(
+                    fingerprint=apie_result.fingerprint,
+                    config_key=config_key,
+                    n_excluded=len(apie_result.excluded_indices),
+                    n_flagged=len(apie_result.flagged_for_review),
+                    corruption_types=list(apie_result.test_plan.suspected_corruption_types.keys()),
+                )
+            except Exception:
+                pass
+
+            # Merge exclusions
+            physics_excl = set(result.get("excluded_indices", []))
+            apie_excl = apie_result.excluded_indices
+            merged_excl = sorted(physics_excl | apie_excl)
+            result["excluded_indices"] = merged_excl
+
+            # Build response
+            dx = apie_result.diagnosis
+            result["apie"] = {
+                "version": "3.1",
+                "domain_profile": apie_result.domain_profile,
+                "discovered_invariants": apie_result.discovered_invariants,
+                "ai_used": apie_result.ai_used,
+                "processing_ms": apie_result.processing_ms,
+                "checks_run": [c["check"] for c in apie_result.test_plan.checks],
+                "suspected_corruption": {
+                    k: round(v, 2)
+                    for k, v in apie_result.test_plan.suspected_corruption_types.items()
+                    if v > 0.2
+                },
+                "flagged_for_review": apie_result.flagged_for_review[:20],
+                "total_exclusions": len(merged_excl),
+                "n_flagged_review": len(apie_result.flagged_for_review),
+                # Causal diagnosis
+                "diagnosis": {
+                    "primary_finding": dx.matched_failure_modes[0]["failure_mode"] if dx and dx.matched_failure_modes else "none",
+                    "pipeline_stage": dx.pipeline_stage if dx else "unknown",
+                    "causal_chain": dx.causal_chain[:3] if dx else [],
+                    "investigation_steps": dx.investigation_steps[:3] if dx else [],
+                    "confidence": dx.confidence if dx else 0,
+                    "counterfactual_impact": (dx.counterfactual_impact[:300] if dx else ""),
+                } if dx else None,
+                # Cross-run context
+                "cross_run": {
+                    "n_historical_runs": cross_run.n_historical_runs,
+                    "run_is_outlier": cross_run.run_is_outlier,
+                    "config_match_score": cross_run.config_match_score,
+                    "anomalies": [
+                        {"kind": a.kind, "subject": a.subject,
+                         "sigma": a.sigma, "severity": a.severity,
+                         "interpretation": a.interpretation}
+                        for a in cross_run.anomalies[:5]
+                    ],
+                } if cross_run else None,
+            }
+        except Exception as _apie_err:
+            result["apie"] = {"error": str(_apie_err), "version": "3.1"}
+
+    # ── APIE v3 reasoning layer ──────────────────────────────────────────────
+    # Runs the five-layer Adaptive Physics Intelligence Engine on the same data.
+    # APIE catches corruption patterns v1 misses: unit errors in fixed parameters,
+    # product law violations (c=fλ), Hooke's law unit conversion, 2nd law violations,
+    # and temporal anomalies. Results merged into the existing exclusion list.
+    try:
+        from core.apie import AdaptivePhysicsIntelligenceEngine
+        _apie_engine = AdaptivePhysicsIntelligenceEngine()
+        apie_result = _apie_engine.validate(
+            df.copy(),
+            domain=req.simulation_type.value,
+            conditions=req.conditions or {},
+            risk_mode="precision",
+        )
+        # Merge APIE exclusions into the response
+        existing_excluded = {int(e["trial_index"]) for e in result.get("exclusions", [])}
+        for idx in apie_result.excluded_indices:
+            if idx not in existing_excluded and idx < len(df):
+                # Add as an APIE-sourced exclusion
+                scores_for_row = [s for s in apie_result.row_scores if s.row_index == idx]
+                diag = scores_for_row[0].diagnosis if scores_for_row else "APIE: physics anomaly detected"
+                result.setdefault("exclusions", []).append({
+                    "trial_index": int(idx),
+                    "exclusion_source": "apie_v3",
+                    "diagnosis": diag,
+                    "severity": scores_for_row[0].severity if scores_for_row else "warning",
+                })
+        # Add APIE metadata to response
+        result["apie_fingerprint"] = {
+            "domain_profile": apie_result.domain_profile,
+            "ai_used": apie_result.ai_used,
+            "ai_diagnosis": apie_result.ai_diagnosis,
+            "new_exclusions": len(apie_result.excluded_indices - existing_excluded),
+            "discovered_invariants": apie_result.discovered_invariants,
+            "processing_ms": apie_result.processing_ms,
+        }
+    except Exception as _apie_err:
+        result["apie_fingerprint"] = {"error": str(_apie_err)[:200]}
     result["columns_renamed"] = ingest_meta.get("columns_renamed", {})
     result["ai_status"] = "pending" if (req.run_ai and AI_ENABLED) else "disabled"
 
@@ -446,7 +570,7 @@ async def health() -> dict[str, Any]:
         "status": "ok",
         "version": API_VERSION,
         "environment": settings.environment,
-        "physics_checks": "470+",
+        "physics_checks": "280+",
         "domains": 21,
         "ai_enabled": AI_ENABLED,
         "ai_model": AI_MODEL,
@@ -515,13 +639,40 @@ async def validate_physics_only(req: ValidateRequest, _: str = Depends(caller_id
 async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_identity)):
     """
     Pre-flight validation: judge a mesh + solver + physics setup BEFORE it runs
-    and predict which output checks are likely to fail. Same issue-surfacing
-    contract as /v1/validate — only warnings and failures are returned.
+    and predict which output checks are likely to fail.
+
+    Now powered by APIE: mesh quality metrics are analyzed alongside any
+    historical run data to predict specific corruption types (solver divergence,
+    sensor drift, measurement noise) with confidence scores.
     """
     report = mesh_validator.validate(
         config=req.config, mesh_stats=req.mesh_stats,
         solver=req.solver, physics=req.physics, simulation_type=req.simulation_type,
     )
+
+    # APIE preflight corruption prediction
+    apie_preflight = {}
+    try:
+        from core.mesh_validator import predict_output_corruption
+        apie_preflight = predict_output_corruption(
+            simulation_type=req.simulation_type.value if hasattr(req.simulation_type, "value")
+                            else str(req.simulation_type),
+            mesh_stats=dict(req.mesh_stats or {}),
+            solver_settings=dict(req.solver or {}),
+        )
+    except Exception as e:
+        apie_preflight = {"error": str(e)}
+    # ── APIE pre-flight risk prediction ─────────────────────────────────────
+    try:
+        apie_preflight = predict_corruption_risks(
+            simulation_type=req.simulation_type.value if hasattr(req.simulation_type, 'value') else str(req.simulation_type),
+            mesh_stats=req.mesh_stats or {},
+            solver=req.solver or {},
+            physics=req.physics or {},
+        )
+    except Exception as _pf_err:
+        apie_preflight = {"error": str(_pf_err)[:200]}
+
     issues = [
         {
             "name": c.name,
@@ -535,20 +686,6 @@ async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_iden
         for c in report.issues
     ]
     metrics.incr("setup_validations_total", status=report.status)
-
-    # APIE-powered corruption-risk prediction: what's likely to go wrong in the
-    # OUTPUT, based on the domain's known invariants and this mesh/solver setup —
-    # before any output exists to check. Best-effort; never blocks the response.
-    apie_risk = None
-    try:
-        apie_risk = predict_corruption_risks(
-            simulation_type=req.simulation_type,
-            mesh_stats=req.mesh_stats or {},
-            solver={"name": req.solver}, physics={"name": req.physics},
-        )
-    except Exception as e:
-        apie_risk = {"error": str(e)[:200]}
-
     return _json_safe({
         "status": report.status,
         "all_checks": report.all_checks_count,
@@ -558,9 +695,9 @@ async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_iden
         "issues": issues,
         "predicted_error_types": report.predicted_error_types,
         "estimated_corruption_risk": report.estimated_corruption_risk,
+        "apie_preflight": apie_preflight,
         "recommendations": report.recommendations,
         "processing_ms": report.processing_ms,
-        "apie_risk_prediction": apie_risk,
     })
 
 
@@ -702,3 +839,78 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("server:app", host=settings.host, port=settings.port, reload=True)
+
+@app.post("/v1/compliance-report", tags=["compliance"])
+async def generate_compliance_report(
+    req: ValidateRequest,
+    regulatory_context: str = "default",
+    _: str = Depends(caller_identity),
+):
+    """
+    Generate a signed, tamper-evident compliance report for a dataset.
+
+    Returns a full compliance report including:
+    - SHA-256 hash of the dataset
+    - Complete validation results with causal diagnosis
+    - Chain of custody hash (proves report wasn't modified post-validation)
+    - Regulatory compliance assertions (ISO 26262, DO-178C, FDA 21 CFR Part 11)
+
+    This endpoint is designed for regulatory submission packages.
+    """
+    df, ingest_meta = ingester.ingest(req.data, format_hint="json")
+    domain_str = (req.simulation_type.value
+                  if hasattr(req.simulation_type, "value")
+                  else str(req.simulation_type))
+    conditions_dict = dict(req.conditions or {})
+
+    apie_result = None
+    if APIE_AVAILABLE and _apie_engine:
+        try:
+            apie_result = _apie_engine.validate(df, domain=domain_str, conditions=conditions_dict)
+        except Exception:
+            pass
+
+    if apie_result is None:
+        raise HTTPException(status_code=500, detail="APIE validation failed")
+
+    try:
+        from core.compliance import generate_compliance_report as _gen_report
+        from core.run_history import get_default_tracker
+        cross_run = get_default_tracker().check_and_update(
+            fingerprint=apie_result.fingerprint,
+            config_key=req.job_id or domain_str,
+            n_excluded=len(apie_result.excluded_indices),
+            n_flagged=len(apie_result.flagged_for_review),
+        )
+        report = _gen_report(
+            df=df, apie_result=apie_result,
+            diagnosis_result=apie_result.diagnosis,
+            cross_run_result=cross_run,
+            domain=domain_str,
+            regulatory_context=regulatory_context,
+        )
+        return JSONResponse(content={
+            "report_id": report.report_id,
+            "generated_at_utc": report.generated_at_utc,
+            "dataset_hash_sha256": report.dataset_hash_sha256,
+            "chain_of_custody_hash": report.chain_of_custody_hash,
+            "summary": {
+                "n_rows": report.dataset_n_rows,
+                "n_auto_removed": report.n_auto_removed,
+                "n_flagged_for_review": report.n_flagged_for_review,
+                "n_clean": report.n_clean_rows,
+                "status": "clean" if report.n_auto_removed == 0 else "corruptions_found",
+            },
+            "diagnosis": {
+                "primary_finding": report.primary_diagnosis,
+                "pipeline_stage": report.pipeline_stage,
+                "causal_chain": report.causal_chain,
+            },
+            "compliance_assertions": report.compliance_assertions,
+            "regulatory_standards": report.regulatory_standards,
+            "report_text": report.to_text(),
+            "report_json": report.to_json(),
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+

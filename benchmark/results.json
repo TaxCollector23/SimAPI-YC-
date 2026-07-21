@@ -6,44 +6,49 @@
     789,
     1337
   ],
+  "n_train": 9333,
+  "n_test": 4000,
   "corruption_rate_pct": 30.2,
-  "train_trials": 1400,
-  "test_trials": 600,
+  "ai_mode": "Deterministic (no key)",
+  "ai_used": false,
+  "ai_diagnoses": [],
+  "validation_ms_mean": 2835.6,
+  "validation_ms_std": 80.6,
   "models": {
     "gbt": {
-      "mape_improvement_mean": 21.19,
-      "mape_improvement_std": 9.3,
-      "mape_corrupted_mean": 0.56,
-      "mape_simapi_mean": 0.43,
-      "mape_naive_mean": 0.57,
-      "mape_clean_mean": 0.42,
-      "naive_improvement_mean": -4.04,
-      "simapi_vs_naive_mean": 24.4,
-      "interpretation": "Conservative estimate \u2014 GBT is robust to distribution shift. Primarily measures SimAPI's ability to remove outlier and unit-error corruptions."
+      "mape_improvement_mean": 0.66,
+      "mape_improvement_std": 2.15,
+      "mape_corrupted_mean": 0.4216,
+      "mape_simapi_mean": 0.4187,
+      "mape_naive_mean": 0.4382,
+      "mape_clean_mean": 0.3943,
+      "naive_improvement_mean": -3.98,
+      "simapi_vs_naive_mean": 4.46,
+      "interpretation": "GBT: robust to outliers. Measures net effect of clean training data vs reduced dataset size."
     },
     "mlp": {
-      "mape_improvement_mean": 66.33,
-      "mape_improvement_std": 11.81,
-      "mape_corrupted_mean": 8.16,
-      "mape_simapi_mean": 2.37,
-      "mape_naive_mean": 2.5,
-      "mape_clean_mean": 2.12,
-      "naive_improvement_mean": 64.54,
-      "simapi_vs_naive_mean": 5.05,
-      "interpretation": "Upper-bound estimate \u2014 MLP is sensitive to the sensor drift distribution shift that SimAPI removes. Represents real-world impact for deep learning training pipelines."
+      "mape_improvement_mean": 72.85,
+      "mape_improvement_std": 1.61,
+      "mape_corrupted_mean": 3.9435,
+      "mape_simapi_mean": 1.0736,
+      "mape_naive_mean": 1.1255,
+      "mape_clean_mean": 0.6812,
+      "naive_improvement_mean": 71.29,
+      "simapi_vs_naive_mean": 2.72,
+      "interpretation": "MLP: distribution-sensitive. Measures full impact of removing sensor drift and measurement noise."
     }
   },
   "exclusion": {
-    "precision": 0.987,
-    "recall": 0.974,
+    "precision": 0.9936,
+    "recall": 0.9396,
     "per_category_recall_pct": {
       "solver_divergence": 100.0,
       "unit_conversion": 100.0,
-      "sensor_drift": 99.5,
-      "copy_paste": 100.0,
+      "sensor_drift": 99.4,
+      "copy_paste": 99.1,
       "cross_variable": 100.0,
-      "measurement_noise": 84.0
+      "measurement_noise": 61.3
     }
   },
-  "elapsed_s": 376.4
+  "elapsed_s": 119.8
 }

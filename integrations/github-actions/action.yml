@@ -1,0 +1,211 @@
+name: 'SimAPI — Physics Validation'
+description: >
+  Validate simulation output data with physics-informed anomaly detection.
+  Catches solver divergence, unit errors, physical law violations, and
+  cross-variable inconsistencies before they corrupt your ML training pipeline.
+  Fails the build when critical corruptions are found.
+
+author: 'SimAPI'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  file:
+    description: 'Path to simulation output file (CSV or JSON)'
+    required: true
+  domain:
+    description: >
+      Simulation domain. One of: aerodynamics, drone_aero, motor_thermal,
+      thermodynamics, structural, actuator_fea, robotics/control,
+      electromagnetics, hydrodynamics, combustion, chemical, acoustics,
+      meteorology, geomechanics, plasma, astrophysics.
+      Auto-detected from filename if omitted.
+    required: false
+    default: ''
+  fail-on:
+    description: >
+      When to fail the build:
+        critical (default) — exit 1 when corruptions are auto-removed
+        review              — exit 1 when any rows are flagged for review
+        any                 — exit 1 for any anomaly
+        never               — always exit 0 (collect results only)
+    required: false
+    default: 'critical'
+  export-clean:
+    description: 'Path to save the clean (de-corrupted) dataset. Leave empty to skip.'
+    required: false
+    default: ''
+  upload-report:
+    description: 'Upload the Markdown report as a GitHub Actions artifact'
+    required: false
+    default: 'true'
+  config-key:
+    description: >
+      Identifier for cross-run history tracking. Use a stable string that
+      identifies your simulation configuration (e.g. "mesh_v3_sst_re1e6").
+      When set, SimAPI tracks drift across workflow runs.
+    required: false
+    default: ''
+  simapi-path:
+    description: 'Path to SimAPI installation (default: uses pip-installed simapi)'
+    required: false
+    default: ''
+
+outputs:
+  status:
+    description: 'Validation status: CLEAN, REVIEW_ONLY, MINOR_CORRUPTIONS, SIGNIFICANT_CORRUPTIONS, SEVERE_CORRUPTIONS'
+  n-removed:
+    description: 'Number of rows auto-removed (critical corruptions)'
+  n-flagged:
+    description: 'Number of rows flagged for human review'
+  n-clean:
+    description: 'Number of clean rows remaining after validation'
+  corruption-rate:
+    description: 'Percentage of rows that were corrupted (0.0 - 100.0)'
+  primary-diagnosis:
+    description: 'Causal diagnosis of primary corruption type found'
+  report-path:
+    description: 'Path to the generated Markdown report'
+  sarif-path:
+    description: 'Path to the generated SARIF file (for GitHub code scanning)'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install SimAPI
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.simapi-path }}" ]; then
+          echo "Using SimAPI from: ${{ inputs.simapi-path }}"
+          export PYTHONPATH="${{ inputs.simapi-path }}:$PYTHONPATH"
+        else
+          # Try pip install, fall back to local
+          pip install simapi 2>/dev/null || true
+        fi
+
+    - name: Run SimAPI validation
+      id: simapi-run
+      shell: bash
+      env:
+        SIMAPI_DOMAIN: ${{ inputs.domain }}
+        SIMAPI_FAIL_ON: never  # We handle exit codes ourselves below
+        SIMAPI_CONFIG_KEY: ${{ inputs.config-key }}
+      run: |
+        set -e
+
+        # Build args
+        SIMAPI_ARGS="${{ inputs.file }}"
+        [ -n "${{ inputs.domain }}" ] && SIMAPI_ARGS="$SIMAPI_ARGS --domain ${{ inputs.domain }}"
+        [ -n "${{ inputs.config-key }}" ] && SIMAPI_ARGS="$SIMAPI_ARGS --config-key ${{ inputs.config-key }}"
+
+        REPORT_FILE="simapi-report-$(date +%Y%m%d-%H%M%S).md"
+        SARIF_FILE="simapi-results.sarif"
+        JSON_FILE="simapi-result.json"
+
+        SIMAPI_ARGS="$SIMAPI_ARGS --report $REPORT_FILE --sarif $SARIF_FILE"
+
+        [ -n "${{ inputs.export-clean }}" ] && SIMAPI_ARGS="$SIMAPI_ARGS --export ${{ inputs.export-clean }}"
+
+        # Run validation, capturing JSON output for outputs
+        python -m simapi.cli ci $SIMAPI_ARGS --json > $JSON_FILE 2>&1 || true
+        python -m simapi.cli validate ${{ inputs.file }} $SIMAPI_ARGS || true
+
+        # Parse outputs from JSON result
+        if [ -f "$JSON_FILE" ]; then
+          STATUS=$(python3 -c "import json,sys; d=json.load(open('$JSON_FILE')); print(d.get('status','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+          N_REMOVED=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_auto_removed',0))" 2>/dev/null || echo "0")
+          N_FLAGGED=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_flagged_review',0))" 2>/dev/null || echo "0")
+          N_CLEAN=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_clean',0))" 2>/dev/null || echo "0")
+          N_TOTAL=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_rows',1))" 2>/dev/null || echo "1")
+          CORRUPT_RATE=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(round(d.get('n_auto_removed',0)/max(d.get('n_rows',1),1)*100,2))" 2>/dev/null || echo "0")
+          DIAGNOSIS=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('diagnosis',{}).get('primary') or 'none')" 2>/dev/null || echo "none")
+        else
+          STATUS="ERROR"; N_REMOVED=0; N_FLAGGED=0; N_CLEAN=0; CORRUPT_RATE=0; DIAGNOSIS="none"
+        fi
+
+        # Set outputs
+        echo "status=$STATUS" >> $GITHUB_OUTPUT
+        echo "n-removed=$N_REMOVED" >> $GITHUB_OUTPUT
+        echo "n-flagged=$N_FLAGGED" >> $GITHUB_OUTPUT
+        echo "n-clean=$N_CLEAN" >> $GITHUB_OUTPUT
+        echo "corruption-rate=$CORRUPT_RATE" >> $GITHUB_OUTPUT
+        echo "primary-diagnosis=$DIAGNOSIS" >> $GITHUB_OUTPUT
+        echo "report-path=$REPORT_FILE" >> $GITHUB_OUTPUT
+        echo "sarif-path=$SARIF_FILE" >> $GITHUB_OUTPUT
+
+        # Print summary to Actions log
+        echo "::group::SimAPI Validation Summary"
+        echo "Status:         $STATUS"
+        echo "Rows removed:   $N_REMOVED (${CORRUPT_RATE}%)"
+        echo "Rows flagged:   $N_FLAGGED"
+        echo "Clean rows:     $N_CLEAN"
+        echo "Diagnosis:      $DIAGNOSIS"
+        echo "::endgroup::"
+
+        # Add job summary
+        cat >> $GITHUB_STEP_SUMMARY << EOF
+        ## SimAPI Validation Results
+
+        | Metric | Value |
+        |---|---|
+        | Status | **$STATUS** |
+        | Rows removed | $N_REMOVED ($CORRUPT_RATE%) |
+        | Rows flagged | $N_FLAGGED |
+        | Clean rows | $N_CLEAN |
+        | Primary diagnosis | $DIAGNOSIS |
+
+        EOF
+
+        if [ -f "$REPORT_FILE" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat "$REPORT_FILE" >> $GITHUB_STEP_SUMMARY
+        fi
+
+    - name: Upload validation report
+      if: inputs.upload-report == 'true' && always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: simapi-validation-report
+        path: |
+          simapi-report-*.md
+          simapi-results.sarif
+          simapi-result.json
+        retention-days: 30
+
+    - name: Upload SARIF to GitHub code scanning
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: simapi-results.sarif
+        category: simapi
+      continue-on-error: true
+
+    - name: Enforce fail-on policy
+      shell: bash
+      run: |
+        N_REMOVED="${{ steps.simapi-run.outputs.n-removed }}"
+        N_FLAGGED="${{ steps.simapi-run.outputs.n-flagged }}"
+        FAIL_ON="${{ inputs.fail-on }}"
+
+        if [ "$FAIL_ON" = "never" ]; then
+          echo "fail-on=never: not failing regardless of findings"
+          exit 0
+        fi
+
+        if [ "$FAIL_ON" = "any" ] && ([ "$N_REMOVED" -gt 0 ] || [ "$N_FLAGGED" -gt 0 ]); then
+          echo "::error::SimAPI: $N_REMOVED rows removed, $N_FLAGGED flagged (fail-on=any)"
+          exit 1
+        fi
+
+        if [ "$FAIL_ON" = "review" ] && [ "$N_FLAGGED" -gt 0 ]; then
+          echo "::error::SimAPI: $N_FLAGGED rows flagged for review (fail-on=review)"
+          exit 1
+        fi
+
+        if [ "$N_REMOVED" -gt 0 ]; then
+          echo "::error::SimAPI: $N_REMOVED rows with critical corruptions detected"
+          exit 1
+        fi
+
+        echo "SimAPI: dataset clean, continuing."

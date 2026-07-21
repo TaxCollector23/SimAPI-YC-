@@ -1,0 +1,135 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# SimAPI — Example GitHub Actions Workflow
+# Drop this into .github/workflows/simapi.yml
+# ══════════════════════════════════════════════════════════════════════════════
+
+name: Validate Simulation Data
+
+on:
+  push:
+    paths:
+      - 'data/simulation/**'
+      - 'outputs/**/*.csv'
+      - 'outputs/**/*.json'
+  pull_request:
+    paths:
+      - 'data/simulation/**'
+  workflow_dispatch:
+    inputs:
+      file:
+        description: 'Simulation output file to validate'
+        required: false
+        default: 'outputs/latest.csv'
+
+jobs:
+  # ── Basic validation ────────────────────────────────────────────────────────
+  validate-simulation-output:
+    name: Physics Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install SimAPI
+        run: pip install simapi pandas numpy scikit-learn scipy
+
+      - name: Validate simulation output
+        id: validation
+        uses: simapi/simapi-action@v1
+        with:
+          file: ${{ github.event.inputs.file || 'outputs/latest.csv' }}
+          domain: aerodynamics           # or: motor_thermal, drone_aero, etc.
+          fail-on: critical              # critical | review | any | never
+          export-clean: outputs/clean.csv
+          config-key: 'aero-mesh-v3-sst' # stable ID for cross-run tracking
+          upload-report: true
+
+      - name: Print validation summary
+        run: |
+          echo "Status:     ${{ steps.validation.outputs.status }}"
+          echo "Removed:    ${{ steps.validation.outputs.n-removed }} rows"
+          echo "Flagged:    ${{ steps.validation.outputs.n-flagged }} rows"
+          echo "Clean:      ${{ steps.validation.outputs.n-clean }} rows"
+          echo "Diagnosis:  ${{ steps.validation.outputs.primary-diagnosis }}"
+
+      - name: Upload clean dataset
+        if: steps.validation.outputs.status == 'CLEAN' || steps.validation.outputs.n-clean > 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: clean-simulation-data
+          path: outputs/clean.csv
+
+  # ── Matrix validation (multiple domains/files) ──────────────────────────────
+  validate-multi-domain:
+    name: Multi-domain Validation
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - file: outputs/aero_output.csv
+            domain: aerodynamics
+            config_key: aero-cfd-v2
+          - file: outputs/thermal_output.csv
+            domain: motor_thermal
+            config_key: thermal-fem-v1
+          - file: outputs/propeller_output.csv
+            domain: drone_aero
+            config_key: drone-prop-v3
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install simapi pandas numpy scikit-learn scipy
+
+      - name: Validate ${{ matrix.domain }}
+        uses: simapi/simapi-action@v1
+        with:
+          file: ${{ matrix.file }}
+          domain: ${{ matrix.domain }}
+          config-key: ${{ matrix.config_key }}
+          fail-on: critical
+
+  # ── Nightly full validation with report ────────────────────────────────────
+  nightly-validation:
+    name: Nightly Full Report
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install simapi pandas numpy scikit-learn scipy
+
+      - name: Run full validation
+        run: |
+          simapi validate outputs/latest.csv \
+            --domain aerodynamics \
+            --report validation-report.md \
+            --export outputs/clean.csv \
+            --sarif simapi.sarif \
+            --config-key nightly-aero-v3
+
+      - name: Create GitHub issue if corruptions found
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('validation-report.md') 
+              ? fs.readFileSync('validation-report.md', 'utf8').slice(0, 60000)
+              : 'Report not generated.';
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 SimAPI: Simulation data corruption detected',
+              body: `## Validation Failed\n\nRun: ${context.runId}\n\n${report}`,
+              labels: ['simulation', 'data-quality', 'bug']
+            });

@@ -1,0 +1,104 @@
+{
+  "benchmark_version": "5.6",
+  "description": "SimAPI Physics-Informed + Manifold-Learned Validation",
+  "n_per_domain": 3000,
+  "n_test": 1000,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "domains": {
+    "drone_aero": {
+      "customer": "eVTOL / Drone Manufacturers",
+      "stakes": "Wrong efficiency model \u2192 wrong battery sizing \u2192 aircraft drops",
+      "corruption_rate_pct": 3.4,
+      "clean_fp_pct": 0.1,
+      "recall_pct": 36,
+      "precision_pct": 97,
+      "fp_on_corrupted_pct": 0.03,
+      "critical_recall": {
+        "solver_divergence": 100,
+        "unit_error": 100
+      },
+      "mape": {
+        "corrupt": 5.621,
+        "simapi": 4.315,
+        "recovery_pct": 23.2
+      },
+      "vs_isolation_forest": {
+        "mape_better_pct": 86.7
+      }
+    },
+    "motor_thermal": {
+      "customer": "EV / Motor Drive / Industrial Robotics",
+      "stakes": "Wrong thermal model \u2192 insulation fails \u2192 motor fire \u2192 recall",
+      "corruption_rate_pct": 3.9,
+      "clean_fp_pct": 0.52,
+      "recall_pct": 30,
+      "precision_pct": 68,
+      "fp_on_corrupted_pct": 0.54,
+      "critical_recall": {
+        "solver_divergence": 100,
+        "unit_error": 100
+      },
+      "mape": {
+        "corrupt": 5.564,
+        "simapi": 3.748,
+        "recovery_pct": 32.6
+      },
+      "vs_isolation_forest": {
+        "mape_better_pct": 34.9
+      }
+    },
+    "actuator_fea": {
+      "customer": "Robotics Hardware / Defense / Aerospace",
+      "stakes": "Wrong safety factor \u2192 field failure \u2192 liability",
+      "corruption_rate_pct": 3.6,
+      "clean_fp_pct": 0.04,
+      "recall_pct": 23,
+      "precision_pct": 93,
+      "fp_on_corrupted_pct": 0.04,
+      "critical_recall": {
+        "solver_divergence": 100,
+        "unit_error": 100
+      },
+      "mape": {
+        "corrupt": 10.37,
+        "simapi": 10.33,
+        "recovery_pct": 0.4
+      },
+      "vs_isolation_forest": {
+        "note": "Neutral MAPE; value is catastrophic-detection"
+      }
+    },
+    "joint_dynamics": {
+      "customer": "Industrial Robot OEMs",
+      "stakes": "Wrong power model \u2192 undersized supply \u2192 production downtime",
+      "corruption_rate_pct": 3.6,
+      "clean_fp_pct": 0.61,
+      "recall_pct": 23,
+      "precision_pct": 63,
+      "fp_on_corrupted_pct": 0.5,
+      "critical_recall": {
+        "solver_divergence": 100,
+        "unit_error": 100
+      },
+      "mape": {
+        "corrupt": 30.875,
+        "simapi": 27.908,
+        "recovery_pct": 9.6
+      },
+      "vs_isolation_forest": {
+        "mape_better_pct": 9.1
+      }
+    }
+  },
+  "honest_notes": {
+    "sensor_drift_detection": "1-5%: physically near-impossible without cross-run baseline",
+    "sensor_drift_solution": "RunHistoryTracker provides cross-run baseline for drift detection",
+    "column_agnostic": "Works on Cd/Re/Ma naming OR drag_coefficient/reynolds_number/mach_number",
+    "unknown_corruption": "Physics manifold catches corruptions not explicitly coded for",
+    "adversarial_grade": "C: easy attacks caught 100%, hard attacks (distribution-preserving) 8-20%"
+  }
+}

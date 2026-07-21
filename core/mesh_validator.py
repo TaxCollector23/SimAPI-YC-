@@ -664,6 +664,7 @@ def _models(config: dict[str, Any]) -> dict[str, bool]:
     return {}
 
 
+
 def predict_corruption_risks(
     simulation_type: str,
     mesh_stats: dict,
@@ -672,26 +673,31 @@ def predict_corruption_risks(
 ) -> dict:
     """
     APIE-powered pre-flight corruption risk prediction.
-
+    
     Based on the simulation domain, mesh quality, and solver settings,
     predicts which types of output corruption are most likely and which
-    APIE checks will matter most for post-run validation — before the
-    simulation has even produced output to check.
+    APIE checks will be most important for post-run validation.
+    
+    Returns:
+        dict with corruption risk scores and recommended checks.
     """
     try:
-        from core.apie import get_profile
+        from core.apie import get_profile, DOMAIN_LIBRARY
         profile = get_profile(simulation_type)
     except Exception:
         profile = None
 
-    risks: dict[str, float] = {}
-    recommendations: list[str] = []
-    required_checks: list[str] = []
+    risks = {}
+    recommendations = []
+    required_checks = []
 
+    # ── Mesh quality → corruption risk mapping ────────────────────────────────
     cell_count = mesh_stats.get("cell_count", 0)
     max_skewness = mesh_stats.get("max_skewness", 0.0)
+    max_aspect_ratio = mesh_stats.get("max_aspect_ratio", 1.0)
     nonortho_avg = mesh_stats.get("average_non_orthogonality", 0.0)
 
+    # High skewness → solver divergence risk
     if max_skewness > 0.8:
         risks["solver_divergence"] = min(1.0, (max_skewness - 0.8) / 0.2)
         recommendations.append(
@@ -700,6 +706,7 @@ def predict_corruption_risks(
         )
         required_checks.append("joint_skew_outlier")
 
+    # Coarse mesh → numerical diffusion → unit conversion errors undetected
     if cell_count < 50000 and "aerodynamics" in simulation_type.lower():
         risks["measurement_noise"] = 0.6
         recommendations.append(
@@ -708,6 +715,7 @@ def predict_corruption_risks(
         )
         required_checks.append("target_neighbor_anomaly")
 
+    # Non-orthogonality → pressure-velocity coupling errors
     if nonortho_avg > 40:
         risks["cross_variable"] = min(1.0, (nonortho_avg - 40) / 20)
         recommendations.append(
@@ -716,6 +724,7 @@ def predict_corruption_risks(
         )
         required_checks.append("ratio_invariant")
 
+    # ── Solver settings → unit conversion risk ────────────────────────────────
     solver_name = solver.get("name", "").lower()
     if any(s in solver_name for s in ["openfoam", "foam"]):
         risks["unit_conversion"] = 0.3
@@ -725,6 +734,7 @@ def predict_corruption_risks(
         )
         required_checks.append("ratio_invariant")
 
+    # ── Domain-specific invariants ────────────────────────────────────────────
     if profile:
         invariant_names = [inv.law_name for inv in profile.invariants]
         recommendations.append(
@@ -732,8 +742,11 @@ def predict_corruption_risks(
             f"physical invariants: {', '.join(invariant_names[:3])}. "
             "These will be checked automatically by APIE post-run."
         )
-        required_checks.extend(inv.check for inv in profile.invariants)
+        required_checks.extend(
+            inv.check for inv in profile.invariants
+        )
 
+    # ── Predicted error types for APIE focus ─────────────────────────────────
     risk_sorted = sorted(risks.items(), key=lambda x: -x[1])
     predicted_errors = [k for k, v in risk_sorted if v > 0.3]
 
@@ -750,3 +763,128 @@ def predict_corruption_risks(
 
 # Module-level singleton (mirrors PhysicsValidator usage in the server).
 mesh_validator = MeshValidator()
+
+
+def predict_output_corruption(
+    simulation_type: str,
+    mesh_stats: dict,
+    solver_settings: dict,
+    historical_data=None,
+) -> dict:
+    """
+    APIE-powered output corruption prediction for preflight validation.
+
+    Analyzes mesh quality metrics and solver settings to predict which
+    types of output corruption are most likely. When historical_data is
+    provided (a DataFrame of previous runs), computes a full fingerprint
+    and returns suspected corruption types with confidence scores.
+
+    Returns a dict with:
+      - suspected_corruption_types: {type: confidence}
+      - risk_factors: [human-readable explanations]
+      - recommended_checks: [check types to watch for in output]
+      - fingerprint (if historical_data provided)
+    """
+    try:
+        from core.apie import AdaptivePhysicsIntelligenceEngine, compute_fingerprint, get_profile
+    except ImportError:
+        return {"error": "APIE not available"}
+
+    risk_factors = []
+    suspected = {}
+    recommended = []
+
+    # ── Mesh-based risk factors ──────────────────────────────────────────────
+    max_skew = mesh_stats.get("max_skewness", 0)
+    max_ar = mesh_stats.get("max_aspect_ratio", 1)
+    non_ortho = mesh_stats.get("max_non_orthogonality", 0)
+
+    if max_skew > 0.85:
+        suspected["solver_divergence"] = max(suspected.get("solver_divergence", 0),
+                                              0.4 + (max_skew - 0.85) * 2)
+        risk_factors.append(
+            f"High mesh skewness ({max_skew:.2f} > 0.85) increases risk of "
+            "numerical divergence in output fields."
+        )
+        recommended.append("joint_skew_outlier")
+
+    if max_ar > 100:
+        suspected["sensor_drift"] = max(suspected.get("sensor_drift", 0),
+                                         min(0.8, (max_ar - 100) / 500))
+        risk_factors.append(
+            f"Extreme aspect ratio ({max_ar:.0f}) causes anisotropic error "
+            "propagation — output may drift from physical values near high-AR cells."
+        )
+        recommended.append("pairwise_ratio_drift")
+
+    if non_ortho > 70:
+        suspected["measurement_noise"] = max(suspected.get("measurement_noise", 0), 0.5)
+        risk_factors.append(
+            f"High non-orthogonality ({non_ortho:.0f}° > 70°) introduces "
+            "truncation error in gradient reconstruction — manifests as noise in "
+            "derived quantities."
+        )
+        recommended.append("target_neighbor_anomaly")
+
+    # ── Solver-based risk factors ────────────────────────────────────────────
+    cfl = solver_settings.get("cfl_number", 0)
+    if cfl > 0.8:
+        suspected["solver_divergence"] = max(suspected.get("solver_divergence", 0),
+                                              min(0.9, cfl))
+        risk_factors.append(
+            f"CFL = {cfl:.2f} > 0.8: explicit solver may produce Courant-unstable "
+            "spikes in velocity/pressure output."
+        )
+        recommended.append("temporal_coherence")
+
+    rel_tol = solver_settings.get("relative_tolerance", 1e-6)
+    if rel_tol > 1e-3:
+        suspected["measurement_noise"] = max(suspected.get("measurement_noise", 0), 0.6)
+        risk_factors.append(
+            f"Loose convergence tolerance ({rel_tol:.0e}) — output fields may not "
+            "be fully converged, producing run-to-run measurement noise."
+        )
+
+    # ── Domain profile context ───────────────────────────────────────────────
+    profile = get_profile(simulation_type)
+    if profile:
+        recommended.extend([
+            inv.check for inv in profile.invariants
+            if inv.check in ("ratio_invariant", "physical_bounds", "law_constraint")
+        ])
+
+    # ── Historical fingerprint (if data available) ───────────────────────────
+    fingerprint_summary = None
+    if historical_data is not None:
+        try:
+            import pandas as pd
+            if isinstance(historical_data, list):
+                historical_data = pd.DataFrame(historical_data)
+            fp = compute_fingerprint(historical_data, simulation_type, {})
+            # Merge fingerprint signals into suspected
+            for pair, (_, _, tau, p) in fp.ratio_signals.items():
+                if abs(tau) > 0.08 and p < 0.05:
+                    suspected["sensor_drift"] = max(
+                        suspected.get("sensor_drift", 0), min(1.0, abs(tau) * 5)
+                    )
+            if fp.copy_paste_fraction > 0.001:
+                suspected["copy_paste"] = min(1.0, fp.copy_paste_fraction * 200)
+            fingerprint_summary = {
+                "n_rows": fp.n_rows,
+                "discovered_invariants": fp.discovered_invariants,
+                "max_distribution_shift": fp.max_distribution_shift,
+                "copy_paste_fraction": fp.copy_paste_fraction,
+            }
+        except Exception:
+            pass
+
+    return {
+        "suspected_corruption_types": {
+            k: round(min(v, 1.0), 2) for k, v in suspected.items() if v > 0.1
+        },
+        "risk_factors": risk_factors,
+        "recommended_checks": list(dict.fromkeys(recommended)),  # deduplicated
+        "domain_profile": profile.canonical_name if profile else None,
+        "historical_fingerprint": fingerprint_summary,
+    }
+

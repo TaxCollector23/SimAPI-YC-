@@ -69,8 +69,8 @@ import json
 import os
 import time
 import urllib.request
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
@@ -95,7 +95,7 @@ USE_ANTHROPIC_DIRECT = bool(ANTHROPIC_API_KEY)
 class PhysicalInvariant:
     """A single physical law encoded as a parametric check spec."""
     check: str          # check name
-    params: dict        # check parameters
+    params: Dict        # check parameters
     priority: int       # 1=highest
     law_name: str       # human-readable law name
     domain: str         # which domain this belongs to
@@ -104,11 +104,11 @@ class PhysicalInvariant:
 class PhysicalProfile:
     domain: str
     canonical_name: str
-    invariants: list[PhysicalInvariant]
-    bounds: dict[str, tuple[float, float]]   # col → (min, max)
-    primary_target: list[str]                # likely target columns
-    primary_features: list[str]              # likely feature columns
-    corruption_signatures: dict[str, str]    # corruption_type → expected signal
+    invariants: List[PhysicalInvariant]
+    bounds: Dict[str, Tuple[float, float]]   # col → (min, max)
+    primary_target: List[str]                # likely target columns
+    primary_features: List[str]              # likely feature columns
+    corruption_signatures: Dict[str, str]    # corruption_type → expected signal
 
 # Physical constants
 _C = {
@@ -118,9 +118,9 @@ _C = {
     'R_gas': 8.314, 'N_a': 6.022e23, 'Z0': 376.73,
 }
 
-def _build_domain_library() -> dict[str, PhysicalProfile]:
+def _build_domain_library() -> Dict[str, PhysicalProfile]:
     """Complete physical invariant library for all supported domains."""
-    lib: dict[str, PhysicalProfile] = {}
+    lib: Dict[str, PhysicalProfile] = {}
 
     # ── AERODYNAMICS / CFD ───────────────────────────────────────────────────
     aero_inv = [
@@ -183,15 +183,28 @@ def _build_domain_library() -> dict[str, PhysicalProfile]:
         PhysicalInvariant('physical_bounds', {
             'bounds': {
                 'poisson_ratio': (-1.0, 0.5),
-                'safety_factor': (0.01, 1000),
-                'strain': (-1.0, 1.0),
+                'safety_factor': (0.001, 1000),
+                'strain': (-0.1, 0.1),
                 'void_fraction': (0.0, 1.0),
                 'fatigue_life': (0, 1e12),
+                'wall_thickness': (1e-6, 1.0),
+                'outer_diameter': (1e-5, 10.0),
+                'shaft_length': (1e-4, 100.0),
+                'motor_efficiency': (0.0, 1.0),
+                'derating_factor': (0.0, 1.0),
+                # Stress limits: ultimate tensile strength ~2 GPa for structural metals
+                # Bending and axial can be negative (tension vs compression)
+                'von_mises_stress': (0, 2e9),      # always positive (quadratic)
+                'bending_stress': (-2e9, 2e9),      # can be negative (tension side)
+                'axial_stress': (-2e9, 2e9),         # compression = negative
+                'shear_stress': (-1.2e9, 1.2e9),    # can be in either direction
+                'stress': (-2e9, 2e9),
             }
-        }, 1, 'Structural bounds', 'structural'),
+        }, 1, 'Structural bounds (geometric + stress limits)', 'structural'),
     ]
-    for dk in ['structural', 'structural/fea', 'fea', 'biomechanics', 'geomechanics',
-               'tribology', 'fracture', 'materials', 'materials_science']:
+    for dk in ['structural', 'structural/fea', 'fea', 'biomechanics',
+               'tribology', 'fracture', 'materials', 'materials_science',
+               'actuator_fea', 'robot_structure', 'joint_housing']:
         lib[dk] = PhysicalProfile(
             domain=dk, canonical_name='structural',
             invariants=struct_inv,
@@ -210,14 +223,26 @@ def _build_domain_library() -> dict[str, PhysicalProfile]:
     thermo_inv = [
         PhysicalInvariant('physical_bounds', {
             'bounds': {
-                'temperature': (0.01, 100000),
+                'temperature': (0.01, 5000),
+                'temperature_hot': (0.01, 5000),
+                'temperature_cold': (0.01, 1000),
+                'temperature_rise': (0, 3000),
+                'winding_temperature': (0.01, 2000),
+                'case_temperature': (0.01, 1500),
+                'junction_temperature': (0.01, 2000),
+                'ambient_temperature': (173, 373),     # -100°C to 100°C realistic range
+                'rms_current': (0, 1000),             # A, motor current
+                'winding_resistance': (0.001, 100),   # Ω
+                'copper_loss': (0, 5e4),             # W, max for small/mid motors
+                'total_loss': (0, 6e4),
                 'thermal_efficiency': (0.0, 1.0),
                 'carnot_efficiency': (0.0, 1.0),
+                'derating_factor': (0.0, 1.0),
                 'emissivity': (0.0, 1.0),
                 'absorptivity': (0.0, 1.0),
                 'entropy_generation': (0.0, 1e9),
             }
-        }, 1, 'Thermodynamic bounds', 'thermodynamics'),
+        }, 1, 'Thermodynamic bounds (all temperature variants)', 'thermodynamics'),
         PhysicalInvariant('law_constraint', {
             'law': 'second_law',
             'col_a': 'thermal_efficiency',
@@ -234,9 +259,14 @@ def _build_domain_library() -> dict[str, PhysicalProfile]:
             invariants=thermo_inv,
             bounds={'temperature': (0.01, 1e5), 'thermal_efficiency': (0, 1),
                     'entropy_generation': (0, 1e9)},
-            primary_target=['heat_flux', 'temperature', 'thermal_efficiency'],
+            primary_target=['winding_temperature', 'heat_flux', 'temperature',
+                            'thermal_efficiency', 'temperature_rise', 'case_temperature',
+                            'junction_temperature', 'surface_temperature'],
             primary_features=['temperature_hot', 'temperature_cold', 'heat_transfer_coefficient',
-                              'area', 'thermal_conductivity', 'prandtl_number'],
+                              'area', 'thermal_conductivity', 'prandtl_number',
+                              # Motor thermal fields (when present)
+                              'rms_current', 'ambient_temperature',
+                              'rth_winding_case', 'rth_case_ambient'],
             corruption_signatures={
                 'solver_divergence': 'temperature/heat_flux joint kurtosis',
                 'unit_conversion': 'T negative (Kelvin vs Celsius)',
@@ -336,22 +366,45 @@ def _build_domain_library() -> dict[str, PhysicalProfile]:
             'col_a': 'power_consumption', 'col_b': 'joint_torque*joint_velocity',
             'baseline': 1.0, 'mad_scale': 0.05, 'tol_sigma': 3.5,
         }, 1, 'P = τω (power = torque × speed)', 'robotics'),
+        # Same law with joint_dynamics column names (mechanical_power, commanded_torque)
+        PhysicalInvariant('ratio_invariant', {
+            'col_a': 'mechanical_power', 'col_b': 'commanded_torque*joint_velocity',
+            'baseline': 1.0, 'mad_scale': 0.08, 'tol_sigma': 3.5,
+        }, 1, 'P_mech = τ_cmd × ω (joint dynamics energy balance)', 'robotics'),
         PhysicalInvariant('physical_bounds', {
             'bounds': {
                 'joint_position': (-4 * 3.14159, 4 * 3.14159),
                 'joint_velocity': (-500, 500),
-                'joint_acceleration': (-5000, 5000),
-                'motor_efficiency': (0, 1),
+                # joint_acceleration can be very high for small-inertia joints:
+                # alpha = (tau - b*omega)/J, with J=0.01 → alpha up to 30,000 rad/s²
+                # Use wide bound; only catches extreme solver blowup
+                'joint_acceleration': (-1e6, 1e6),
+                'motor_efficiency': (0.0, 1.0),
+                # Robot joint power: tau_max=300Nm × omega_max=30rad/s = 9kW
+                # Anything above 50kW is a solver blowup (164kW corruption = caught)
+                'mechanical_power': (-5e4, 5e4),
+                'electrical_power': (-5e4, 5e4),
+                'dissipated_power': (0, 1e5),
+                'commanded_torque': (-10000, 10000),
+                'propulsive_efficiency': (0.0, 1.0),
+                'thrust_coefficient': (0.0, 0.3),
+                'power_coefficient': (0.0, 0.2),
+                'figure_of_merit': (0.0, 10.0),
             }
-        }, 1, 'Robotics bounds', 'robotics'),
+        }, 1, 'Robotics + drone bounds', 'robotics'),
     ]
     for dk in ['robotics', 'robotics/control', 'control_systems', 'mechatronics']:
         lib[dk] = PhysicalProfile(
             domain=dk, canonical_name='robotics',
             invariants=robot_inv,
             bounds={'joint_velocity': (-500, 500), 'motor_efficiency': (0, 1)},
-            primary_target=['joint_torque', 'power_consumption', 'end_effector_force'],
-            primary_features=['joint_position', 'joint_velocity', 'joint_acceleration', 'load_mass'],
+            primary_target=['electrical_power', 'mechanical_power', 'power_consumption',
+                            'joint_torque', 'end_effector_force', 'commanded_torque'],
+            primary_features=['joint_position', 'joint_velocity', 'joint_acceleration',
+                              'load_mass', 'commanded_torque', 'link_inertia',
+                              'damping_coefficient', 'motor_efficiency',
+                              # Joint dynamics columns
+                              'dissipated_power', 'joint_inertia'],
             corruption_signatures={'solver_divergence': 'P ≠ τω', 'sensor_drift': 'joint encoder drift'}
         )
 
@@ -530,6 +583,52 @@ def _build_domain_library() -> dict[str, PhysicalProfile]:
         corruption_signatures={'solver_divergence': 'multi-field kurtosis spike'}
     )
 
+    # ── DRONE / PROPELLER / ROTOR AERODYNAMICS ───────────────────────────────
+    drone_inv = [
+        PhysicalInvariant('physical_bounds', {
+            'bounds': {
+                'thrust_coefficient': (0.0, 0.30),      # CT > 0.3 is physically impossible
+                'power_coefficient': (0.003, 0.20),     # CP near-zero = solver divergence
+                'propulsive_efficiency': (0.0, 0.95),   # η > 0.95 is thermodynamically implausible
+                'figure_of_merit': (0.0, 1.05),  # propeller FOM, slightly >1 can occur
+                'advance_ratio': (0.0, 2.0),            # J > 2: windmilling, not propulsion
+                'rpm': (0, 100000),                     # mechanical limit
+                'pitch_angle': (-20, 60),               # physical blade angle range
+                'freestream_velocity': (0, 300),
+            }
+        }, 1, 'Propeller aerodynamic bounds', 'drone_aero'),
+        # CT/CP varies enormously with advance ratio J -- NOT a tight ratio invariant.
+        # Physical bounds on CT and CP individually are the correct check.
+        PhysicalInvariant('law_constraint', {
+            'law': 'ct_cp_efficiency',
+            'col_a': 'propulsive_efficiency', 'col_b': 'thrust_coefficient',
+            'relation': 'a <= 1',  # efficiency bounded
+            'tol': 0.01,
+        }, 1, 'η ≤ 1 (thermodynamics)', 'drone_aero'),
+    ]
+    for dk in ['drone_aero', 'propeller', 'rotor', 'eVTOL', 'evtol', 'uav_aero']:
+        lib[dk] = PhysicalProfile(
+            domain=dk, canonical_name='drone_aero',
+            invariants=drone_inv,
+            bounds={'thrust_coefficient': (0, 0.30), 'propulsive_efficiency': (0, 0.95),
+                    'advance_ratio': (0, 2.0), 'rpm': (0, 100000)},
+            primary_target=['propulsive_efficiency', 'thrust_coefficient', 'power_coefficient',
+                            'thrust', 'torque', 'figure_of_merit'],
+            primary_features=['rpm', 'freestream_velocity', 'pitch_angle',
+                              'advance_ratio', 'density', 'power_coefficient'],
+            corruption_signatures={
+                'solver_divergence': 'CT > 0.3 or CP near-zero',
+                'unit_conversion': 'RPM × 60 (rpm → rps confusion)',
+                'sensor_drift': 'freestream_velocity drift',
+                'cross_variable': 'advance_ratio inconsistent with rpm/velocity',
+            }
+        )
+
+    # ── MOTOR THERMAL (alias for thermodynamics with winding-specific profile) ──
+    # Already covered by thermodynamics, but add specific aliases
+    for dk in ['motor_thermal', 'thermal_motor', 'motor_drive_thermal']:
+        lib[dk] = lib.get('thermodynamics', list(lib.values())[0])
+
     # ── ENHANCE EXISTING: EM physical_bounds for electric_field ──────────────
     # Add electric_field bounds so solver divergence (E=1e13) is caught
     for dk in ['electromagnetics', 'em', 'electromagnetic', 'magnetism']:
@@ -566,7 +665,7 @@ def _build_domain_library() -> dict[str, PhysicalProfile]:
 
 DOMAIN_LIBRARY = _build_domain_library()
 
-def get_profile(domain: str) -> PhysicalProfile | None:
+def get_profile(domain: str) -> Optional[PhysicalProfile]:
     d = domain.lower().strip()
     return DOMAIN_LIBRARY.get(d) or DOMAIN_LIBRARY.get(d.replace(' ', '_')) or None
 
@@ -577,13 +676,13 @@ def get_profile(domain: str) -> PhysicalProfile | None:
 
 @dataclass
 class CorruptionFingerprint:
-    n_rows: int; n_cols: int; columns: list[str]
-    ratio_signals: dict[str, tuple]; col_stats: dict[str, tuple]
-    strong_correlations: dict[str, float]; lag1_autocorr: dict[str, float]
+    n_rows: int; n_cols: int; columns: List[str]
+    ratio_signals: Dict[str, Tuple]; col_stats: Dict[str, Tuple]
+    strong_correlations: Dict[str, float]; lag1_autocorr: Dict[str, float]
     copy_paste_fraction: float; max_distribution_shift: float
     residual_entropy: float; missing_fraction: float
-    constant_columns: list[str]; domain: str
-    discovered_invariants: dict[str, float]
+    constant_columns: List[str]; domain: str
+    discovered_invariants: Dict[str, float]
 
     def to_json(self) -> str:
         d = {
@@ -626,10 +725,10 @@ def _ransac_ratio(a: np.ndarray, b: np.ndarray, n_iter=100, thr=0.15):
     return (best_k, max(mad, abs(best_k) * 0.001, 1e-12))
 
 def compute_fingerprint(data: pd.DataFrame, domain: str,
-                        conditions: dict | None = None) -> CorruptionFingerprint:
+                        conditions: Optional[Dict] = None) -> CorruptionFingerprint:
     cols = list(data.select_dtypes(include=[np.number]).columns)
     n = len(data)
-    col_stats: dict[str, tuple] = {}
+    col_stats: Dict[str, Tuple] = {}
     with np.errstate(all="ignore"):
         for col in cols[:20]:
             s = data[col].dropna().values.astype(float)
@@ -653,8 +752,8 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
         ("power_consumption","joint_torque"), ("heat_flux","temperature"),
         ("electron_density","debye_length"),
     ]
-    ratio_signals: dict[str, tuple] = {}
-    discovered: dict[str, float] = {}
+    ratio_signals: Dict[str, Tuple] = {}
+    discovered: Dict[str, float] = {}
     for ca, cb in ratio_pairs:
         if ca not in data.columns or cb not in data.columns: continue
         r = _ransac_ratio(data[ca].values.astype(float), data[cb].values.astype(float))
@@ -675,7 +774,7 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
         if r: discovered["P/(rho*T)"] = r[0]
 
     # Strong correlations
-    strong_corr: dict[str, float] = {}
+    strong_corr: Dict[str, float] = {}
     if len(cols) >= 2:
         try:
             samp = data[cols[:15]].sample(min(n, 2000), random_state=42) if n > 2000 else data[cols[:15]]
@@ -690,7 +789,7 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
     # Lag-1 autocorrelation — computed on WINSORIZED data to prevent
     # consecutive large outliers (e.g., solver divergence plateau) from creating
     # artificial autocorrelation that falsely triggers the temporal coherence check.
-    lag1: dict[str, float] = {}
+    lag1: Dict[str, float] = {}
     for col in cols[:12]:
         s = data[col].dropna().values.astype(float)
         if len(s) > 10:
@@ -806,17 +905,17 @@ Respond ONLY with valid JSON:
 
 @dataclass
 class TestPlan:
-    checks: list[dict[str, Any]]
-    target_columns: list[str]
-    feature_columns: list[str]
-    suspected_corruption_types: dict[str, float]
+    checks: List[Dict[str, Any]]
+    target_columns: List[str]
+    feature_columns: List[str]
+    suspected_corruption_types: Dict[str, float]
     ensemble_threshold_sigma: float
     ratio_threshold_sigma: float
     ai_diagnosis: str
     ai_used: bool
 
 def _build_plan_from_profile(profile: PhysicalProfile,
-                              fp: CorruptionFingerprint) -> list[dict]:
+                              fp: CorruptionFingerprint) -> List[Dict]:
     """Convert domain invariants to concrete check specs."""
     checks = []
     cols = set(fp.columns)
@@ -858,10 +957,10 @@ def _build_plan_from_profile(profile: PhysicalProfile,
     return checks
 
 def _deterministic_test_plan(fp: CorruptionFingerprint,
-                              profile: PhysicalProfile | None) -> TestPlan:
+                              profile: Optional[PhysicalProfile]) -> TestPlan:
     """Precision-calibrated deterministic orchestrator."""
-    checks: list[dict] = []
-    suspected: dict[str, float] = {k: 0.0 for k in [
+    checks: List[Dict] = []
+    suspected: Dict[str, float] = {k: 0.0 for k in [
         "sensor_drift","copy_paste","unit_conversion",
         "measurement_noise","solver_divergence","cross_variable",
     ]}
@@ -903,15 +1002,22 @@ def _deterministic_test_plan(fp: CorruptionFingerprint,
                                       'early_fraction': early_frac,
                                       'threshold_sigma': 2.0 if abs(tau) > 0.15 else 2.5}})
 
-    # ── Gas constant (universal unit error detector) ───────────────────────
-    if "P/(rho*T)" in fp.discovered_invariants:
+    # ── Gas constant (ideal-gas domains only) ──────────────────────────────
+    # Only run P/(ρT) check for domains where ideal gas law applies.
+    # In multiphysics, structural, EM etc., P, ρ, T are independent variables
+    # whose product ratio is meaningless -- guaranteed FPs.
+    _GAS_LAW_DOMAINS = {
+        'aerodynamics','cfd','aeroelasticity','hydrodynamics','fluid_dynamics',
+        'cfd_hydro','multiphase','meteorology','combustion','thermodynamics',
+        'heat_transfer','cryogenics','cryogeny','plasma','nuclear','fusion',
+        'chemical','chemical_reactor','catalysis',
+    }
+    if ("P/(rho*T)" in fp.discovered_invariants and
+            fp.domain.lower() in _GAS_LAW_DOMAINS):
         R = fp.discovered_invariants["P/(rho*T)"]
         if {"pressure","density","temperature"}.issubset(cols):
             already = any(c['params'].get('col_b') == 'density*temperature' for c in checks)
-            # Only apply P/(ρT) check when baseline is within reasonable range of
-            # a known gas constant (50 to 3000 J/kg/K). Prevents FPs on multiphysics
-            # datasets where P, ρ, T are not from the same gas system.
-            if not already and (50 < abs(R) < 3000):
+            if not already:
                 checks.append({'check': 'ratio_invariant', 'priority': 1,
                                'params': {'col_a': 'pressure', 'col_b': 'density*temperature',
                                           'baseline': R, 'mad_scale': abs(R)*0.015,
@@ -952,8 +1058,14 @@ def _deterministic_test_plan(fp: CorruptionFingerprint,
                    'params': {'cv_threshold': 0.01, 'n_sigma': 8.0}})
 
     # ── Joint skew outlier ─────────────────────────────────────────────────
+    # Ratio-derived columns have extreme kurtosis by design (yield/stress, v/(n*D))
+    # These make 2D Mahalanobis fail catastrophically → exclude from joint_skew
+    _JSKIP_COLS = {'safety_factor', 'advance_ratio', 'figure_of_merit',
+                   'propulsive_efficiency', 'motor_efficiency', 'thermal_efficiency',
+                   'carnot_efficiency', 'conversion', 'selectivity'}
     high_kurt = [(c, st) for c,st in fp.col_stats.items()
-                 if st[3] > 8 and st[5] > fp.n_rows*0.015]
+                 if st[3] > 8 and st[5] > fp.n_rows*0.015
+                 and c not in _JSKIP_COLS]
     if len(high_kurt) >= 2:
         hk = [c for c,_ in high_kurt[:2]]
         # Only add joint_skew when the two columns are actually correlated
@@ -967,12 +1079,17 @@ def _deterministic_test_plan(fp: CorruptionFingerprint,
             suspected["solver_divergence"] = max(suspected["solver_divergence"], 0.9)
             already = any(c['check']=='joint_skew_outlier' for c in checks)
             if not already:
+                # Use higher threshold for very heavy-tailed columns (k>15)
+                # to prevent 2D Mahalanobis FPs on naturally extreme distributions
+                _jk1 = fp.col_stats.get(hk[0], (0,0,0,3,0,0))[3]
+                _jk2 = fp.col_stats.get(hk[1], (0,0,0,3,0,0))[3]
+                _jsk_thr = 7.0 if max(_jk1, _jk2) > 15 else 5.5
                 checks.append({'check': 'joint_skew_outlier', 'priority': 2,
                                'params': {'col_a': hk[0], 'col_b': hk[1],
                                           'threshold_sigma': 5.5}})
 
     # ── Ensemble predictor ─────────────────────────────────────────────────
-    target_col = None; feature_cols: list[str] = []
+    target_col = None; feature_cols: List[str] = []
     candidates = (profile.primary_target if profile else []) + [
         "drag_coefficient","lift_coefficient","stress","von_mises_stress",
         "temperature","pressure","heat_flux","electric_field",
@@ -991,19 +1108,37 @@ def _deterministic_test_plan(fp: CorruptionFingerprint,
         suspected["measurement_noise"] = min(0.8, abs(tgt_kurt)/25)
         if tgt_kurt > 5: suspected["solver_divergence"] = max(suspected["solver_divergence"], 0.8)
         thr = max(3.0, 3.5 - min(0.3, tgt_kurt/50))
-        checks.append({'check': 'ensemble_predictor', 'priority': 3,
-                       'params': {'target': target_col, 'features': feature_cols,
-                                  'threshold_sigma': thr, 'poly_degrees': [1, 2]}})
+        # Nonlinear targets where ensemble (linear Ridge) causes contamination FPs:
+        # At 2-4% corruption, the corrupted rows inflate ensemble residuals on clean rows.
+        # Targets with known physical bounds are better served by bounds checks.
+        _NONLINEAR_SKIP = {
+            'propulsive_efficiency',   # bounded by physics (η<0.95)
+            'winding_temperature',     # extreme values caught by bounds (>2000K)
+            'von_mises_stress',        # bounded by material strength (~2GPa max)
+            'safety_factor',           # ratio target: extreme tail, contamination-prone
+        }
+        if target_col not in _NONLINEAR_SKIP:
+            checks.append({'check': 'ensemble_predictor', 'priority': 3,
+                           'params': {'target': target_col, 'features': feature_cols,
+                                      'threshold_sigma': thr, 'poly_degrees': [1, 2]}})
         # Best correlated feature for neighborhood anomaly
         best_feat = feature_cols[0]; best_corr = 0.0
         for pk, rv in fp.strong_correlations.items():
             a, b = pk.split("|")
             if (a == target_col or b == target_col) and abs(rv) > best_corr:
                 best_feat = b if a == target_col else a; best_corr = abs(rv)
-        window = max(40, min(80, fp.n_rows//150))
-        checks.append({'check': 'target_neighbor_anomaly', 'priority': 4,
-                       'params': {'target': target_col, 'feature': best_feat,
-                                  'window': window, 'threshold_sigma': 4.0}})
+        # Skip neighbor check for domains where heavy-tailed targets cause
+        # contamination FPs: corrupted extreme rows flag adjacent clean rows.
+        # Structural FEA (von_mises, safety_factor) and nonlinear targets
+        # have this problem. Bounds checks are safer for these domains.
+        _NEIGHBOR_SKIP_DOMAINS = {'structural', 'actuator_fea', 'geomechanics', 'fea'}
+        _NEIGHBOR_SKIP_TARGETS = {'von_mises_stress', 'safety_factor', 'bending_stress'}
+        _skip_neighbor = (profile and profile.canonical_name in _NEIGHBOR_SKIP_DOMAINS) or                           (target_col in _NEIGHBOR_SKIP_TARGETS)
+        if not _skip_neighbor:
+            window = max(40, min(80, fp.n_rows//150))
+            checks.append({'check': 'target_neighbor_anomaly', 'priority': 4,
+                           'params': {'target': target_col, 'feature': best_feat,
+                                      'window': window, 'threshold_sigma': 4.0}})
 
     return TestPlan(
         checks=checks, target_columns=[target_col] if target_col else [],
@@ -1012,7 +1147,7 @@ def _deterministic_test_plan(fp: CorruptionFingerprint,
         ai_diagnosis="", ai_used=False,
     )
 
-def _try_ai(fp: CorruptionFingerprint, conditions: dict | None) -> TestPlan | None:
+def _try_ai(fp: CorruptionFingerprint, conditions: Optional[Dict]) -> Optional[TestPlan]:
     """Try AI (Anthropic direct, then OpenRouter). Returns None on failure."""
     msg = fp.to_json() + (f"\n\nConditions: {json.dumps(conditions)}" if conditions else "")
 
@@ -1074,8 +1209,8 @@ def _parse_plan(j: dict, fp: CorruptionFingerprint) -> TestPlan:
         ai_diagnosis=str(j.get("ai_diagnosis","")), ai_used=True,
     )
 
-def orchestrate(fp: CorruptionFingerprint, profile: PhysicalProfile | None,
-                conditions: dict | None = None) -> TestPlan:
+def orchestrate(fp: CorruptionFingerprint, profile: Optional[PhysicalProfile],
+                conditions: Optional[Dict] = None) -> TestPlan:
     det = _deterministic_test_plan(fp, profile)
     ai = _try_ai(fp, conditions)
     if ai is None: return det
@@ -1094,19 +1229,19 @@ def orchestrate(fp: CorruptionFingerprint, profile: PhysicalProfile | None,
 @dataclass
 class RowAnomalyScore:
     row_index: int; corruption_type: str; max_sigma: float
-    check_scores: dict[str, float]; severity: str; diagnosis: str; n_checks: int = 1
+    check_scores: Dict[str, float]; severity: str; diagnosis: str; n_checks: int = 1
 
 class FilterBank:
     """Iterative cascade. Inlier set updated after each priority tier."""
 
     def __init__(self, data: pd.DataFrame, plan: TestPlan,
-                 prior_exclusions: set | None = None):
+                 prior_exclusions: Optional[Set] = None):
         self.data = data.reset_index(drop=True)
         self.plan = plan; self.n = len(data)
         self.cols = set(data.columns)
-        self.excl: set = set(prior_exclusions or set())
-        self.scores: list[RowAnomalyScore] = []
-        self._cache: dict[str, np.ndarray] = {}
+        self.excl: Set = set(prior_exclusions or set())
+        self.scores: List[RowAnomalyScore] = []
+        self._cache: Dict[str, np.ndarray] = {}
 
     def _arr(self, col: str) -> np.ndarray:
         if col not in self._cache:
@@ -1119,7 +1254,7 @@ class FilterBank:
             if i < self.n: m[i] = False
         return m
 
-    def _mad(self, r: np.ndarray, mask: np.ndarray) -> tuple[float,float]:
+    def _mad(self, r: np.ndarray, mask: np.ndarray) -> Tuple[float,float]:
         r_in = r[mask]
         med = float(np.median(r_in)); mad = float(np.median(np.abs(r_in-med)))*1.4826
         return med, max(mad, 1e-12)
@@ -1134,9 +1269,9 @@ class FilterBank:
                 return
         self.scores.append(RowAnomalyScore(i, ctype, sigma, {check: sigma}, sev, diag))
 
-    def run(self) -> tuple[set, list[RowAnomalyScore]]:
+    def run(self) -> Tuple[Set, List[RowAnomalyScore]]:
         # Execute in priority tiers with inlier refresh between tiers
-        by_priority: dict[int, list[dict]] = {}
+        by_priority: Dict[int, List[Dict]] = {}
         for spec in self.plan.checks:
             p = spec.get("priority", 99)
             by_priority.setdefault(p, []).append(spec)
@@ -1646,42 +1781,68 @@ class FilterBank:
 # LAYER 4: Confidence Calibrator
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def calibrate_exclusions(excl: set, scores: list[RowAnomalyScore],
-                         risk_mode: str = "precision") -> set:
+def calibrate_exclusions(excl: Set, scores: List[RowAnomalyScore],
+                         risk_mode: str = "precision") -> Set:
     """
     Layer 4: Adjusts the exclusion set based on confidence.
     
-    precision mode: remove borderline rows with only 1 low-sigma check
-    recall mode: keep all exclusions
-    balanced mode: require either (sigma>5) or (2+ independent checks)
+    Returns the AUTO-REMOVE set. Rows in excl but NOT in the return set are
+    "flagged for review" — suspicious but not high-confidence enough to auto-remove.
     
-    This is where the precision/recall tradeoff is controlled, not in the checks.
+    At realistic corruption rates (1-3%), false positives hurt model quality.
+    Only auto-remove when evidence is overwhelming:
+      - Physical law violations (T < 0, efficiency > 1, etc.)
+      - Unit errors (ratio 1000× off physical constant)
+      - Concordant evidence from 2+ independent checks AND sigma > 5
+      - Very high sigma from a single check (>8): unambiguous spike
     """
     if risk_mode == "recall": return excl
     score_map = {s.row_index: s for s in scores}
-    final: set = set()
+    final: Set = set()
     for i in excl:
         s = score_map.get(i)
         if s is None:
-            # Excluded by v1 PhysicsValidator — always trust
+            # Excluded by v1 PhysicsValidator — always trust (high precision baseline)
             final.add(i); continue
         if risk_mode == "precision":
-            # Rules for inclusion:
-            # 1. Critical severity (bounds violation, unit error, law violation)
-            # 2. Very high sigma (>6) = unambiguous outlier
-            # 3. Concordant evidence from 2+ independent check families
-            # 4. Exception: neighbor_anomaly alone requires sigma>6 due to nonlinear targets
             is_only_neighbor = (len(s.check_scores) == 1 and
                                 any('neighbor' in k for k in s.check_scores))
+            # Only auto-remove critical violations or very high sigma
             if s.severity == "critical": final.add(i)
-            elif is_only_neighbor and s.max_sigma > 8.0: final.add(i)
-            elif not is_only_neighbor and (s.max_sigma > 5.0 or len(s.check_scores) >= 2):
-                final.add(i)
-            # Borderline single-check warnings from nonlinear targets are dropped
+            elif is_only_neighbor and s.max_sigma > 10.0: final.add(i)
+            elif (not is_only_neighbor and s.max_sigma > 5.0
+                  and len(s.check_scores) >= 2): final.add(i)
+            elif not is_only_neighbor and s.max_sigma > 8.0: final.add(i)
+            # Borderline single-check or low-sigma: "flag for review" not auto-remove
         else:  # balanced
             if s.severity == "critical" or s.max_sigma > 4.0 or len(s.check_scores) >= 2:
                 final.add(i)
     return final
+
+
+def get_review_flags(excl: Set, auto_removed: Set,
+                     scores: List[RowAnomalyScore]) -> List[dict]:
+    """
+    Returns rows that APIE flagged as suspicious but didn't auto-remove.
+    These warrant human review, not automatic deletion.
+    Ordered by confidence (highest sigma first).
+    """
+    flagged_not_removed = excl - auto_removed
+    score_map = {s.row_index: s for s in scores}
+    flags = []
+    for i in sorted(flagged_not_removed):
+        s = score_map.get(i)
+        if s:
+            flags.append({
+                'row_index': i,
+                'max_sigma': round(s.max_sigma, 2),
+                'checks': list(s.check_scores.keys()),
+                'corruption_type': s.corruption_type,
+                'severity': s.severity,
+                'diagnosis': s.diagnosis[:200],
+            })
+    flags.sort(key=lambda x: -x['max_sigma'])
+    return flags
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1690,14 +1851,17 @@ def calibrate_exclusions(excl: set, scores: list[RowAnomalyScore],
 
 @dataclass
 class APIEResult:
-    excluded_indices: set
-    row_scores: list[RowAnomalyScore]
+    excluded_indices: Set          # auto-remove: high-confidence corruption
+    flagged_for_review: List[dict] # suspicious but not auto-removed: warrant human inspection
+    row_scores: List[RowAnomalyScore]
     fingerprint: CorruptionFingerprint
     test_plan: TestPlan
-    discovered_invariants: dict[str, float]
+    discovered_invariants: Dict[str, float]
     processing_ms: float; ai_used: bool; ai_diagnosis: str
     precision_estimate: float
-    domain_profile: str | None
+    domain_profile: Optional[str]
+    diagnosis: Optional[Any] = None   # CausalDiagnosis result
+    manifold: Optional[Any] = None    # PhysicsManifold result
 
 class AdaptivePhysicsIntelligenceEngine:
     """
@@ -1709,13 +1873,24 @@ class AdaptivePhysicsIntelligenceEngine:
         )
     """
     def validate(self, data, domain: str = "aerodynamics",
-                 conditions: dict | None = None,
+                 conditions: Optional[Dict] = None,
                  risk_mode: str = "precision") -> APIEResult:
         t0 = time.time()
         if isinstance(data, list): data = pd.DataFrame(data)
         data = data.reset_index(drop=True)
         for col in data.columns:
             data[col] = pd.to_numeric(data[col], errors="coerce")
+
+        # ── Column name normalization (before L0) ─────────────────────────
+        # Map non-standard names (Cd, Re, rho, U_inf) → canonical APIE names
+        # so domain profiles, ratio invariants, and bounds checks all fire
+        # regardless of simulator-specific naming conventions.
+        _col_rename_map: dict = {}
+        try:
+            from core.physics_manifold import normalize_column_names as _ncn
+            data, _col_rename_map = _ncn(data)
+        except Exception:
+            pass
 
         # L0: Domain profile
         profile = get_profile(domain)
@@ -1739,36 +1914,125 @@ class AdaptivePhysicsIntelligenceEngine:
         # Only for aerodynamics-family (v1 was calibrated for these domains).
         # AERO_FAMILY: only domains where v1 PhysicsValidator was calibrated.
         # Hydrodynamics, multiphase, cfd_hydro removed -- v1 generates massive FPs there.
+        # v1 PhysicsValidator post-pass: ONLY when data matches aero column schema.
+        # v1 was calibrated on datasets with velocity, Cd, Cl, Re, Ma, P, density.
+        # Running it on drone prop data (CT, CP, RPM) or FEA data generates massive FPs.
+        _V1_REQUIRED = {'velocity', 'drag_coefficient', 'lift_coefficient',
+                        'reynolds_number', 'mach_number', 'pressure', 'density'}
+        _has_aero_cols = len(_V1_REQUIRED & set(data.columns)) >= 5
+        _v1_n_ok = len(data) >= 500  # v1 has iq_min500 check; fails catastrophically below this
         AERO_FAMILY = {'aerodynamics', 'cfd', 'aeroelasticity'}
-        if domain.lower() in AERO_FAMILY:
+        if domain.lower() in AERO_FAMILY and _has_aero_cols and _v1_n_ok:
             try:
                 from core.physics_validator import PhysicsValidator, SimulationType
                 dm = {
-                    "aerodynamics": SimulationType.AERODYNAMICS, "cfd": SimulationType.FLUID_DYNAMICS,
-                    "fluid_dynamics": SimulationType.FLUID_DYNAMICS,
-                    "hydrodynamics": SimulationType.HYDRODYNAMICS,
+                    "aerodynamics": SimulationType.AERODYNAMICS,
+                    "cfd": SimulationType.FLUID_DYNAMICS,
                     "aeroelasticity": SimulationType.AEROELASTICITY,
                 }
                 st = dm.get(domain.lower(), SimulationType.AERODYNAMICS)
-                # Run v1 only on rows NOT already excluded by APIE
                 data_clean = data[~data.index.isin(final_excl)].copy()
-                rpt = PhysicsValidator().validate(data_clean, st, dict(conditions or {}),
-                                                  max_exclusions=len(data_clean))
-                # Map back to original indices
-                v1_local = {int(e.trial_index) for e in rpt.exclusions}
-                clean_idx_list = [i for i in range(len(data)) if i not in final_excl]
-                v1_orig = {clean_idx_list[i] for i in v1_local if i < len(clean_idx_list)}
-                final_excl |= v1_orig
+                # Final schema guard on the actual slice
+                if len(_V1_REQUIRED & set(data_clean.columns)) >= 5:
+                    rpt = PhysicsValidator().validate(data_clean, st, dict(conditions or {}),
+                                                      max_exclusions=len(data_clean))
+                    v1_local = {int(e.trial_index) for e in rpt.exclusions}
+                    clean_idx_list = [i for i in range(len(data)) if i not in final_excl]
+                    v1_orig = {clean_idx_list[i] for i in v1_local if i < len(clean_idx_list)}
+                    final_excl |= v1_orig
             except Exception: pass
 
+        # ── Layer 5: Physics Manifold Validator ───────────────────────────
+        # Self-supervised: learns the physics manifold from the data itself.
+        # Column-name agnostic. Catches unknown corruption types.
+        # Uses RunHistoryTracker prior runs for threshold calibration when available.
+        manifold_result = None
+        try:
+            from core.physics_manifold import PhysicsManifoldValidator, normalize_column_names
+            # Normalize column names if needed
+            data_norm, col_rename_map = normalize_column_names(data.copy())
+            # Build inlier mask from current exclusions
+            inlier_arr = np.array([i not in final_excl for i in range(len(data_norm))])
+            # Get prior clean data from RunHistoryTracker if available
+            prior_X = None
+            try:
+                from core.run_history import get_default_tracker
+                tracker = get_default_tracker()
+                config_key_manifold = (domain or "unknown") + "_manifold"
+                _hist = tracker._data.get(tracker._norm_key(config_key_manifold), {})
+                _runs = _hist.get('runs', [])
+                if len(_runs) >= 3:
+                    # Reconstruct prior X from stored column stats
+                    # (We use means as proxy for prior distribution center)
+                    # In production this would store full compressed data
+                    pass  # prior_X stays None; use cold-start mode
+            except Exception:
+                pass
+            _pmv = PhysicsManifoldValidator()
+            manifold_result = _pmv.validate(
+                data_norm,
+                prior_clean_X=prior_X,
+                inlier_mask=inlier_arr,
+            )
+            # Manifold detections go to REVIEW ONLY (not auto-remove).
+            # In cold_start mode the manifold threshold can misfire on heavy-tailed
+            # structural/stress data. Keep manifold finds in the review queue
+            # where they inform the engineer without removing clean rows.
+            # Auto-remove only when manifold score is >10× the auto threshold
+            # (unambiguously off-manifold, e.g. unit error giving 1000× deviation).
+            if manifold_result.auto_remove:
+                for _mfd_idx in manifold_result.auto_remove:
+                    _score = float(manifold_result.per_row_scores[_mfd_idx])
+                    _thr = manifold_result.threshold_auto
+                    if _thr > 0 and _score / _thr > 10.0:
+                        # Only auto-remove if 10× above threshold = truly unambiguous
+                        final_excl.add(_mfd_idx)
+            # Add manifold review flags to the review queue (don't auto-remove)
+            # These supplement APIE's review flags
+        except Exception as _mfd_err:
+            manifold_result = None
+
         ms = (time.time()-t0)*1000
+
+        # ── Build combined review flags ────────────────────────────────────
+        # Merge APIE review flags with manifold review flags
+        _apie_review = get_review_flags(raw_excl, final_excl - (manifold_result.auto_remove if manifold_result else set()), scores)
+        _mfd_review = []
+        if manifold_result:
+            _mfd_flags_set = {f['row_index'] for f in manifold_result.review_flags if f['tier'] == 'review'}
+            _apie_set = {f['row_index'] for f in _apie_review}
+            for f in manifold_result.review_flags:
+                if f['tier'] == 'review' and f['row_index'] not in _apie_set and f['row_index'] not in final_excl:
+                    _mfd_review.append({
+                        'row_index': f['row_index'],
+                        'max_sigma': f['manifold_score'],
+                        'checks': ['manifold_violation'],
+                        'corruption_type': 'physics_manifold',
+                        'severity': 'warning',
+                        'diagnosis': f['diagnosis'][:200],
+                        'reconstructed_values': f.get('reconstructed_values'),
+                    })
+        review_flags = _apie_review + _mfd_review
+
+        # ── Causal Diagnosis ───────────────────────────────────────────────
+        diagnosis = None
+        try:
+            from core.causal_diagnosis import diagnose as _diagnose
+            diagnosis = _diagnose(fp, scores, domain, len(data), conditions)
+        except Exception:
+            pass
+
         return APIEResult(
-            excluded_indices=final_excl, row_scores=scores,
+            excluded_indices=final_excl,
+            flagged_for_review=review_flags,
+            row_scores=scores,
             fingerprint=fp, test_plan=plan,
             discovered_invariants=fp.discovered_invariants,
             processing_ms=round(ms,1), ai_used=plan.ai_used,
             ai_diagnosis=plan.ai_diagnosis, precision_estimate=0.986,
             domain_profile=profile.canonical_name if profile else None,
+            diagnosis=diagnosis,
+            manifold=manifold_result,
         )
 
 engine = AdaptivePhysicsIntelligenceEngine()
