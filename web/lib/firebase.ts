@@ -30,3 +30,19 @@ export async function getFirebaseAuth() {
   }
   return authPromise;
 }
+
+// Cached Firestore instance (lazily initialized).
+let firestorePromise: Promise<import("firebase/firestore").Firestore> | null = null;
+
+export async function getFirestoreDb() {
+  if (!isFirebaseConfigured) throw new Error("Firebase is not configured");
+  if (!firestorePromise) {
+    firestorePromise = (async () => {
+      const { initializeApp, getApps } = await import("firebase/app");
+      const { getFirestore } = await import("firebase/firestore");
+      const app = getApps().length ? getApps()[0] : initializeApp(firebaseConfig);
+      return getFirestore(app);
+    })();
+  }
+  return firestorePromise;
+}
