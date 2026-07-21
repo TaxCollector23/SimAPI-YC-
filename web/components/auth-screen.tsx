@@ -7,7 +7,7 @@ import { Logo } from "./logo";
 
 export function AuthScreen() {
   const { signInGoogle, signInEmail, signUpEmail, firebaseEnabled } = useAuth();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup">("signup");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,12 +45,12 @@ export function AuthScreen() {
       <div className="mb-8 flex flex-col items-center text-center">
         <Logo className="h-11" />
         <h1 className="mt-4 text-2xl font-semibold text-white">
-          {mode === "signup" ? "Create your account" : "Sign in to SimAPI"}
+          {mode === "signup" ? "Create your SimAPI account" : "Welcome back"}
         </h1>
         <p className="mt-2 text-sm text-white/50">
           {mode === "signup"
-            ? "Get an API key and start validating in the browser."
-            : "Access your dashboard, API keys, and validations."}
+            ? "Enter your information below to get started."
+            : "Sign in to access your dashboard and API keys."}
         </p>
       </div>
 
@@ -78,7 +78,7 @@ export function AuthScreen() {
         </form>
 
         <p className="mt-4 text-center text-xs text-white/45">
-          {mode === "signup" ? "Already have an account?" : "New to SimAPI?"}{" "}
+          {mode === "signup" ? "Already have an account?" : "Don't have an account yet?"}{" "}
           <button
             onClick={() => {
               setMode(mode === "signup" ? "signin" : "signup");
@@ -86,7 +86,7 @@ export function AuthScreen() {
             }}
             className="text-accent-cyan hover:underline"
           >
-            {mode === "signup" ? "Sign in" : "Create one"}
+            {mode === "signup" ? "Or, sign in" : "Create one — it's free"}
           </button>
         </p>
       </div>

@@ -101,7 +101,7 @@ const notes: Note[] = [
     body: (
       <>
         <ul>
-          <li>Try it with zero setup: try the Playground — run a validation in the browser, no install needed.</li>
+          <li>Try it with zero setup: run a validation in the browser from the dashboard.</li>
           <li>
             Python: <code>pip install simapi</code>, then{" "}
             <code>from simapi import SimAPI</code>.

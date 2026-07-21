@@ -11,10 +11,7 @@ import { aiReview, type AiReview } from "@/lib/ai-review";
  * and SDKs consume, plus an optional AI second pass (OPENROUTER_API_KEY).
  */
 export const runtime = "nodejs";
-// The AI review is a genuine analysis, not a quick check, and is allowed to
-// take its time (see lib/ai-review.ts) -- give the function enough room for
-// physics validation plus a real, unhurried model call.
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 interface ValidateBody {
   data?: Record<string, unknown>[];

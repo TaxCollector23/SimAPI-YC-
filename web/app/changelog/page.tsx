@@ -11,30 +11,10 @@ interface Release { version: string; date: string; tag: string; items: string[] 
 
 const releases: Release[] = [
   {
-    version: "3.6", date: "July 2026", tag: "Detection",
-    items: [
-      "New detection engine — APIE (Adaptive Physics Intelligence Engine): a five-layer cascade (domain-invariant library → structural fingerprint → deterministic/AI-assisted test-plan orchestration → iterative precision filter bank → confidence calibration). The AI, when available, only parametrizes which checks to run and how strict to be — it never decides an exclusion directly; a deterministic filter bank does that.",
-      "Replaces the 3.5 universal conservation-law layer, which is now removed — verified, before swapping, that combining both actually performed slightly worse (more false positives without meaningfully better recall) than APIE alone.",
-      "Corruption detection recall: 97% (up from 71% two releases ago), precision 99%. Sensor drift recall 99.5%, measurement noise recall 84% (was 14.6% originally) — the hardest category by a wide margin, now much closer to solved.",
-      "Gradient-boosted trees: +21.2% MAPE vs corrupted (was -8.1% two releases ago, when the older detection layer excluded more data than the residual corruption cost).",
-      "MLP: +66.3% MAPE vs corrupted data.",
-      "AI review restored: a genuine second-pass analysis (not a quick verdict) using a larger reasoning model with the full data profile, allowed to take its time — typically 10-20s for a real request.",
-    ],
-  },
-  {
-    version: "3.5", date: "July 2026", tag: "Detection",
-    items: [
-      "New universal conservation-law detection layer: RANSAC-discovered physical invariants, non-dimensional coupling analysis, and state-space observation, run alongside the existing 470+ deterministic checks. (Superseded in 3.6 — see above.)",
-      "Corruption detection recall: 95% (up from 71%), precision 99%. Sensor drift recall 99% (was 66%), measurement noise recall 70% (was 15%).",
-      "Gradient-boosted trees saw a real, positive improvement from SimAPI (+20% MAPE vs corrupted) for the first time — previously negative (-8%) because the older detection layers excluded more data than the residual corruption cost.",
-      "MLP improvement: 67% MAPE vs corrupted data (up from 58%).",
-    ],
-  },
-  {
     version: "3.4", date: "July 2026", tag: "Honesty",
     items: [
-      "Re-audited every benchmark claim end-to-end — see /benchmark for current numbers, including where naive IQR/z-score filtering is competitive on raw MAPE.",
-      "Corrected the recall figure from the previous release: with randomized corruption placement and Mann-Kendall + sliding-window drift detection, recall was 71% (up from 55%), not the previously stated 89% — that number didn't hold up under a harder, randomized benchmark and we didn't keep it on the site. (Superseded again in 3.5 — see above.)",
+      "Re-audited every benchmark claim end-to-end — see the new methodology page at /benchmark for the full write-up, including where SimAPI does NOT help (gradient-boosted trees) and where naive IQR/z-score filtering is competitive.",
+      "Corrected the recall figure from the previous release: with randomized corruption placement and Mann-Kendall + sliding-window drift detection, recall is 71% (up from 55%), not the previously stated 89% — that number didn't hold up under a harder, randomized benchmark and we're not keeping it on the site.",
       "Exclusion precision holds at 99% — when SimAPI flags a trial, it's genuinely corrupted.",
       "Added a naive statistical baseline (IQR + z-score) to every benchmark run so the comparison isn't just \"vs. no filtering.\"",
       "New AI orchestrator: a 5-phase pipeline (dataset profiling → physics checks → pattern recognition → targeted follow-up probes → synthesis) replaces the single-pass AI reviewer.",

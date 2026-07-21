@@ -13,7 +13,6 @@ import { HistoryPanel } from "./history-panel";
 import { recordRun } from "@/lib/run-history";
 import { useAuth } from "@/lib/auth";
 import { touchKey } from "@/lib/dashboard-store";
-import { recordEvent } from "@/lib/telemetry";
 import {
   validate, runDemo, pollAI, generateKey,
   DEMO_KEY, healthCheck,
@@ -294,12 +293,6 @@ export function ValidationDashboard() {
         raw: res,
       });
       if (user && apiKey !== DEMO_KEY) touchKey(user.uid);
-      if (user) {
-        recordEvent(user.uid, "validation_run", {
-          simulation_type: selectedSim.value, status: res.status,
-          trials_submitted: res.trials_submitted, trials_excluded: res.trials_excluded,
-        });
-      }
       if (res.job_id) startPoll(res.job_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
