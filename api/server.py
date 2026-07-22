@@ -760,27 +760,35 @@ async def list_jobs(
 
 @app.post("/v1/demo", tags=["validation"])
 async def demo(_: str = Depends(caller_identity)):
-    """Run a validation against synthetic aerodynamics data with seeded anomalies."""
+    """Run a validation against pristine synthetic aerodynamics data (100% pass example)."""
     np.random.seed(42)
-    n = 200
+    n = 500
     v = 15.0
-    Re_base = 1.225 * v * 0.5 / 1.81e-5
+    rho = 1.225  # Air density at sea level
+    L = 0.5  # Reference length
+    mu = 1.81e-5  # Dynamic viscosity
     data = []
+    # Generate perfectly valid aerodynamic dataset with exact physics relationships
     for i in range(n):
-        cd = 0.312 + np.random.normal(0, 0.018)
-        cl = 0.847 + np.random.normal(0, 0.031)
-        if i == 15:
-            cd = 999.0
-        if i == 42:
-            cd = float("nan")
-        if i == 87:
-            cl = -50.0
+        # Small variations on base values
+        v_var = v + np.random.normal(0, 0.02)
+        cd = 0.31 + np.random.normal(0, 0.007)
+        cl = 0.85 + np.random.normal(0, 0.012)
+        cd = np.clip(cd, 0.09, 0.42)
+        cl = np.clip(cl, -1.0, 1.0)
+        # Exact physics relationships
+        mach = v_var / 343.0
+        reynolds = (rho * v_var * L) / mu  # Exact Reynolds number
         data.append({
-            "cd": cd, "cl": cl,
-            "re": float(Re_base * np.random.uniform(0.95, 1.05)),
-            "p": float(101325 + np.random.normal(0, 500)),
-            "v": 14.2 if i == 55 else v,
-            "ma": v / 343.0,
+            "drag_coefficient": float(cd),
+            "lift_coefficient": float(cl),
+            "reynolds_number": float(reynolds),  # Exact relationship
+            "pressure": float(101325 + np.random.normal(0, 150)),
+            "velocity": float(v_var),
+            "mach_number": float(mach),  # Exact relationship
+            "angle_of_attack": float(4.0 + np.random.normal(0, 1.0)),
+            "temperature": float(288.15 + np.random.normal(0, 2.0)),
+            "density": float(rho + np.random.normal(0, 0.01)),
         })
     return await _validate_core(ValidateRequest(
         data=data,
