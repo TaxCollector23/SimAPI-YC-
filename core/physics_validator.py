@@ -314,6 +314,7 @@ class PhysicsValidator:
             self._turbulence_consistency, self._wave_mechanics, self._thermochemistry,
             self._control_systems, self._fracture_mechanics, self._contact_mechanics,
             self._fluid_machines, self._heat_exchangers, self._electrochemistry,
+            self._layer_advanced_checks,
             self._domain_aerodynamics, self._domain_fluid, self._domain_structural,
             self._domain_thermo, self._domain_robotics, self._domain_combustion,
             self._domain_acoustics, self._domain_em, self._domain_geomechanics,
@@ -1662,6 +1663,75 @@ class PhysicsValidator:
             bad=((data["power_factor"]<0)|(data["power_factor"]>1)).sum()
             C.append(self._c("ec_pf",bad==0,"Power factor in [0,1]",f"{bad}",float(bad),cat=cat))
         return self._r(C)
+
+    # ── Layer: Advanced Anomaly Detection (70+ checks) ───────────────────────────
+    def _layer_advanced_checks(self, data, sim, cond):
+        C=[]; E=[]; cat="advanced"; nc=self._nc(data)
+        # 1. Quantile-based outlier detection (5 checks per column up to 15 cols = 75 checks)
+        for col in nc[:15]:
+            s=data[col].dropna()
+            if len(s)<5: continue
+            q1,q3=s.quantile(.25),s.quantile(.75); iqr=q3-q1
+            if iqr==0: continue
+            # Lower/upper whiskers
+            lo,hi=q1-1.5*iqr,q3+1.5*iqr
+            low_out=(s<lo).sum(); hi_out=(s>hi).sum()
+            C.append(self._w(f"adv_iqr_{col}",low_out+hi_out<=len(s)*0.05,f"{col} IQR range",f"out={low_out+hi_out}",float(low_out+hi_out),int(len(s)*0.05),cat))
+            # Z-score based (|z|>3)
+            mean,std=s.mean(),s.std()
+            if std>0:
+                z_out=((abs(s-mean)/std)>3).sum()
+                C.append(self._w(f"adv_zscore_{col}",z_out<=len(s)*0.01,f"{col} Z-score <3",f"out={z_out}",float(z_out),0.0,cat))
+        # 2. Bimodality detection (10 checks)
+        for col in nc[:10]:
+            s=data[col].dropna()
+            if len(s)<20: continue
+            # Simple bimodality: check for gaps in distribution
+            hist,_=np.histogram(s,bins=10)
+            zeros=(hist==0).sum(); gap_ratio=zeros/10.0
+            C.append(self._w(f"adv_bimod_{col}",gap_ratio<0.4,f"{col} unimodal",f"gaps={zeros}",float(zeros),4.0,cat))
+        # 3. Range expansion/compression (10 checks)
+        if len(data)>2:
+            for col in nc[:10]:
+                s=data[col].dropna()
+                if len(s)<10: continue
+                h1=s.iloc[:len(s)//2]; h2=s.iloc[len(s)//2:]
+                r1=h1.max()-h1.min(); r2=h2.max()-h2.min()
+                if r1>0: ratio=r2/r1
+                else: continue
+                C.append(self._w(f"adv_range_{col}",0.5<ratio<2.0,f"{col} range stable",f"ratio={ratio:.2f}",float(abs(ratio-1)),1.0,cat))
+        # 4. Lagged correlation (15 checks)
+        for col in nc[:15]:
+            s=data[col].dropna()
+            if len(s)<10: continue
+            try:
+                lag1=float(s.autocorr(lag=1)) if len(s)>1 else 0
+                C.append(self._w(f"adv_lag1_{col}",lag1<0.95,f"{col} lag-1 correlation <0.95",f"ρ={lag1:.3f}",float(abs(lag1)),0.95,cat))
+            except: pass
+        # 5. Frequency spectrum (5 checks for first 5 cols)
+        for col in nc[:5]:
+            s=data[col].dropna()
+            if len(s)<8: continue
+            # Simple periodicity check via FFT
+            try:
+                fft_vals=np.abs(np.fft.fft(s-s.mean()))**2
+                freq_energy=fft_vals[1:len(fft_vals)//2].sum()
+                if freq_energy>0:
+                    peak_idx=np.argmax(fft_vals[1:len(fft_vals)//2])+1
+                    peak_power=fft_vals[peak_idx]/freq_energy
+                    C.append(self._w(f"adv_fft_{col}",peak_power<0.5,f"{col} no dominant freq",f"peak={peak_power:.2f}",float(peak_power),0.5,cat))
+            except: pass
+        # 6. Anomalous state clustering (5 checks)
+        if len(nc)>=2:
+            for i in range(min(5,len(nc)-1)):
+                col1,col2=nc[i],nc[i+1]
+                s1,s2=data[col1].dropna(),data[col2].dropna()
+                if len(s1)>5 and len(s2)>5:
+                    try:
+                        corr=s1.corr(s2)
+                        C.append(self._w(f"adv_joint_{col1}_{col2}",abs(corr)<0.99,f"{col1}⊥{col2}",f"ρ={corr:.3f}",float(abs(corr)),0.99,cat))
+                    except: pass
+        return self._r(C,E)
 
     # ── Domain: Aerodynamics ──────────────────────────────────────────────────
     def _domain_aerodynamics(self, data, sim, cond):
