@@ -52,7 +52,7 @@ export async function POST() {
     try {
       const upstream = await fetch(`${PYTHON_API}/v1/demo`, {
         method: "POST",
-        signal: AbortSignal.timeout(25_000),
+        signal: AbortSignal.timeout(35_000),
       });
       if (upstream.ok) {
         const pyResult = await upstream.json();

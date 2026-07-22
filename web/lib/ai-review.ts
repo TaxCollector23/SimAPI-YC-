@@ -96,11 +96,12 @@ function usesReasoningParam(model: string): boolean {
 }
 
 const TOKENS_SHORT = 700;
-const TIMEOUT_MS = 12_000;
-// Vercel maxDuration is 60s and physics validation runs first; stop trying more
-// (key, model) pairs once this wall-clock budget for the AI call is spent,
-// rather than assuming a fixed number of pairs × timeouts always fits.
-const TOTAL_BUDGET_MS = 45_000;
+const TIMEOUT_MS = 10_000;
+// Vercel maxDuration is 60s and physics validation (which can include a
+// Render cold-start, up to 35s) runs first; stop trying more (key, model)
+// pairs once this wall-clock budget for the AI call is spent, rather than
+// assuming a fixed number of pairs × timeouts always fits what's left.
+const TOTAL_BUDGET_MS = 20_000;
 const REVIEW_VERSION = "2.4-domain-expert-prompts";
 
 class AbortedError extends Error {}

@@ -151,7 +151,7 @@ export async function POST(req: Request) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: rows, simulation_type: simType, conditions: body.conditions ?? {}, run_ai: false }),
-        signal: AbortSignal.timeout(25_000),
+        signal: AbortSignal.timeout(35_000),
       });
       if (upstream.ok) {
         const pyResult = await upstream.json();
