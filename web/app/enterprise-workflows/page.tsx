@@ -1,152 +1,125 @@
-"use client";
+import type { Metadata } from "next";
+import { ScanSearch, ShieldAlert, GitBranch, FileCheck2 } from "lucide-react";
+import { PageHero } from "@/components/ui/page-hero";
+import { Reveal } from "@/components/ui/reveal";
+import { SectionHeader } from "@/components/ui/section";
+import { Cta } from "@/components/cta";
+
+export const metadata: Metadata = {
+  title: "Enterprise Workflows",
+  description: "Four production patterns for wiring SimAPI into a simulation pipeline — preflight, post-run QA, CI regression gates, and compliance reporting.",
+};
+
+const workflows = [
+  {
+    icon: ScanSearch,
+    phase: "Before the solver runs",
+    title: "Pre-flight mesh & setup validation",
+    goal: "Catch geometry and boundary-condition errors before they burn solver time.",
+    steps: [
+      "Upload mesh (STL, STEP, CGNS) or setup config",
+      "POST /v1/validate/setup — mesh quality, BC coverage, solver config checks",
+      "Fix flagged issues, or proceed with a documented confidence score",
+    ],
+  },
+  {
+    icon: ShieldAlert,
+    phase: "After the solver converges",
+    title: "Post-run result validation",
+    goal: "Flag anomalous or corrupted output before it reaches analysis or an ML pipeline.",
+    steps: [
+      "Export results (CSV, netCDF, JSON) from the solver",
+      "POST /v1/validate — 730+ physics checks plus AI review",
+      "Route clean trials downstream; hold flagged ones for review",
+    ],
+  },
+  {
+    icon: GitBranch,
+    phase: "On every commit",
+    title: "CI regression gating",
+    goal: "Detect unintended drift from solver upgrades, config changes, or mesh regressions.",
+    steps: [
+      "Wire the CLI into GitHub Actions, GitLab CI, or Jenkins",
+      "Run the validation suite against a frozen reference config",
+      "Block the merge if precision, recall, or exclusion rate regresses",
+    ],
+  },
+  {
+    icon: FileCheck2,
+    phase: "For regulated domains",
+    title: "Compliance & audit trail",
+    goal: "Produce a defensible record of what was checked, and why a result was accepted or excluded.",
+    steps: [
+      "Validate every dataset that feeds a submission package",
+      "Export the validation report (checks run, bounds, exclusions)",
+      "Archive alongside the design record for audit and traceability",
+    ],
+  },
+];
+
+const patterns = [
+  { title: "Synchronous", desc: "POST → validate → response in the same request. Best for interactive review UIs.", tech: "HTTP POST" },
+  { title: "Asynchronous", desc: "Queue a job, poll for the result. Fits high-volume batch runs.", tech: "Job queue + polling" },
+  { title: "Embedded", desc: "Import the engine directly into a pipeline script — no network hop.", tech: "Python / Node SDK" },
+  { title: "Plugin", desc: "Post-processing hook inside the solver itself (OpenFOAM, ANSYS, COMSOL).", tech: "CLI / Docker sidecar" },
+];
 
 export default function EnterpriseWorkflows() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-white">
-      <div className="max-w-5xl mx-auto px-6 py-16">
-        {/* Hero */}
-        <div className="mb-16">
-          <h1 className="text-5xl font-bold mb-4">Enterprise Workflows</h1>
-          <p className="text-xl text-slate-300">
-            Best practices for integrating SimAPI into production simulation pipelines.
-          </p>
-        </div>
+    <>
+      <PageHero
+        eyebrow="Enterprise"
+        title={<>Four patterns for putting SimAPI in the loop</>}
+        lede="These are the integration points teams actually use — before the solver runs, after it finishes, on every commit, and when a result needs a paper trail."
+      />
 
-        {/* Workflow 1 */}
-        <div className="mb-12 bg-slate-800/50 rounded-lg p-8 border border-slate-700">
-          <h2 className="text-3xl font-bold mb-4 text-blue-400">1. Pre-Simulation Validation (Mesh Prep)</h2>
-          <div className="space-y-4 text-slate-300">
-            <p>
-              <strong>Phase:</strong> Before solver execution
-            </p>
-            <p>
-              <strong>Goal:</strong> Catch geometry and boundary condition errors early, avoiding expensive solver runs.
-            </p>
-            <div className="bg-slate-900/50 rounded p-4 font-mono text-sm">
-              <div>1. Upload CAD/mesh (STL, STEP, CGNS)</div>
-              <div>2. POST /v1/validate/setup → mesh quality checks</div>
-              <div>3. Inspect preflight results (watertight, BC coverage, solver config)</div>
-              <div>4. Fix issues or proceed to solver</div>
-            </div>
-            <p>
-              <strong>Benefit:</strong> Reduce solver restarts by 40–60%; catch setup errors before 8-hour runs.
-            </p>
-          </div>
+      <section className="container-tight pb-8">
+        <div className="grid gap-4 sm:grid-cols-2">
+          {workflows.map((w, i) => (
+            <Reveal key={w.title} delay={i * 0.05}>
+              <div className="h-full rounded-2xl border border-white/[0.08] bg-ink-900/50 p-6">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03]">
+                    <w.icon className="h-5 w-5 text-accent-cyan" />
+                  </div>
+                  <span className="text-xs uppercase tracking-[0.1em] text-white/40">{w.phase}</span>
+                </div>
+                <h3 className="mt-4 text-[17px] font-semibold text-white">{w.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-white/50">{w.goal}</p>
+                <ol className="mt-4 space-y-2 border-t border-white/[0.06] pt-4">
+                  {w.steps.map((s, j) => (
+                    <li key={j} className="flex gap-3 text-sm text-white/60">
+                      <span className="shrink-0 text-white/30 tabular-nums">{j + 1}.</span>
+                      {s}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </Reveal>
+          ))}
         </div>
+      </section>
 
-        {/* Workflow 2 */}
-        <div className="mb-12 bg-slate-800/50 rounded-lg p-8 border border-slate-700">
-          <h2 className="text-3xl font-bold mb-4 text-blue-400">2. Post-Simulation QA (Result Validation)</h2>
-          <div className="space-y-4 text-slate-300">
-            <p>
-              <strong>Phase:</strong> After solver convergence
-            </p>
-            <p>
-              <strong>Goal:</strong> Automatically flag anomalous results before they propagate to downstream analysis or reports.
-            </p>
-            <div className="bg-slate-900/50 rounded p-4 font-mono text-sm">
-              <div>1. Extract results (csv/netCDF from solver output)</div>
-              <div>2. POST /v1/validate → physics validation + AI review</div>
-              <div>3. Inspect exclusion list (flagged trials)</div>
-              <div>4. Route clean results to post-processing; flag corruptions for review</div>
-            </div>
-            <p>
-              <strong>Benefit:</strong> Achieve 99% detection of mesh corruption, solver NaNs, and unit errors. Training-ready flagging.
-            </p>
-          </div>
-        </div>
-
-        {/* Workflow 3 */}
-        <div className="mb-12 bg-slate-800/50 rounded-lg p-8 border border-slate-700">
-          <h2 className="text-3xl font-bold mb-4 text-blue-400">3. Continuous Integration (Regression Detection)</h2>
-          <div className="space-y-4 text-slate-300">
-            <p>
-              <strong>Phase:</strong> On each code commit or parameter change
-            </p>
-            <p>
-              <strong>Goal:</strong> Detect unintended changes in simulation behavior (solver upgrade, config drift, etc.).
-            </p>
-            <div className="bg-slate-900/50 rounded p-4 font-mono text-sm">
-              <div>1. Wire SimAPI into GitHub Actions / GitLab CI pipeline</div>
-              <div>2. Run benchmark suite with frozen config</div>
-              <div>3. Compare MAPE, precision, recall against baseline</div>
-              <div>4. Block merge if metrics regress >5%</div>
-            </div>
-            <p>
-              <strong>Benefit:</strong> Catch solver bugs, config creep, and mesh quality drift before production release.
-            </p>
-          </div>
-        </div>
-
-        {/* Workflow 4 */}
-        <div className="mb-12 bg-slate-800/50 rounded-lg p-8 border border-slate-700">
-          <h2 className="text-3xl font-bold mb-4 text-blue-400">4. Regulatory Compliance (Audit Trail)</h2>
-          <div className="space-y-4 text-slate-300">
-            <p>
-              <strong>Phase:</strong> For safety-critical domains (automotive, aerospace, medical devices)
-            </p>
-            <p>
-              <strong>Goal:</strong> Generate evidence of data quality and anomaly detection for regulatory submissions.
-            </p>
-            <div className="bg-slate-900/50 rounded p-4 font-mono text-sm">
-              <div>1. Validate all simulation datasets with SimAPI</div>
-              <div>2. Export signed validation report (SHA-256 fingerprint)</div>
-              <div>3. Archive as permanent compliance artifact</div>
-              <div>4. Include in submission package (FDA 21 CFR Part 11, ISO 26262)</div>
-            </div>
-            <p>
-              <strong>Benefit:</strong> Regulatory auditors see exact exclusion logic and detection confidence.
-            </p>
-          </div>
-        </div>
-
-        {/* Integration Patterns */}
-        <div className="mb-16">
-          <h2 className="text-3xl font-bold mb-6">Integration Patterns</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {[
-              {
-                title: "Synchronous (Real-Time Feedback)",
-                desc: "POST request → validation → immediate response. Best for interactive UIs and human-in-the-loop review.",
-                tech: "HTTP POST, WebSocket (long-poll support)",
-              },
-              {
-                title: "Asynchronous (Batch Processing)",
-                desc: "Queue validation jobs, poll for results. Ideal for high-volume batch runs or resource-constrained systems.",
-                tech: "Job queue, webhooks, polling API",
-              },
-              {
-                title: "Embedded (Python/Node SDK)",
-                desc: "Import SimAPI directly into your pipeline script. No network latency; full offline capability.",
-                tech: "Python pkg, Node.js, CLI tool",
-              },
-              {
-                title: "Plugin (Solver Integration)",
-                desc: "Post-processing hook inside solver (OpenFOAM, ANSYS, COMSOL). Inline validation without export.",
-                tech: "Native plugin, Docker sidecar",
-              },
-            ].map((p, i) => (
-              <div key={i} className="bg-slate-800/30 rounded-lg p-6 border border-slate-700/50">
-                <h3 className="font-bold text-lg mb-2 text-blue-400">{p.title}</h3>
-                <p className="text-sm text-slate-400 mb-3">{p.desc}</p>
-                <div className="text-xs text-slate-500 font-mono">{p.tech}</div>
+      <section className="py-16 sm:py-20">
+        <div className="container-tight">
+          <SectionHeader
+            eyebrow="Integration patterns"
+            title={<>Wire it in however your stack works</>}
+            lede="No single pattern fits every pipeline — pick the one that matches your latency and infrastructure constraints."
+          />
+          <div className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {patterns.map((p) => (
+              <div key={p.title} className="rounded-2xl border border-white/[0.07] bg-white/[0.02] p-5">
+                <h3 className="text-sm font-semibold text-white">{p.title}</h3>
+                <p className="mt-2 text-xs leading-relaxed text-white/50">{p.desc}</p>
+                <div className="mt-3 text-[11px] font-mono text-accent-cyan/80">{p.tech}</div>
               </div>
             ))}
           </div>
         </div>
+      </section>
 
-        {/* SLA & Benchmarks */}
-        <div className="bg-gradient-to-r from-blue-900/20 to-purple-900/20 rounded-lg p-8 border border-blue-500/20">
-          <h2 className="text-2xl font-bold mb-4">Enterprise SLAs</h2>
-          <ul className="space-y-2 text-slate-300">
-            <li>✓ <strong>P99 latency:</strong> 2s (synchronous validation on 1K rows)</li>
-            <li>✓ <strong>Throughput:</strong> 1M rows/min (batched, offline)</li>
-            <li>✓ <strong>Availability:</strong> 99.9% (SLA for managed cloud deployments)</li>
-            <li>✓ <strong>Detection precision:</strong> 99% (false-positive rate &lt;1%)</li>
-            <li>✓ <strong>Regex audit log:</strong> All validation decisions logged for compliance</li>
-          </ul>
-        </div>
-      </div>
-    </div>
+      <Cta />
+    </>
   );
 }
