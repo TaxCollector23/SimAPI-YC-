@@ -28,32 +28,74 @@ function errorBody(code: string, message: string, requestId: string) {
 /** Map the compact AI review into the dashboard's richer AIResult shape. */
 function mapAi(review: AiReview): Record<string, unknown> | null {
   if (!review.enabled) return null;
-  if (review.error) {
-    return { status: "error", model: review.model ?? "", processing_ms: 0, anomaly_score: 0, dataset_summary: "", physics_agreement: "", physics_gaps: "", findings: [], recommendations: [], timed_out: false, error: review.error };
-  }
-  const anomaly = review.status === "agree" ? 0.12 : review.status === "concern" ? 0.42 : 0.78;
+
   const concerns = review.concerns ?? [];
+  const summary = review.assessment ?? "";
+  const recs = review.recommendation ? [review.recommendation] : [];
+
+  // Degraded path: the model failed, but we still surface the physics engine's
+  // own finding (ai-review.ts populates `assessment` as a fallback) so the
+  // panel is never empty and never blank-with-an-error.
+  if (review.error) {
+    return {
+      status: summary ? "completed" : "error",
+      verdict: review.verdict ?? "",
+      model: review.model ?? "",
+      processing_ms: 0,
+      anomaly_score: summary ? 0.42 : 0,
+      dataset_summary: summary,
+      physics_agreement: "",
+      physics_gaps: "",
+      findings: summary
+        ? [{
+            severity: "warning",
+            category: "physics_engine",
+            title: "Physics engine finding",
+            detail: summary,
+            trials: [],
+            confidence: 0.9,
+            source: "physics_engine",
+          }]
+        : [],
+      recommendations: recs,
+      timed_out: false,
+      error: review.error,
+      review_version: review.reviewVersion ?? "",
+    };
+  }
+
+  const anomaly = review.status === "agree" ? 0.12 : review.status === "concern" ? 0.42 : 0.78;
+
   return {
     status: "completed",
     verdict: review.verdict ?? "",
     model: review.model ?? "",
     processing_ms: 0,
     anomaly_score: anomaly,
-    dataset_summary: review.assessment ?? "",
-    physics_agreement: review.status === "agree" ? "Confirms the deterministic findings — no additional physical inconsistencies detected." : "",
-    physics_gaps: review.status !== "agree" ? concerns.join(" ") : "",
-    findings: concerns.map((cc) => ({
-      severity: review.status === "disagree" ? "critical" : "warning",
-      category: "ai_review",
-      title: "AI-identified concern",
-      detail: cc,
-      trials: [],
-      confidence: 0.7,
-      source: "physics_missed",
-    })),
-    recommendations: concerns,
+    dataset_summary: summary,
+    physics_agreement:
+      review.status === "agree"
+        ? "Confirms the deterministic findings — no additional physical inconsistencies detected."
+        : "",
+    // Intentionally NOT a copy of dataset_summary — leaving it empty prevents
+    // the same sentence rendering four times in the panel.
+    physics_gaps: "",
+    findings:
+      review.status === "agree"
+        ? []
+        : [{
+            severity: "warning",
+            category: "physics_engine",
+            title: "Root-cause explanation",
+            detail: summary,
+            trials: [],
+            confidence: 0.8,
+            source: "physics_engine",
+          }],
+    recommendations: recs,
     timed_out: false,
     error: null,
+    review_version: review.reviewVersion ?? "",
   };
 }
 
@@ -162,17 +204,31 @@ export async function POST(req: Request) {
     violating_rows: rows.filter((_, i) => excludedIdx.has(i)).slice(0, 4),
   };
 
-  const review =
+ const failedIssues = result.issues.filter((i: { status: string }) => i.status === "failed");
+
+ const review =
     body.run_ai === false
       ? ({ enabled: false } as AiReview)
       : await aiReview(
           {
             status: result.status,
             score: result.status === "passed" ? 100 : result.status === "warning" ? 70 : 35,
-            violations: result.issues.filter((i: { status: string }) => i.status === "failed").map((i: { name: string; detail: string }) => ({ field: i.name, value: "", reason: i.detail, severity: "critical" as const })),
-            recommendations: [],
+            violations: failedIssues.map((i: { name: string; detail: string; value?: unknown }) => ({
+              field: i.name,
+              value: i.value != null ? String(i.value) : "",
+              reason: i.detail || "",
+              severity: "critical" as const,
+            })),
+            recommendations: result.exclusions
+              .slice(0, 6)
+              .map((e: { trial_number: number; reason: string }) => `Trial ${e.trial_number}: ${e.reason}`),
             simulationType: simType,
-            checks: [],
+            checks: failedIssues.map((i: { name: string; detail: string; category?: string }) => ({
+              name: i.name,
+              category: i.category ?? "physics",
+              status: "failed" as const,
+              detail: i.detail || "",
+            })),
           },
           body.conditions ?? {},
           profile,
