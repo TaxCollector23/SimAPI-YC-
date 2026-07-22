@@ -21,6 +21,8 @@ export const site = {
       items: [
         { label: "Dashboard", href: "/dashboard", desc: "Access your API keys, usage analytics, and playground." },
         { label: "Platform", href: "/platform", desc: "The validation engine, AI orchestrator, and pre-flight checks." },
+        { label: "Enterprise Workflows", href: "/enterprise-workflows", desc: "Best practices for production integration." },
+        { label: "Use Cases", href: "/use-cases", desc: "Real-world impact from aerospace to semiconductors." },
         { label: "Benchmarks", href: "/benchmark", desc: "Full methodology, dataset, and honest limitations." },
         { label: "Pricing", href: "/pricing", desc: "Plans and API quotas." },
       ],
