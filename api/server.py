@@ -61,7 +61,7 @@ app = FastAPI(
     version=API_VERSION,
     description=(
         "The CI/CD layer for engineering simulations. Dual-layer validation: "
-        "730+ deterministic physics checks across 21 domains plus optional LLM "
+        "900+ deterministic physics checks across 21 domains plus optional LLM "
         "reasoning."
     ),
     docs_url="/docs",
@@ -539,7 +539,7 @@ async def health() -> dict[str, Any]:
         "status": "ok",
         "version": API_VERSION,
         "environment": settings.environment,
-        "physics_checks": "730+",
+        "physics_checks": "900+",
         "domains": 21,
         "ai_enabled": AI_ENABLED,
         "ai_model": AI_MODEL,
@@ -789,6 +789,11 @@ async def demo(_: str = Depends(caller_identity)):
             "angle_of_attack": float(4.0 + np.random.normal(0, 1.0)),
             "temperature": float(288.15 + np.random.normal(0, 2.0)),
             "density": float(rho + np.random.normal(0, 0.01)),
+            "viscosity": float(mu + np.random.normal(0, 1e-7)),
+            "skin_friction_coefficient": float(0.004 + np.random.normal(0, 0.0003)),
+            "turbulence_intensity": float(0.03 + np.random.normal(0, 0.004)),
+            "pitching_moment": float(-0.05 + np.random.normal(0, 0.005)),
+            "side_force_coefficient": float(0.02 + np.random.normal(0, 0.003)),
         })
     return await _validate_core(ValidateRequest(
         data=data,

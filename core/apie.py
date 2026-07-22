@@ -69,8 +69,8 @@ import json
 import os
 import time
 import urllib.request
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -95,7 +95,7 @@ USE_ANTHROPIC_DIRECT = bool(ANTHROPIC_API_KEY)
 class PhysicalInvariant:
     """A single physical law encoded as a parametric check spec."""
     check: str          # check name
-    params: Dict        # check parameters
+    params: dict        # check parameters
     priority: int       # 1=highest
     law_name: str       # human-readable law name
     domain: str         # which domain this belongs to
@@ -104,11 +104,11 @@ class PhysicalInvariant:
 class PhysicalProfile:
     domain: str
     canonical_name: str
-    invariants: List[PhysicalInvariant]
-    bounds: Dict[str, Tuple[float, float]]   # col → (min, max)
-    primary_target: List[str]                # likely target columns
-    primary_features: List[str]              # likely feature columns
-    corruption_signatures: Dict[str, str]    # corruption_type → expected signal
+    invariants: list[PhysicalInvariant]
+    bounds: dict[str, tuple[float, float]]   # col → (min, max)
+    primary_target: list[str]                # likely target columns
+    primary_features: list[str]              # likely feature columns
+    corruption_signatures: dict[str, str]    # corruption_type → expected signal
 
 # Physical constants
 _C = {
@@ -118,9 +118,9 @@ _C = {
     'R_gas': 8.314, 'N_a': 6.022e23, 'Z0': 376.73,
 }
 
-def _build_domain_library() -> Dict[str, PhysicalProfile]:
+def _build_domain_library() -> dict[str, PhysicalProfile]:
     """Complete physical invariant library for all supported domains."""
-    lib: Dict[str, PhysicalProfile] = {}
+    lib: dict[str, PhysicalProfile] = {}
 
     # ── AERODYNAMICS / CFD ───────────────────────────────────────────────────
     aero_inv = [
@@ -665,7 +665,7 @@ def _build_domain_library() -> Dict[str, PhysicalProfile]:
 
 DOMAIN_LIBRARY = _build_domain_library()
 
-def get_profile(domain: str) -> Optional[PhysicalProfile]:
+def get_profile(domain: str) -> PhysicalProfile | None:
     d = domain.lower().strip()
     return DOMAIN_LIBRARY.get(d) or DOMAIN_LIBRARY.get(d.replace(' ', '_')) or None
 
@@ -676,13 +676,13 @@ def get_profile(domain: str) -> Optional[PhysicalProfile]:
 
 @dataclass
 class CorruptionFingerprint:
-    n_rows: int; n_cols: int; columns: List[str]
-    ratio_signals: Dict[str, Tuple]; col_stats: Dict[str, Tuple]
-    strong_correlations: Dict[str, float]; lag1_autocorr: Dict[str, float]
+    n_rows: int; n_cols: int; columns: list[str]
+    ratio_signals: dict[str, tuple]; col_stats: dict[str, tuple]
+    strong_correlations: dict[str, float]; lag1_autocorr: dict[str, float]
     copy_paste_fraction: float; max_distribution_shift: float
     residual_entropy: float; missing_fraction: float
-    constant_columns: List[str]; domain: str
-    discovered_invariants: Dict[str, float]
+    constant_columns: list[str]; domain: str
+    discovered_invariants: dict[str, float]
 
     def to_json(self) -> str:
         d = {
@@ -725,10 +725,10 @@ def _ransac_ratio(a: np.ndarray, b: np.ndarray, n_iter=100, thr=0.15):
     return (best_k, max(mad, abs(best_k) * 0.001, 1e-12))
 
 def compute_fingerprint(data: pd.DataFrame, domain: str,
-                        conditions: Optional[Dict] = None) -> CorruptionFingerprint:
+                        conditions: dict | None = None) -> CorruptionFingerprint:
     cols = list(data.select_dtypes(include=[np.number]).columns)
     n = len(data)
-    col_stats: Dict[str, Tuple] = {}
+    col_stats: dict[str, tuple] = {}
     with np.errstate(all="ignore"):
         for col in cols[:20]:
             s = data[col].dropna().values.astype(float)
@@ -752,8 +752,8 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
         ("power_consumption","joint_torque"), ("heat_flux","temperature"),
         ("electron_density","debye_length"),
     ]
-    ratio_signals: Dict[str, Tuple] = {}
-    discovered: Dict[str, float] = {}
+    ratio_signals: dict[str, tuple] = {}
+    discovered: dict[str, float] = {}
     for ca, cb in ratio_pairs:
         if ca not in data.columns or cb not in data.columns: continue
         r = _ransac_ratio(data[ca].values.astype(float), data[cb].values.astype(float))
@@ -774,7 +774,7 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
         if r: discovered["P/(rho*T)"] = r[0]
 
     # Strong correlations
-    strong_corr: Dict[str, float] = {}
+    strong_corr: dict[str, float] = {}
     if len(cols) >= 2:
         try:
             samp = data[cols[:15]].sample(min(n, 2000), random_state=42) if n > 2000 else data[cols[:15]]
@@ -789,7 +789,7 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
     # Lag-1 autocorrelation — computed on WINSORIZED data to prevent
     # consecutive large outliers (e.g., solver divergence plateau) from creating
     # artificial autocorrelation that falsely triggers the temporal coherence check.
-    lag1: Dict[str, float] = {}
+    lag1: dict[str, float] = {}
     for col in cols[:12]:
         s = data[col].dropna().values.astype(float)
         if len(s) > 10:
@@ -905,17 +905,17 @@ Respond ONLY with valid JSON:
 
 @dataclass
 class TestPlan:
-    checks: List[Dict[str, Any]]
-    target_columns: List[str]
-    feature_columns: List[str]
-    suspected_corruption_types: Dict[str, float]
+    checks: list[dict[str, Any]]
+    target_columns: list[str]
+    feature_columns: list[str]
+    suspected_corruption_types: dict[str, float]
     ensemble_threshold_sigma: float
     ratio_threshold_sigma: float
     ai_diagnosis: str
     ai_used: bool
 
 def _build_plan_from_profile(profile: PhysicalProfile,
-                              fp: CorruptionFingerprint) -> List[Dict]:
+                              fp: CorruptionFingerprint) -> list[dict]:
     """Convert domain invariants to concrete check specs."""
     checks = []
     cols = set(fp.columns)
@@ -957,10 +957,10 @@ def _build_plan_from_profile(profile: PhysicalProfile,
     return checks
 
 def _deterministic_test_plan(fp: CorruptionFingerprint,
-                              profile: Optional[PhysicalProfile]) -> TestPlan:
+                              profile: PhysicalProfile | None) -> TestPlan:
     """Precision-calibrated deterministic orchestrator."""
-    checks: List[Dict] = []
-    suspected: Dict[str, float] = {k: 0.0 for k in [
+    checks: list[dict] = []
+    suspected: dict[str, float] = {k: 0.0 for k in [
         "sensor_drift","copy_paste","unit_conversion",
         "measurement_noise","solver_divergence","cross_variable",
     ]}
@@ -1089,7 +1089,7 @@ def _deterministic_test_plan(fp: CorruptionFingerprint,
                                           'threshold_sigma': 5.5}})
 
     # ── Ensemble predictor ─────────────────────────────────────────────────
-    target_col = None; feature_cols: List[str] = []
+    target_col = None; feature_cols: list[str] = []
     candidates = (profile.primary_target if profile else []) + [
         "drag_coefficient","lift_coefficient","stress","von_mises_stress",
         "temperature","pressure","heat_flux","electric_field",
@@ -1147,7 +1147,7 @@ def _deterministic_test_plan(fp: CorruptionFingerprint,
         ai_diagnosis="", ai_used=False,
     )
 
-def _try_ai(fp: CorruptionFingerprint, conditions: Optional[Dict]) -> Optional[TestPlan]:
+def _try_ai(fp: CorruptionFingerprint, conditions: dict | None) -> TestPlan | None:
     """Try AI (Anthropic direct, then OpenRouter). Returns None on failure."""
     msg = fp.to_json() + (f"\n\nConditions: {json.dumps(conditions)}" if conditions else "")
 
@@ -1209,8 +1209,8 @@ def _parse_plan(j: dict, fp: CorruptionFingerprint) -> TestPlan:
         ai_diagnosis=str(j.get("ai_diagnosis","")), ai_used=True,
     )
 
-def orchestrate(fp: CorruptionFingerprint, profile: Optional[PhysicalProfile],
-                conditions: Optional[Dict] = None) -> TestPlan:
+def orchestrate(fp: CorruptionFingerprint, profile: PhysicalProfile | None,
+                conditions: dict | None = None) -> TestPlan:
     det = _deterministic_test_plan(fp, profile)
     ai = _try_ai(fp, conditions)
     if ai is None: return det
@@ -1229,19 +1229,19 @@ def orchestrate(fp: CorruptionFingerprint, profile: Optional[PhysicalProfile],
 @dataclass
 class RowAnomalyScore:
     row_index: int; corruption_type: str; max_sigma: float
-    check_scores: Dict[str, float]; severity: str; diagnosis: str; n_checks: int = 1
+    check_scores: dict[str, float]; severity: str; diagnosis: str; n_checks: int = 1
 
 class FilterBank:
     """Iterative cascade. Inlier set updated after each priority tier."""
 
     def __init__(self, data: pd.DataFrame, plan: TestPlan,
-                 prior_exclusions: Optional[Set] = None):
+                 prior_exclusions: set | None = None):
         self.data = data.reset_index(drop=True)
         self.plan = plan; self.n = len(data)
         self.cols = set(data.columns)
-        self.excl: Set = set(prior_exclusions or set())
-        self.scores: List[RowAnomalyScore] = []
-        self._cache: Dict[str, np.ndarray] = {}
+        self.excl: set = set(prior_exclusions or set())
+        self.scores: list[RowAnomalyScore] = []
+        self._cache: dict[str, np.ndarray] = {}
 
     def _arr(self, col: str) -> np.ndarray:
         if col not in self._cache:
@@ -1254,7 +1254,7 @@ class FilterBank:
             if i < self.n: m[i] = False
         return m
 
-    def _mad(self, r: np.ndarray, mask: np.ndarray) -> Tuple[float,float]:
+    def _mad(self, r: np.ndarray, mask: np.ndarray) -> tuple[float,float]:
         r_in = r[mask]
         med = float(np.median(r_in)); mad = float(np.median(np.abs(r_in-med)))*1.4826
         return med, max(mad, 1e-12)
@@ -1269,9 +1269,9 @@ class FilterBank:
                 return
         self.scores.append(RowAnomalyScore(i, ctype, sigma, {check: sigma}, sev, diag))
 
-    def run(self) -> Tuple[Set, List[RowAnomalyScore]]:
+    def run(self) -> tuple[set, list[RowAnomalyScore]]:
         # Execute in priority tiers with inlier refresh between tiers
-        by_priority: Dict[int, List[Dict]] = {}
+        by_priority: dict[int, list[dict]] = {}
         for spec in self.plan.checks:
             p = spec.get("priority", 99)
             by_priority.setdefault(p, []).append(spec)
@@ -1781,8 +1781,8 @@ class FilterBank:
 # LAYER 4: Confidence Calibrator
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def calibrate_exclusions(excl: Set, scores: List[RowAnomalyScore],
-                         risk_mode: str = "precision") -> Set:
+def calibrate_exclusions(excl: set, scores: list[RowAnomalyScore],
+                         risk_mode: str = "precision") -> set:
     """
     Layer 4: Adjusts the exclusion set based on confidence.
     
@@ -1798,7 +1798,7 @@ def calibrate_exclusions(excl: Set, scores: List[RowAnomalyScore],
     """
     if risk_mode == "recall": return excl
     score_map = {s.row_index: s for s in scores}
-    final: Set = set()
+    final: set = set()
     for i in excl:
         s = score_map.get(i)
         if s is None:
@@ -1820,8 +1820,8 @@ def calibrate_exclusions(excl: Set, scores: List[RowAnomalyScore],
     return final
 
 
-def get_review_flags(excl: Set, auto_removed: Set,
-                     scores: List[RowAnomalyScore]) -> List[dict]:
+def get_review_flags(excl: set, auto_removed: set,
+                     scores: list[RowAnomalyScore]) -> list[dict]:
     """
     Returns rows that APIE flagged as suspicious but didn't auto-remove.
     These warrant human review, not automatic deletion.
@@ -1851,17 +1851,17 @@ def get_review_flags(excl: Set, auto_removed: Set,
 
 @dataclass
 class APIEResult:
-    excluded_indices: Set          # auto-remove: high-confidence corruption
-    flagged_for_review: List[dict] # suspicious but not auto-removed: warrant human inspection
-    row_scores: List[RowAnomalyScore]
+    excluded_indices: set          # auto-remove: high-confidence corruption
+    flagged_for_review: list[dict] # suspicious but not auto-removed: warrant human inspection
+    row_scores: list[RowAnomalyScore]
     fingerprint: CorruptionFingerprint
     test_plan: TestPlan
-    discovered_invariants: Dict[str, float]
+    discovered_invariants: dict[str, float]
     processing_ms: float; ai_used: bool; ai_diagnosis: str
     precision_estimate: float
-    domain_profile: Optional[str]
-    diagnosis: Optional[Any] = None   # CausalDiagnosis result
-    manifold: Optional[Any] = None    # PhysicsManifold result
+    domain_profile: str | None
+    diagnosis: Any | None = None   # CausalDiagnosis result
+    manifold: Any | None = None    # PhysicsManifold result
 
 class AdaptivePhysicsIntelligenceEngine:
     """
@@ -1873,7 +1873,7 @@ class AdaptivePhysicsIntelligenceEngine:
         )
     """
     def validate(self, data, domain: str = "aerodynamics",
-                 conditions: Optional[Dict] = None,
+                 conditions: dict | None = None,
                  risk_mode: str = "precision") -> APIEResult:
         t0 = time.time()
         if isinstance(data, list): data = pd.DataFrame(data)

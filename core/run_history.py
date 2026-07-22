@@ -44,12 +44,11 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data structures
@@ -97,13 +96,13 @@ class RunRecord:
     run_id: str
     timestamp: float
     n_rows: int
-    column_stats: Dict[str, Tuple[float, float, float]]  # col → (mean, std, median)
-    ratio_baselines: Dict[str, float]                     # "col_a/col_b" → ratio value
+    column_stats: dict[str, tuple[float, float, float]]  # col → (mean, std, median)
+    ratio_baselines: dict[str, float]                     # "col_a/col_b" → ratio value
     copy_paste_fraction: float
     residual_entropy: float
     n_excluded: int
     n_flagged: int
-    corruption_types_found: List[str]
+    corruption_types_found: list[str]
 
 
 @dataclass
@@ -123,11 +122,11 @@ class CrossRunAnomaly:
 class CrossRunResult:
     """What the history tracker found for this run."""
     n_historical_runs: int
-    anomalies: List[CrossRunAnomaly]
+    anomalies: list[CrossRunAnomaly]
     run_is_outlier: bool       # True if this run is a statistical outlier in the history
     config_match_score: float  # 0-1: how similar is this to expected fingerprint
     new_baseline_learned: bool # True if this run was added to the history
-    historical_envelope: Dict[str, Any]  # summarised for display
+    historical_envelope: dict[str, Any]  # summarised for display
     processing_ms: float
 
 
@@ -156,11 +155,11 @@ class RunHistoryTracker:
             print("This run looks different from historical baseline!")
     """
 
-    def __init__(self, storage_path: Optional[str] = None,
+    def __init__(self, storage_path: str | None = None,
                  max_runs_per_config: int = 500):
         self.max_runs = max_runs_per_config
         self._storage_path = Path(storage_path) if storage_path else None
-        self._data: Dict[str, Any] = self._load()
+        self._data: dict[str, Any] = self._load()
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -170,8 +169,8 @@ class RunHistoryTracker:
         config_key: str,               # identifies the simulation configuration
         n_excluded: int = 0,
         n_flagged: int = 0,
-        corruption_types: Optional[List[str]] = None,
-        run_id: Optional[str] = None,
+        corruption_types: list[str] | None = None,
+        run_id: str | None = None,
     ) -> CrossRunResult:
         """
         Compare this run's fingerprint against history, then record it.
@@ -187,7 +186,7 @@ class RunHistoryTracker:
         n_hist = len(history['runs'])
 
         # ── Compare against history ────────────────────────────────────────
-        anomalies: List[CrossRunAnomaly] = []
+        anomalies: list[CrossRunAnomaly] = []
         config_match = 1.0
 
         if n_hist >= 3:   # need at least 3 runs to establish a baseline
@@ -222,7 +221,7 @@ class RunHistoryTracker:
         )
 
     def get_trend(self, config_key: str, column: str,
-                  last_n: int = 20) -> Dict[str, Any]:
+                  last_n: int = 20) -> dict[str, Any]:
         """
         Return the trend of a specific column's mean across the last N runs.
         Useful for plotting drift over time.
@@ -251,12 +250,12 @@ class RunHistoryTracker:
 
     def _compare_to_history(
         self, fp, history: dict, n_hist: int
-    ) -> Tuple[List[CrossRunAnomaly], float]:
+    ) -> tuple[list[CrossRunAnomaly], float]:
         """Core comparison logic."""
         anomalies = []
-        col_summaries: Dict[str, Dict] = history.get('col_summaries', {})
-        ratio_summaries: Dict[str, Dict] = history.get('ratio_summaries', {})
-        meta: Dict = history.get('meta', {})
+        col_summaries: dict[str, dict] = history.get('col_summaries', {})
+        ratio_summaries: dict[str, dict] = history.get('ratio_summaries', {})
+        meta: dict = history.get('meta', {})
 
         # ── Column mean drift ──────────────────────────────────────────────
         for col, stats in fp.col_stats.items():
@@ -309,7 +308,7 @@ class RunHistoryTracker:
                     ))
 
         # ── Ratio invariant drift ──────────────────────────────────────────
-        for pair, (ratio, mad, tau, p) in fp.ratio_signals.items():
+        for pair, (ratio, _mad, _tau, _p) in fp.ratio_signals.items():
             if pair not in ratio_summaries:
                 continue
             rs = ratio_summaries[pair]
@@ -390,7 +389,7 @@ class RunHistoryTracker:
         return anomalies, config_match
 
     def _record_run(self, history: dict, fp, run_id: str,
-                    n_excluded: int, n_flagged: int, corruption_types: List[str]):
+                    n_excluded: int, n_flagged: int, corruption_types: list[str]):
         """Record this run into the history."""
         # Build run record
         col_stats_compact = {
@@ -415,7 +414,7 @@ class RunHistoryTracker:
             history['runs'] = history['runs'][-self.max_runs:]
 
         # Update Welford summaries
-        for col, (mean, std, med) in col_stats_compact.items():
+        for col, (mean, std, _med) in col_stats_compact.items():
             cs = history['col_summaries'].setdefault(col, {
                 'n': 0, 'mean_of_means': 0.0, 'm2_of_means': 0.0,
                 'mean_of_stds': 0.0, 'm2_of_stds': 0.0,
@@ -429,7 +428,7 @@ class RunHistoryTracker:
             cs['std_of_means'] = np.sqrt(cs['m2_of_means'] / max(n-1, 1))
             cs['std_of_stds']  = np.sqrt(cs['m2_of_stds']  / max(n-1, 1))
 
-        for pair, (ratio, mad, tau, p) in fp.ratio_signals.items():
+        for pair, (ratio, _mad, _tau, _p) in fp.ratio_signals.items():
             rs = history['ratio_summaries'].setdefault(pair, {'n': 0, 'mean': 0.0, 'M2': 0.0, 'std': 0.0})
             rs['n'] += 1; n = rs['n']
             delta = ratio - rs['mean']; rs['mean'] += delta / n
@@ -448,7 +447,7 @@ class RunHistoryTracker:
         meta['std_copy_paste'] = np.sqrt(meta.get('m2_copy_paste', 0) / max(meta.get('mean_copy_paste_n',1)-1,1))
         meta['std_entropy']    = np.sqrt(meta.get('m2_entropy', 0)    / max(meta.get('mean_entropy_n',1)-1,1))
 
-    def _build_envelope(self, history: dict) -> Dict[str, Any]:
+    def _build_envelope(self, history: dict) -> dict[str, Any]:
         """Summary of the historical envelope for display."""
         cs = history['col_summaries']
         return {

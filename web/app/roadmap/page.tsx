@@ -13,7 +13,7 @@ type Status = "shipped" | "in-progress" | "planned";
 interface Item { title: string; detail: string; status: Status }
 
 const items: Item[] = [
-  { status: "shipped", title: "730+ deterministic physics checks across 21 domains", detail: "core/physics_validator.py — the full engine, live on the deployed site via the self-hosted Python backend." },
+  { status: "shipped", title: "900+ deterministic physics checks across 21 domains", detail: "core/physics_validator.py — the full engine, live on the deployed site via the self-hosted Python backend." },
   { status: "shipped", title: "Honest, reproducible benchmarks", detail: "5-seed, randomized-corruption benchmark with a naive-baseline comparison and a published methodology page — see /benchmark." },
   { status: "shipped", title: "Mann-Kendall + sliding-window sensor drift detection", detail: "Pushed corruption recall from 55% to 71% on the harder, randomized benchmark." },
   { status: "shipped", title: "Multi-phase AI orchestrator", detail: "Dataset profiling → physics checks → pattern recognition → targeted follow-up probes → synthesis, via OpenRouter." },
@@ -22,7 +22,7 @@ const items: Item[] = [
   { status: "shipped", title: "Pre-flight mesh/setup validation", detail: "Predicts likely output-check failures before a simulation runs, with plain-English explanations and config-specific fixes." },
   { status: "shipped", title: "CLI parity across Python and Node", detail: "login, validate, watch, doctor, explain, repair, api-key, config, usage — identical behavior in both implementations." },
   { status: "shipped", title: "Dashboard: Analytics, Logs, Request Inspector", detail: "All backed by real captured validation runs from this browser — no seeded or synthetic data." },
-  { status: "shipped", title: "Hybrid TypeScript/Python engine on the deployed site", detail: "PYTHON_API_URL points the deployed site at the self-hosted Render backend, so the playground and API run the full 730+ check engine. Falls back to a ~20-check TypeScript engine only if that backend is unreachable. The engine badge in the dashboard tells you which one you're getting." },
+  { status: "shipped", title: "Hybrid TypeScript/Python engine on the deployed site", detail: "PYTHON_API_URL points the deployed site at the self-hosted Render backend, so the playground and API run the full 900+ check engine. Falls back to a ~20-check TypeScript engine only if that backend is unreachable. The engine badge in the dashboard tells you which one you're getting." },
   { status: "in-progress", title: "One-click Python backend deployment", detail: "railway.json and render.yaml exist; still validating the one-click flow end-to-end on both platforms." },
   { status: "planned", title: "Durable job storage", detail: "Validation jobs are currently in-memory on the API server. A real queue + persistent store is needed before this can run as a production service with restart safety." },
   { status: "planned", title: "Organizations, projects, and RBAC", detail: "Today's auth model is single-user (Firebase or local browser session). Multi-user orgs need a real backend data model — not on the roadmap until there's a durable store to build it on." },

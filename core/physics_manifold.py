@@ -55,13 +55,11 @@ from __future__ import annotations
 import time
 import warnings
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import RobustScaler
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Data structures
@@ -70,17 +68,17 @@ from sklearn.preprocessing import RobustScaler
 @dataclass
 class ManifoldResult:
     """Result of physics manifold validation."""
-    auto_remove: Set[int]             # high-confidence off-manifold rows
-    review_flags: List[Dict]          # lower-confidence flags with reconstructions
+    auto_remove: set[int]             # high-confidence off-manifold rows
+    review_flags: list[dict]          # lower-confidence flags with reconstructions
     per_row_scores: np.ndarray        # reconstruction error per row
     threshold_auto: float             # threshold used for auto-remove
     threshold_review: float           # threshold used for review
     n_components: int                 # PCA components used (≈ physics DOF)
     explained_variance: float         # fraction of variance captured
     manifold_mode: str                # 'cold_start' | 'warm'
-    column_names: List[str]           # columns included in manifold
-    reconstructions: Optional[Dict[int, Dict[str, float]]]  # row_idx → reconstructed values
-    component_interpretation: List[str]  # what each component likely represents
+    column_names: list[str]           # columns included in manifold
+    reconstructions: dict[int, dict[str, float]] | None  # row_idx → reconstructed values
+    component_interpretation: list[str]  # what each component likely represents
     processing_ms: float
 
 
@@ -118,8 +116,8 @@ class PhysicsManifoldValidator:
     def validate(
         self,
         df: pd.DataFrame,
-        prior_clean_X: Optional[np.ndarray] = None,
-        inlier_mask: Optional[np.ndarray] = None,
+        prior_clean_X: np.ndarray | None = None,
+        inlier_mask: np.ndarray | None = None,
         provide_reconstructions: bool = True,
     ) -> ManifoldResult:
         """
@@ -214,8 +212,8 @@ class PhysicsManifoldValidator:
         col_err_s = (X_new_s - X_new_recon_s) ** 2  # (n, p)
 
         # ── Apply thresholds ───────────────────────────────────────────────
-        auto_remove: Set[int] = set()
-        review_list: List[Dict] = []
+        auto_remove: set[int] = set()
+        review_list: list[dict] = []
 
         for i in range(n_rows):
             score = float(err_new[i])
@@ -293,10 +291,10 @@ class PhysicsManifoldValidator:
 
     def _diagnose_violation(
         self,
-        top_cols: List[str],
-        col_scores: Dict[str, float],
+        top_cols: list[str],
+        col_scores: dict[str, float],
         row_values: np.ndarray,
-        recon_values: Optional[Dict],
+        recon_values: dict | None,
     ) -> str:
         """
         Generate a plain-English diagnosis of what the manifold violation means.
@@ -314,9 +312,9 @@ class PhysicsManifoldValidator:
             if actual is not None and abs(reconstructed) > 1e-10:
                 ratio = actual / (reconstructed + 1e-30)
                 if abs(ratio - 1000) < 200:
-                    parts.append(f"The value is ~1000× the manifold expectation — likely Pa→kPa or m→mm unit error.")
+                    parts.append("The value is ~1000× the manifold expectation — likely Pa→kPa or m→mm unit error.")
                 elif abs(ratio - 0.001) < 0.0005:
-                    parts.append(f"The value is ~0.001× the manifold expectation — likely kPa→Pa or mm→m unit error.")
+                    parts.append("The value is ~0.001× the manifold expectation — likely kPa→Pa or mm→m unit error.")
                 elif ratio > 5:
                     parts.append(f"The value ({actual:.4g}) is {ratio:.1f}× the manifold prediction ({reconstructed:.4g}) — possible solver divergence or factor error.")
                 elif ratio < 0.2:
@@ -337,8 +335,8 @@ class PhysicsManifoldValidator:
         return " ".join(parts)
 
     def _interpret_components(
-        self, pca: PCA, col_names: List[str]
-    ) -> List[str]:
+        self, pca: PCA, col_names: list[str]
+    ) -> list[str]:
         """
         Interpret PCA components in physical terms.
         High loadings on specific columns suggest what physical dimension
@@ -354,7 +352,7 @@ class PhysicsManifoldValidator:
             top_vals = abs_loadings[top_idx]
 
             # Heuristic interpretation
-            col_str = ", ".join(f"{c}({v:.2f})" for c, v in zip(top_cols, top_vals))
+            col_str = ", ".join(f"{c}({v:.2f})" for c, v in zip(top_cols, top_vals, strict=False))
             ev = pca.explained_variance_ratio_[k] * 100
 
             interp = f"PC{k+1} ({ev:.1f}% var): dominant in {col_str}"
@@ -389,7 +387,7 @@ class PhysicsManifoldValidator:
 
 # Mapping from common aliases to canonical names used in APIE domain profiles
 # This allows domain profiles to fire even when columns have non-standard names
-COLUMN_ALIAS_MAP: Dict[str, str] = {
+COLUMN_ALIAS_MAP: dict[str, str] = {
     # Aerodynamics
     'cd': 'drag_coefficient', 'coef_drag': 'drag_coefficient', 'drag_coeff': 'drag_coefficient',
     'cl': 'lift_coefficient', 'coef_lift': 'lift_coefficient', 'lift_coeff': 'lift_coefficient',
@@ -422,13 +420,13 @@ COLUMN_ALIAS_MAP: Dict[str, str] = {
     'f': 'frequency', 'freq': 'frequency', 'wl': 'wavelength', 'lam': 'wavelength',
 }
 
-def normalize_column_names(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+def normalize_column_names(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
     """
     Attempt to map non-standard column names to canonical APIE names.
     Returns (renamed_df, mapping_dict).
     Only renames when there's an unambiguous match.
     """
-    rename_map: Dict[str, str] = {}
+    rename_map: dict[str, str] = {}
     existing_canonical = set(df.columns)
 
     for col in df.columns:
@@ -450,8 +448,8 @@ _manifold_validator = PhysicsManifoldValidator()
 
 def validate_manifold(
     df: pd.DataFrame,
-    prior_clean_X: Optional[np.ndarray] = None,
-    inlier_mask: Optional[np.ndarray] = None,
+    prior_clean_X: np.ndarray | None = None,
+    inlier_mask: np.ndarray | None = None,
 ) -> ManifoldResult:
     """Validate a dataset against its physics manifold. Module-level convenience function."""
     return _manifold_validator.validate(df, prior_clean_X=prior_clean_X, inlier_mask=inlier_mask)

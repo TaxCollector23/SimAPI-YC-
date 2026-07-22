@@ -17,7 +17,6 @@ import os
 import time
 import urllib.error
 import urllib.request
-from typing import Dict, List, Optional
 
 OPENROUTER_API_KEY = os.environ.get("SIMAPI_OPENROUTER_API_KEY", "")
 OPENROUTER_URL = os.environ.get(
@@ -48,7 +47,7 @@ engineer debug their simulation pipeline.
 - Respond ONLY with valid JSON in the format specified. No markdown, no preamble."""
 
 
-def _build_lean_prompt(validation_report: Dict) -> str:
+def _build_lean_prompt(validation_report: dict) -> str:
     """
     Build a hyper-lean prompt: strip raw data, inject only the high-value
     mathematical error logs. Keeps token count minimal for edge-model inference.
@@ -94,7 +93,7 @@ def _build_lean_prompt(validation_report: Dict) -> str:
     return _SYSTEM_PROMPT + "\n\n" + user_message
 
 
-def _call_llm(prompt: str) -> Optional[Dict]:
+def _call_llm(prompt: str) -> dict | None:
     if not AI_ENABLED:
         return None
 
@@ -129,7 +128,7 @@ def _call_llm(prompt: str) -> Optional[Dict]:
         return {"error": str(e), "expert_assessment": "AI assessment unavailable."}
 
 
-def generate_ai_assessment(validation_report: Dict) -> Dict:
+def generate_ai_assessment(validation_report: dict) -> dict:
     """
     Compute-first AI assessment.
 

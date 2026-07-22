@@ -32,8 +32,7 @@ customers and used to prioritize detection improvements.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -71,12 +70,12 @@ class RedTeamReport:
     """Full adversarial red team assessment."""
     domain: str
     n_rows: int
-    attack_results: List[AttackResult]
+    attack_results: list[AttackResult]
     overall_detection_rate: float
     hard_evasion_rate: float     # fraction of HARD attacks that evaded detection
     apie_grade: str              # 'A' through 'F'
-    blind_spots: List[str]
-    recommendations: List[str]
+    blind_spots: list[str]
+    recommendations: list[str]
     processing_ms: float
 
 
@@ -95,7 +94,7 @@ class AdversarialRedTeam:
         self,
         df_clean: pd.DataFrame,
         domain: str,
-        conditions: Optional[Dict] = None,
+        conditions: dict | None = None,
         n_attack_rows: int = 50,
         seed: int = 42,
     ) -> RedTeamReport:
@@ -122,10 +121,10 @@ class AdversarialRedTeam:
         baseline_fp = len(r_clean.excluded_indices)
 
         # Run attacks
-        results: List[AttackResult] = []
+        results: list[AttackResult] = []
         numeric_cols = df_clean.select_dtypes(include=[np.number]).columns.tolist()
         target_rows = sorted(rng.choice(n, size=min(n_attack_rows, n//4), replace=False).tolist())
-        target_set = set(target_rows)
+        set(target_rows)
 
         # ── TIER 1 (EASY): Physical law violations ─────────────────────────
         res = self._attack_physical_bounds(df_clean, domain, conditions, target_rows,
@@ -271,7 +270,7 @@ class AdversarialRedTeam:
         Values are statistically plausible globally but wrong for their context.
         """
         df2 = df.copy()
-        n = len(df)
+        len(df)
         target_col = cols[min(1, len(cols)-1)]  # second column
         # Sample from the empirical distribution of this column
         all_vals = df[target_col].values
@@ -350,7 +349,7 @@ class AdversarialRedTeam:
         Creates smooth transitions that defeat temporal coherence checks.
         """
         df2 = df.copy()
-        n = len(df)
+        len(df)
         if len(rows) < 10:
             return self._attack_correlated_multicolumn(df, domain, conditions, rows, cols, rng, bfp)
         
@@ -453,7 +452,7 @@ class AdversarialRedTeam:
             ),
         )
 
-    def _build_report(self, results: List[AttackResult], domain: str,
+    def _build_report(self, results: list[AttackResult], domain: str,
                       n_rows: int, ms: float) -> RedTeamReport:
         """Build the summary report."""
         # Compute aggregate metrics

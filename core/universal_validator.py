@@ -15,13 +15,10 @@ Designed to achieve:
 """
 from __future__ import annotations
 
-import warnings
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 from scipy import stats
-from scipy.signal import welch
 
 # ── Physical constants ────────────────────────────────────────────────────────
 _P = {
@@ -57,7 +54,7 @@ DOMAIN_PROFILES = {
 }
 
 
-def _classify_domain(domain: str) -> Tuple[str, dict]:
+def _classify_domain(domain: str) -> tuple[str, dict]:
     domain_lc = domain.lower().strip()
     for profile, cfg in DOMAIN_PROFILES.items():
         if domain_lc in cfg["domains"]:
@@ -72,7 +69,7 @@ def _classify_domain(domain: str) -> Tuple[str, dict]:
 
 def _ransac_ratio_invariant(a: np.ndarray, b: np.ndarray,
                              inlier_thresh: float = 0.15,
-                             n_iter: int = 100) -> Optional[float]:
+                             n_iter: int = 100) -> float | None:
     """
     RANSAC estimator for a multiplicative invariant  a / b ≈ k.
     Robust against up to 40% corrupted rows.
@@ -104,7 +101,7 @@ def _ransac_ratio_invariant(a: np.ndarray, b: np.ndarray,
 
 def _ransac_affine_invariant(x: np.ndarray, y: np.ndarray,
                                inlier_thresh: float = 0.15,
-                               n_iter: int = 150) -> Optional[Tuple[float, float]]:
+                               n_iter: int = 150) -> tuple[float, float] | None:
     """
     RANSAC for a linear relation  y ≈ m·x + c.
     Returns (slope, intercept) for the best consensus, or None.
@@ -199,7 +196,7 @@ def _residual_entropy_score(series: np.ndarray,
 
 
 def _changepoint_indices(series: np.ndarray, n_windows: int = 10,
-                          sigma_thresh: float = 2.5) -> List[int]:
+                          sigma_thresh: float = 2.5) -> list[int]:
     """
     CUSUM-like detector: flag windows whose mean deviates > sigma_thresh·σ
     from the global mean. Returns flat list of row indices inside bad windows.
@@ -210,7 +207,7 @@ def _changepoint_indices(series: np.ndarray, n_windows: int = 10,
     if sd < 1e-30:
         return []
 
-    flagged: List[int] = []
+    flagged: list[int] = []
     for k in range(n_windows):
         sl = slice(k * w, (k + 1) * w)
         win = series[sl]
@@ -239,8 +236,8 @@ class AnomalyRecord:
 class ValidationResult:
     is_valid: bool
     profile_assigned: str
-    discovered_invariants: Dict[str, float]
-    anomalies_detected: List[AnomalyRecord]
+    discovered_invariants: dict[str, float]
+    anomalies_detected: list[AnomalyRecord]
     excluded_indices: set
     processing_ms: float
 
@@ -253,7 +250,7 @@ class UniversalSimulationValidator:
         result = validator.validate(dataset, domain)
     """
 
-    def validate(self, dataset: List[Dict], domain: str) -> Dict:
+    def validate(self, dataset: list[dict], domain: str) -> dict:
         import time
         t0 = time.time()
 
@@ -269,9 +266,9 @@ class UniversalSimulationValidator:
             data[col] = pd.to_numeric(data[col], errors="coerce")
 
         profile, cfg = _classify_domain(domain)
-        anomalies: List[AnomalyRecord] = []
+        anomalies: list[AnomalyRecord] = []
         excluded: set = set()
-        invariants: Dict[str, float] = {}
+        invariants: dict[str, float] = {}
 
         # ── Layer 1: RANSAC Invariant Discovery ───────────────────────────
         l1_excl, l1_inv = self._layer1_invariant_discovery(data, cols, cfg, profile)
@@ -318,7 +315,7 @@ class UniversalSimulationValidator:
         dataset itself, robust against up to 40% initial corruption.
         """
         excl: set = set()
-        invariants: Dict[str, float] = {}
+        invariants: dict[str, float] = {}
         thresh = cfg["ransac_inlier_thresh"]
 
         # Re = ρvL/μ  →  ratio invariant: Re / (ρvL/μ) ≈ 1
@@ -390,7 +387,7 @@ class UniversalSimulationValidator:
           - Scaling paradoxes that pass individual z-score tests
         """
         excl: set = set()
-        anomalies: List[AnomalyRecord] = []
+        anomalies: list[AnomalyRecord] = []
         thresh = cfg["ransac_inlier_thresh"] * 2  # 2× for per-row eval
 
         n = len(data)
@@ -523,7 +520,7 @@ class UniversalSimulationValidator:
     # ── Layer 3 ───────────────────────────────────────────────────────────────
 
     def _layer3_state_space(self, data, cols, cfg, invariants,
-                             prior_exclusions: Optional[set] = None):
+                             prior_exclusions: set | None = None):
         """
         Continuous state-space observer. Detects:
           - Sensor drift (progressive monotonic bias building over rows)
@@ -533,7 +530,7 @@ class UniversalSimulationValidator:
         from pure simulation artifacts.
         """
         excl: set = set(prior_exclusions) if prior_exclusions else set()
-        anomalies: List[AnomalyRecord] = []
+        anomalies: list[AnomalyRecord] = []
         chaos_tol = cfg["chaos_tolerance"]
         n = len(data)
 
@@ -751,7 +748,7 @@ class UniversalSimulationValidator:
         return excl, anomalies
 
     @staticmethod
-    def _empty_result(domain: str) -> Dict:
+    def _empty_result(domain: str) -> dict:
         profile, _ = _classify_domain(domain)
         return {
             "is_valid": True,

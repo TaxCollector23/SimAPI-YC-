@@ -31,11 +31,9 @@ import hashlib
 import json
 import platform
 import socket
-import time
 import uuid
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -57,7 +55,7 @@ class ComplianceReport:
     dataset_hash_sha256: str
     dataset_n_rows: int
     dataset_n_columns: int
-    dataset_columns: List[str]
+    dataset_columns: list[str]
     
     # Validation summary
     domain: str
@@ -65,24 +63,24 @@ class ComplianceReport:
     n_auto_removed: int
     n_flagged_for_review: int
     n_clean_rows: int
-    corruption_types_found: List[str]
-    suspected_corruption_by_type: Dict[str, float]
+    corruption_types_found: list[str]
+    suspected_corruption_by_type: dict[str, float]
     
     # Diagnosis
     primary_diagnosis: str
-    causal_chain: List[str]
+    causal_chain: list[str]
     pipeline_stage: str
-    investigation_steps: List[str]
+    investigation_steps: list[str]
     
     # Cross-run context
     n_historical_runs: int
-    cross_run_anomalies: List[str]
+    cross_run_anomalies: list[str]
     run_is_historical_outlier: bool
     
     # Physical validation
     domain_profile_used: str
-    checks_executed: List[str]
-    discovered_invariants: Dict[str, float]
+    checks_executed: list[str]
+    discovered_invariants: dict[str, float]
     
     # Model impact assessment
     estimated_mape_impact: str
@@ -95,8 +93,8 @@ class ComplianceReport:
     chain_of_custody_hash: str   # SHA-256(dataset_hash + all above fields)
     
     # Regulatory mapping
-    regulatory_standards: List[str]
-    compliance_assertions: List[str]
+    regulatory_standards: list[str]
+    compliance_assertions: list[str]
     
     def to_json(self) -> str:
         return json.dumps(asdict(self), indent=2, default=str)
@@ -110,19 +108,19 @@ class ComplianceReport:
             f"Report ID:        {self.report_id}",
             f"Generated (UTC):  {self.generated_at_utc}",
             f"SimAPI Version:   {self.simapi_version}",
-            f"",
+            "",
             "── DATASET IDENTITY ─────────────────────────────────────────────────",
             f"SHA-256 Hash:     {self.dataset_hash_sha256}",
             f"Rows:             {self.dataset_n_rows:,}",
             f"Columns:          {self.dataset_n_columns} ({', '.join(self.dataset_columns[:5])}{'...' if len(self.dataset_columns)>5 else ''})",
             f"Domain:           {self.domain}",
-            f"",
+            "",
             "── VALIDATION RESULT ────────────────────────────────────────────────",
             f"Status:           {'⚠️  CORRUPTIONS FOUND' if self.n_auto_removed + self.n_flagged_for_review > 0 else '✅ CLEAN'}",
             f"Auto-removed:     {self.n_auto_removed:,} rows ({self.n_auto_removed/max(self.dataset_n_rows,1)*100:.2f}%)",
             f"Flagged (review): {self.n_flagged_for_review:,} rows ({self.n_flagged_for_review/max(self.dataset_n_rows,1)*100:.2f}%)",
             f"Clean rows:       {self.n_clean_rows:,} rows ({self.n_clean_rows/max(self.dataset_n_rows,1)*100:.2f}%)",
-            f"",
+            "",
         ]
         if self.corruption_types_found:
             lines += [
@@ -189,7 +187,7 @@ class ComplianceReport:
         ]
         return "\n".join(lines)
 
-    def verify_integrity(self, df_hash: Optional[str] = None) -> bool:
+    def verify_integrity(self, df_hash: str | None = None) -> bool:
         """Verify the chain of custody hash has not been tampered with."""
         h = df_hash or self.dataset_hash_sha256
         body = h + "|" + self.primary_diagnosis + "|" + str(self.n_auto_removed) + "|" + self.report_id
@@ -236,7 +234,7 @@ class ComplianceReportGenerator:
         cross_run_result=None,           # CrossRunResult (optional)
         domain: str = "unknown",
         regulatory_context: str = "default",
-        mape_impact: Optional[str] = None,
+        mape_impact: str | None = None,
     ) -> ComplianceReport:
         """Generate a compliance report from an APIE validation result."""
         import pandas as pd
@@ -345,8 +343,8 @@ class ComplianceReportGenerator:
 
     def _build_assertions(self, n_auto, n_review, n_rows, corruption_types, is_outlier):
         assertions = [
-            f"Dataset identity verified: SHA-256 hash computed and recorded at validation time",
-            f"Physical law compliance checked: domain invariants, bounds, and ratio constraints verified",
+            "Dataset identity verified: SHA-256 hash computed and recorded at validation time",
+            "Physical law compliance checked: domain invariants, bounds, and ratio constraints verified",
             f"All {n_rows:,} rows inspected: {n_auto} auto-removed, {n_review} flagged, {n_rows-n_auto} passed",
         ]
         if not corruption_types:

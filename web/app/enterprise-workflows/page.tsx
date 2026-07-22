@@ -29,7 +29,7 @@ const workflows = [
     goal: "Flag anomalous or corrupted output before it reaches analysis or an ML pipeline.",
     steps: [
       "Export results (CSV, netCDF, JSON) from the solver",
-      "POST /v1/validate — 730+ physics checks plus AI review",
+      "POST /v1/validate — 900+ physics checks plus AI review",
       "Route clean trials downstream; hold flagged ones for review",
     ],
   },

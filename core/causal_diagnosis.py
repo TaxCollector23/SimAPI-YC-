@@ -40,10 +40,7 @@ Layer C — Counterfactual Impact
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
-
+from typing import Any
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Failure mode library
@@ -54,19 +51,19 @@ class FailureMode:
     """A known simulation pipeline failure mode with its diagnostic fingerprint."""
     name: str
     category: str                    # 'solver' | 'post_processing' | 'data_pipeline' | 'instrumentation'
-    column_signatures: List[Dict]    # expected column-level signals
-    ratio_signatures: List[Dict]     # expected ratio-level signals
-    temporal_signatures: List[str]   # expected temporal patterns
-    causal_chain: List[str]          # ordered list of steps in the causal chain
+    column_signatures: list[dict]    # expected column-level signals
+    ratio_signatures: list[dict]     # expected ratio-level signals
+    temporal_signatures: list[str]   # expected temporal patterns
+    causal_chain: list[str]          # ordered list of steps in the causal chain
     pipeline_stage: str              # where in the pipeline this typically occurs
-    detection_signals: List[str]     # what APIE checks typically catch it
-    recommended_investigation: List[str]  # what to check to confirm/fix
+    detection_signals: list[str]     # what APIE checks typically catch it
+    recommended_investigation: list[str]  # what to check to confirm/fix
     typical_model_impact: str        # qualitative impact description
     impact_severity: str             # 'low' | 'medium' | 'high' | 'catastrophic'
 
 
 # Build the failure mode library
-FAILURE_MODES: List[FailureMode] = [
+FAILURE_MODES: list[FailureMode] = [
 
     FailureMode(
         name="Unit Conversion Error — Pressure Scale",
@@ -355,13 +352,13 @@ FAILURE_MODES: List[FailureMode] = [
 @dataclass
 class DiagnosisResult:
     """Result of causal diagnosis for a dataset."""
-    matched_failure_modes: List[Dict]   # ranked matches with scores
-    causal_chain: List[str]             # most likely causal chain
+    matched_failure_modes: list[dict]   # ranked matches with scores
+    causal_chain: list[str]             # most likely causal chain
     pipeline_stage: str                 # where the corruption likely occurred
-    investigation_steps: List[str]      # what to actually check
+    investigation_steps: list[str]      # what to actually check
     counterfactual_impact: str          # what would have happened without detection
     confidence: float                   # 0-1 diagnosis confidence
-    raw_signals: Dict[str, Any]         # the signals that drove the match
+    raw_signals: dict[str, Any]         # the signals that drove the match
 
     @property
     def primary_diagnosis(self) -> str:
@@ -388,10 +385,10 @@ class CausalDiagnosisEngine:
     def diagnose(
         self,
         fingerprint,              # CorruptionFingerprint from APIE
-        row_scores: List,         # RowAnomalyScore list from APIE
+        row_scores: list,         # RowAnomalyScore list from APIE
         domain: str,
         n_rows: int,
-        conditions: Optional[Dict] = None,
+        conditions: dict | None = None,
     ) -> DiagnosisResult:
         """Main entry point: diagnose likely failure modes from APIE output."""
         signals = self._extract_signals(fingerprint, row_scores, domain, n_rows)
@@ -452,7 +449,7 @@ class CausalDiagnosisEngine:
             raw_signals=signals,
         )
 
-    def _extract_signals(self, fp, row_scores, domain: str, n_rows: int) -> Dict:
+    def _extract_signals(self, fp, row_scores, domain: str, n_rows: int) -> dict:
         """Extract key signals from fingerprint and row scores."""
         # Check what checks fired and at what severity
         check_types = set()
@@ -509,7 +506,7 @@ class CausalDiagnosisEngine:
             'copy_paste_fraction': fp.copy_paste_fraction,
         }
 
-    def _score_failure_mode(self, fm: FailureMode, signals: Dict) -> Tuple[float, List[str]]:
+    def _score_failure_mode(self, fm: FailureMode, signals: dict) -> tuple[float, list[str]]:
         """Score how well a failure mode matches the observed signals. Returns (score, evidence)."""
         score = 0.0
         evidence = []
@@ -520,7 +517,7 @@ class CausalDiagnosisEngine:
             score += 0.7; evidence.append("P/(ρT) ratio deviates from 287 J/kg·K")
         if fm.name in ("Unit Conversion Error — Temperature Scale (Kelvin ↔ Celsius)",):
             # Look for temperatures suspiciously in the -50 to 100 range (Celsius) in Kelvin-expected data
-            for col, (mean, std, skew, kurt, mad, nout) in signals.get('high_skew_cols', {}).items() if False else []:
+            for _col, (_mean, _std, _skew, _kurt, _mad, _nout) in signals.get('high_skew_cols', {}).items() if False else []:
                 pass  # simplified
             if 'temperature' in str(signals.get('high_skew_cols', {})):
                 score += 0.5; evidence.append("Temperature distribution shows bimodal pattern")
@@ -575,7 +572,7 @@ class CausalDiagnosisEngine:
 
         return min(score, 1.0), evidence
 
-    def _estimate_impact(self, top_match: Dict, signals: Dict, n_rows: int) -> str:
+    def _estimate_impact(self, top_match: dict, signals: dict, n_rows: int) -> str:
         """Estimate what would happen to the model if this corruption went undetected."""
         severity = top_match['impact_severity']
         n_corrupt_est = signals['n_critical'] + signals['n_warning']
