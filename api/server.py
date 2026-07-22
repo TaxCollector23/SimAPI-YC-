@@ -769,7 +769,7 @@ async def demo(_: str = Depends(caller_identity)):
     mu = 1.81e-5  # Dynamic viscosity
     data = []
     # Generate perfectly valid aerodynamic dataset with exact physics relationships
-    for i in range(n):
+    for _i in range(n):
         # Small variations on base values
         v_var = v + np.random.normal(0, 0.02)
         cd = 0.31 + np.random.normal(0, 0.007)

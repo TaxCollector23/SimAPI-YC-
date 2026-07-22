@@ -682,7 +682,7 @@ def predict_corruption_risks(
         dict with corruption risk scores and recommended checks.
     """
     try:
-        from core.apie import get_profile, DOMAIN_LIBRARY
+        from core.apie import get_profile
         profile = get_profile(simulation_type)
     except Exception:
         profile = None
@@ -694,7 +694,7 @@ def predict_corruption_risks(
     # ── Mesh quality → corruption risk mapping ────────────────────────────────
     cell_count = mesh_stats.get("cell_count", 0)
     max_skewness = mesh_stats.get("max_skewness", 0.0)
-    max_aspect_ratio = mesh_stats.get("max_aspect_ratio", 1.0)
+    mesh_stats.get("max_aspect_ratio", 1.0)
     nonortho_avg = mesh_stats.get("average_non_orthogonality", 0.0)
 
     # High skewness → solver divergence risk
@@ -786,7 +786,7 @@ def predict_output_corruption(
       - fingerprint (if historical_data provided)
     """
     try:
-        from core.apie import AdaptivePhysicsIntelligenceEngine, compute_fingerprint, get_profile
+        from core.apie import compute_fingerprint, get_profile
     except ImportError:
         return {"error": "APIE not available"}
 
@@ -862,7 +862,7 @@ def predict_output_corruption(
                 historical_data = pd.DataFrame(historical_data)
             fp = compute_fingerprint(historical_data, simulation_type, {})
             # Merge fingerprint signals into suspected
-            for pair, (_, _, tau, p) in fp.ratio_signals.items():
+            for _pair, (_, _, tau, p) in fp.ratio_signals.items():
                 if abs(tau) > 0.08 and p < 0.05:
                     suspected["sensor_drift"] = max(
                         suspected.get("sensor_drift", 0), min(1.0, abs(tau) * 5)
