@@ -455,6 +455,7 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
             apie_excl = apie_result.excluded_indices
             merged_excl = sorted(physics_excl | apie_excl)
             result["excluded_indices"] = merged_excl
+            JOBS[job_id]["apie_result"] = apie_result
 
             # Build response
             dx = apie_result.diagnosis
