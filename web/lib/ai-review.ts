@@ -40,6 +40,25 @@ export interface DataProfile {
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+// Domain-specific expertise cues — steers the model toward the right causal
+// vocabulary for each field instead of generic "the data looks off" answers.
+const DOMAIN_EXPERTISE: Record<string, string> = {
+  aerodynamics: "CFD post-processing: unit slips (Pa/kPa, deg/rad), Mach/Reynolds consistency, " +
+    "stall-region CL behavior, mesh y+ sensitivity, solver residual convergence.",
+  fluid_dynamics: "CFD/FVM solvers: courant number instability, turbulence model mismatch, " +
+    "boundary-layer resolution, pressure-velocity coupling divergence.",
+  structural: "FEA: stress-strain consistency (Hooke's law), mesh refinement artifacts, " +
+    "boundary condition under-constraint, unit mismatches (MPa vs Pa), element locking.",
+  thermodynamics: "Heat transfer: energy balance violations, unit errors (K vs °C), " +
+    "material property lookup errors, steady-state vs transient solver settings.",
+  robotics: "Control/kinematics: joint-limit violations, actuator saturation, sensor noise vs " +
+    "drift, coordinate-frame mismatches, timestep-dependent integration error.",
+  combustion: "Reacting flow: species conservation, flame-speed unit errors, ignition-delay " +
+    "outliers, chemistry-mechanism solver stiffness.",
+  electromagnetics: "EM solvers: mesh discretization at skin depth, unit errors (permittivity/" +
+    "permeability), boundary condition (PML) reflection artifacts.",
+};
+
 // Fallback chain of (key, model) pairs across up to two OpenRouter accounts.
 // A bad/expired/rate-limited key on one combination falls through to the next
 // key+model, not just the next model on the same key. Verified against GET
@@ -76,13 +95,13 @@ function usesReasoningParam(model: string): boolean {
   return REASONING_MODEL_PATTERNS.some((p) => p.test(model));
 }
 
-const TOKENS_SHORT = 500;
+const TOKENS_SHORT = 700;
 const TIMEOUT_MS = 12_000;
 // Vercel maxDuration is 60s and physics validation runs first; stop trying more
 // (key, model) pairs once this wall-clock budget for the AI call is spent,
 // rather than assuming a fixed number of pairs × timeouts always fits.
 const TOTAL_BUDGET_MS = 45_000;
-const REVIEW_VERSION = "2.3-multi-key-fallback";
+const REVIEW_VERSION = "2.4-domain-expert-prompts";
 
 class AbortedError extends Error {}
 /** Thrown for 429/5xx/empty/unparseable responses — safe to try the next model. */
@@ -208,9 +227,11 @@ export async function aiReview(
     };
   }
 
-  const prompt = `You are an expert simulation pipeline engineer. A deterministic physics engine has ALREADY analyzed a ${report.simulationType} dataset and found the specific violations listed below. These findings are confirmed and correct.
+  const expertise = DOMAIN_EXPERTISE[report.simulationType] ?? "engineering simulation post-processing";
 
-Your job: explain what went wrong, why it happened, and what to check first. Do NOT invent new findings. Do NOT mention statistical variance. Reference the exact fields and values below.
+  const prompt = `You are a senior ${report.simulationType} simulation engineer with deep expertise in: ${expertise}
+
+A deterministic physics engine has ALREADY analyzed this dataset and found the specific violations listed below. These findings are confirmed and correct — your job is to explain them precisely, not invent new findings or restate generic statistics language.
 
 CONFIRMED VIOLATIONS:
 ${violationLines.join("\n") || "(none)"}
@@ -223,10 +244,10 @@ ${engineRecs.join("\n") || "(none)"}
 
 Conditions: ${JSON.stringify(conditions)}
 
-Write 2-3 sentences naming the actual fields and values above, the likely root cause in the simulation pipeline (unit conversion, solver divergence, post-processing formula error, sensor drift), and the first thing the engineer should check.
+Write 3-4 sentences: (1) what specifically went wrong, naming the exact field/value above, (2) the most likely root-cause mechanism given your domain expertise (a specific unit conversion, a specific solver setting, a specific sensor failure mode — not "data quality issue"), (3) one concrete first thing to check.
 
 Respond ONLY with this JSON, no other text:
-{"verdict":"not normal","reason":"2-3 specific sentences naming actual fields and values","recommendation":"one specific actionable step"}`;
+{"verdict":"not normal","reason":"3-4 specific sentences per the instructions above","recommendation":"one concrete actionable step, naming a specific file/parameter/column to check"}`;
 
   try {
     const { parsed, model } = await callWithFallback(prompt, chain);

@@ -29,7 +29,7 @@ OPENROUTER_URL       = os.environ.get("SIMAPI_OPENROUTER_URL", "https://openrout
 QUICK_MODEL          = os.environ.get("SIMAPI_AI_QUICK_MODEL", "nvidia/nemotron-nano-9b-v2:free")
 MODEL                = QUICK_MODEL
 TIMEOUT_SECONDS      = int(os.environ.get("SIMAPI_AI_QUICK_TIMEOUT_SECONDS", "18"))
-TOKENS_SHORT = 500
+TOKENS_SHORT = 700
 TOKENS_LONG  = 3000
 AI_ENABLED = bool(OPENROUTER_API_KEY or OPENROUTER_API_KEY_2)
 
@@ -73,7 +73,7 @@ class _RetryableError(Exception):
 
 
 # Version marker — confirms this file is the updated version
-_VALIDATOR_VERSION = "2.2-fallback-chain"
+_VALIDATOR_VERSION = "2.3-domain-expert-prompts"
 
 
 @dataclass
@@ -100,16 +100,46 @@ class AIValidationReport:
     verdict:         str = ""
 
 
+# Domain-specific expertise cues — steers the model toward the right causal
+# vocabulary for each field instead of generic "the data looks off" answers.
+_DOMAIN_EXPERTISE = {
+    "aerodynamics": "CFD post-processing: unit slips (Pa/kPa, deg/rad), Mach/Reynolds "
+        "consistency, stall-region CL behavior, mesh y+ sensitivity, solver residual convergence.",
+    "fluid_dynamics": "CFD/FVM solvers: courant number instability, turbulence model mismatch, "
+        "boundary-layer resolution, pressure-velocity coupling divergence.",
+    "structural": "FEA: stress-strain consistency (Hooke's law), mesh refinement artifacts, "
+        "boundary condition under-constraint, unit mismatches (MPa vs Pa), element locking.",
+    "thermodynamics": "Heat transfer: energy balance violations, unit errors (K vs °C), "
+        "material property lookup errors, steady-state vs transient solver settings.",
+    "robotics": "Control/kinematics: joint-limit violations, actuator saturation, sensor noise vs "
+        "drift, coordinate-frame mismatches, timestep-dependent integration error.",
+    "combustion": "Reacting flow: species conservation, flame-speed unit errors, ignition-delay "
+        "outliers, chemistry-mechanism solver stiffness.",
+    "electromagnetics": "EM solvers: mesh discretization at skin depth, unit errors (permittivity/"
+        "permeability), boundary condition (PML) reflection artifacts.",
+}
+
+
 def _quick_summary(data: pd.DataFrame, physics_issues: list[dict]) -> dict:
     nc = list(data.select_dtypes(include=[np.number]).columns)
     n = len(data)
     failed = [i for i in physics_issues if i.get("status") == "failed"]
     warned = [i for i in physics_issues if i.get("status") == "warning"]
+
+    def _fmt(i: dict) -> str:
+        name = i.get("name", "")
+        detail = i.get("detail") or i.get("description") or ""
+        val = i.get("value")
+        cat = i.get("category", "")
+        val_str = f", value={val}" if val is not None else ""
+        return f"{name} [{cat}]: {detail}{val_str}"
+
     return {
         "trials": n,
         "columns": len(nc),
-        "failed_checks": [i.get("name", "") for i in failed[:8]],
-        "warning_checks": [i.get("name", "") for i in warned[:8]],
+        "column_names": nc[:15],
+        "failed_checks": [_fmt(i) for i in failed[:10]],
+        "warning_checks": [_fmt(i) for i in warned[:6]],
     }
 
 
@@ -120,44 +150,60 @@ def _build_prompt(data: pd.DataFrame, sim_type: str, conditions: dict,
     Build the AI prompt. When diagnosis_context is provided (the normal path),
     the prompt leads with the confirmed physics engine diagnosis and asks the
     AI to elaborate specifically — not to generate its own independent finding.
+
+    Feeds the model actual check details and values (not just check names),
+    plus domain-specific causal vocabulary, so the answer names concrete
+    fields and mechanisms instead of generic "data looks anomalous" filler.
     """
     summary = _quick_summary(data, physics_issues)
+    expertise = _DOMAIN_EXPERTISE.get(sim_type, "engineering simulation post-processing")
 
     if diagnosis_context and diagnosis_context.get("primary_finding"):
         dx = diagnosis_context
-        causal = " → ".join((dx.get("causal_chain") or [])[:3])
-        step1 = (dx.get("investigation_steps") or ["No steps available"])[0]
+        causal = " → ".join((dx.get("causal_chain") or [])[:4])
+        steps = (dx.get("investigation_steps") or ["No steps available"])[:2]
         pipeline = dx.get("pipeline_stage", "unknown").replace("_", " ")
         confidence = int((dx.get("confidence") or 0) * 100)
 
-        return f"""You are an expert simulation pipeline engineer reviewing a {sim_type} dataset.
+        return f"""You are a senior {sim_type} simulation engineer with deep expertise in: {expertise}
 
-The deterministic physics engine has already validated {summary['trials']} trials and produced a confirmed diagnosis. Your job is to translate this into a clear, specific explanation for the engineer — not to generate a new diagnosis.
+The deterministic physics engine has already validated {summary['trials']} trials across {summary['columns']} columns ({', '.join(summary['column_names']) or 'n/a'}) and produced a confirmed diagnosis below. Your job is to explain it precisely to another engineer — not invent a new diagnosis, and not restate generic statistics language.
 
 CONFIRMED PHYSICS ENGINE DIAGNOSIS:
 Finding: {dx['primary_finding']}
 Pipeline stage: {pipeline}
 Confidence: {confidence}%
 Causal chain: {causal}
-First investigation step: {step1}
-Failed physics checks: {summary['failed_checks'] or 'none'}
+Investigation steps already identified: {'; '.join(steps)}
 
-Write a 2-3 sentence explanation of what went wrong, why it happened, and what the engineer should check first. Be specific — reference the actual finding, not generic advice.
+FAILED CHECKS (name, category, exact value):
+{chr(10).join(summary['failed_checks']) or 'none'}
+
+WARNING CHECKS:
+{chr(10).join(summary['warning_checks']) or 'none'}
+
+Write 3-4 sentences: (1) what specifically went wrong, naming the exact field/value from the checks above, (2) the most likely root-cause mechanism given your domain expertise (e.g. a specific unit conversion, a specific solver setting, a specific sensor failure mode — not "data quality issue"), (3) one concrete, specific first thing to check that isn't already in the investigation steps above.
 
 Respond ONLY with this JSON, no other text:
-{{"verdict": "not normal", "reason": "2-3 sentence specific explanation referencing the actual finding", "anomaly_score": 0.8, "recommendation": "one specific actionable step"}}"""
+{{"verdict": "not normal", "reason": "3-4 specific sentences per the instructions above", "anomaly_score": 0.8, "recommendation": "one concrete actionable step, naming a specific file/parameter/column to check"}}"""
 
     # Fallback: no diagnosis context available
-    return f"""You are sanity-checking a {sim_type} simulation dataset validated with {summary['trials']} trials.
+    return f"""You are a senior {sim_type} simulation engineer with deep expertise in: {expertise}
 
-Failed checks: {summary['failed_checks'] or 'none'}
-Warning checks: {summary['warning_checks'] or 'none'}
+You are sanity-checking a dataset of {summary['trials']} trials across {summary['columns']} columns ({', '.join(summary['column_names']) or 'n/a'}).
+
+FAILED CHECKS (name, category, exact value):
+{chr(10).join(summary['failed_checks']) or 'none'}
+
+WARNING CHECKS:
+{chr(10).join(summary['warning_checks']) or 'none'}
+
 Conditions: {json.dumps(conditions)}
 
-Is this dataset normal or not? Be specific about what failed.
+Is this dataset physically normal or not? If not, name the specific field and value that's wrong and the most likely root-cause mechanism from your domain expertise — not a generic "statistical anomaly" answer.
 
 Respond ONLY with this JSON, no other text:
-{{"verdict": "normal" | "not normal", "reason": "one specific sentence referencing the actual failed check", "anomaly_score": 0.0}}
+{{"verdict": "normal" | "not normal", "reason": "1-2 specific sentences naming the actual failed check, its value, and the likely mechanism", "anomaly_score": 0.0}}
 
 anomaly_score: 0.0=clean, 1.0=seriously corrupted."""
 
