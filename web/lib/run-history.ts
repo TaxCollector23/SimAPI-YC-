@@ -13,7 +13,7 @@ export interface RunRecord {
   label: string;
   simulationType: string;
   status: string;
-  engine: string; // "python-470-checks" | "typescript-20-checks" | "unknown"
+  engine: string; // "python-730-checks" | "typescript-20-checks" | "unknown"
   executionMs: number;
   trials_submitted: number;
   trials_excluded: number;

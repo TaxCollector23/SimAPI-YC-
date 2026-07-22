@@ -19,7 +19,7 @@ export async function GET() {
   return NextResponse.json({
     status: "ok",
     version: "3.1.0",
-    engine: pythonBackend ? "python-470-checks" : "typescript-20-checks",
+    engine: pythonBackend ? "python-730-checks" : "typescript-20-checks",
     domains: pythonBackend ? 21 : 5,
     python_backend: pythonBackend,
     ai_enabled: !!process.env.OPENROUTER_API_KEY,
