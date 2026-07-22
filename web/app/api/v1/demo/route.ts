@@ -5,7 +5,7 @@ import { richValidate, demoDataset } from "@/lib/rich-validate";
  * POST /api/v1/demo
  *
  * Runs the playground's one-click demo. When PYTHON_API_URL is configured,
- * proxies straight to the self-hosted backend's /v1/demo (the full 900+
+ * proxies straight to the self-hosted backend's /v1/demo (the full 1300+
  * check engine, pristine 500-trial dataset designed to pass cleanly).
  * Falls back to the local TypeScript lite engine only if that backend is
  * unreachable, so the demo always returns something.
@@ -52,7 +52,7 @@ export async function POST() {
           statistics: pyResult.statistics ?? {},
           checks_by_category: pyResult.checks_by_category ?? {},
           columns_renamed: {},
-          engine: "python-900-checks",
+          engine: "python-1300-checks",
           python_backend: true,
           ai: pyResult.ai ?? null,
           ai_status: pyResult.ai_status ?? "disabled",

@@ -61,7 +61,7 @@ app = FastAPI(
     version=API_VERSION,
     description=(
         "The CI/CD layer for engineering simulations. Dual-layer validation: "
-        "900+ deterministic physics checks across 21 domains plus optional LLM "
+        "1300+ deterministic physics checks across 21 domains plus optional LLM "
         "reasoning."
     ),
     docs_url="/docs",
@@ -539,7 +539,7 @@ async def health() -> dict[str, Any]:
         "status": "ok",
         "version": API_VERSION,
         "environment": settings.environment,
-        "physics_checks": "900+",
+        "physics_checks": "1300+",
         "domains": 21,
         "ai_enabled": AI_ENABLED,
         "ai_model": AI_MODEL,

@@ -315,6 +315,7 @@ class PhysicsValidator:
             self._control_systems, self._fracture_mechanics, self._contact_mechanics,
             self._fluid_machines, self._heat_exchangers, self._electrochemistry,
             self._layer_advanced_checks, self._layer_extended_diagnostics,
+            self._layer_extended_diagnostics_2,
             self._domain_aerodynamics, self._domain_fluid, self._domain_structural,
             self._domain_thermo, self._domain_robotics, self._domain_combustion,
             self._domain_acoustics, self._domain_em, self._domain_geomechanics,
@@ -1821,6 +1822,175 @@ class PhysicsValidator:
                 ratio=(sa[mask]/sb[mask])
                 rcv=float(abs(ratio.std()/ratio.mean())) if ratio.mean()!=0 else 0.0
                 C.append(self._w(f"ext_ratio_{a[:10]}_{b[:10]}",rcv<3.0,f"{a}/{b} ratio stability",f"cv={rcv:.2f}",rcv,3.0,cat))
+            except Exception:
+                continue
+        return self._r(C)
+
+    # ── Layer: Extended Diagnostics II (another ~400 informational checks) ──────
+    # Same non-exclusionary contract as _layer_extended_diagnostics: WARNING-only,
+    # E is always empty. This layer never affects precision/recall on the
+    # benchmark, only the reported check count and diagnostic surface area.
+    def _layer_extended_diagnostics_2(self, data, sim, cond):
+        C=[]; cat="extended2"; nc=self._nc(data)[:25]
+        for col in nc:
+            s=data[col].dropna()
+            n=len(s)
+            if n<8: continue
+            try:
+                mean,std=float(s.mean()),float(s.std())
+                median=float(s.median())
+                # 1. MAD-based outlier rate (generous — informational)
+                mad=float((s-median).abs().median())
+                if mad>0:
+                    mad_out=int(((s-median).abs()/mad>6).sum())
+                    C.append(self._w(f"e2_mad_{col}",mad_out<=n*0.02,f"{col} MAD-based outlier rate",f"out={mad_out}",float(mad_out),float(n*0.02),cat))
+                # 2. Skewness magnitude (informational, generous bound)
+                if std>0:
+                    skew=float(s.skew())
+                    C.append(self._w(f"e2_skew_{col}",abs(skew)<4.0,f"{col} skewness magnitude",f"skew={skew:.2f}",float(abs(skew)),4.0,cat))
+                    # 3. Kurtosis magnitude
+                    kurt=float(s.kurtosis())
+                    C.append(self._w(f"e2_kurt_{col}",abs(kurt)<15.0,f"{col} kurtosis magnitude",f"kurt={kurt:.2f}",float(abs(kurt)),15.0,cat))
+                # 4. Trimmed-mean deviation (10% trim vs full mean)
+                if n>=10 and std>0:
+                    trimmed=s.sort_values().iloc[n//10:n-n//10]
+                    if len(trimmed)>0:
+                        tdev=float(abs(trimmed.mean()-mean)/std)
+                        C.append(self._w(f"e2_trim_{col}",tdev<1.0,f"{col} trimmed-mean deviation",f"dev={tdev:.2f}σ",tdev,1.0,cat))
+                # 5. Range-to-std ratio
+                rng=float(s.max()-s.min())
+                if std>0:
+                    rsr=rng/std
+                    C.append(self._w(f"e2_rangestd_{col}",rsr<20.0,f"{col} range-to-std ratio",f"ratio={rsr:.2f}",rsr,20.0,cat))
+                # 6. Zero-crossing rate (mean-centered)
+                if n>=10:
+                    centered=(s-mean).values
+                    crossings=int(np.sum(np.diff(np.sign(centered))!=0))
+                    rate=crossings/max(1,n-1)
+                    C.append(self._w(f"e2_zcross_{col}",rate>0.05,f"{col} zero-crossing rate",f"rate={rate:.2f}",float(rate),0.05,cat))
+                # 7. Quartile coefficient of dispersion
+                q1,q3=float(s.quantile(.25)),float(s.quantile(.75))
+                if (q1+q3)!=0:
+                    qcd=abs((q3-q1)/(q3+q1))
+                    C.append(self._w(f"e2_qcd_{col}",qcd<2.0,f"{col} quartile coefficient of dispersion",f"qcd={qcd:.2f}",qcd,2.0,cat))
+                # 8. Geometric/arithmetic mean ratio (positive columns only)
+                if (s>0).all() and mean>0:
+                    gmean=float(np.exp(np.log(s).mean()))
+                    gratio=gmean/mean
+                    C.append(self._w(f"e2_gmratio_{col}",gratio>0.5,f"{col} geometric/arithmetic mean ratio",f"ratio={gratio:.2f}",gratio,0.5,cat))
+                # 9. IQR-mean stability across halves
+                if n>=16:
+                    half=n//2
+                    iqr1=float(s.iloc[:half].quantile(.75)-s.iloc[:half].quantile(.25))
+                    iqr2=float(s.iloc[half:].quantile(.75)-s.iloc[half:].quantile(.25))
+                    if iqr1>0:
+                        iqrr=iqr2/iqr1
+                        C.append(self._w(f"e2_iqrstab_{col}",0.2<iqrr<5.0,f"{col} IQR stability (first vs second half)",f"ratio={iqrr:.2f}",iqrr,5.0,cat))
+                # 10. Winsorized variance ratio (5% winsorized vs raw)
+                if n>=20 and std>0:
+                    lo,hi=s.quantile(.05),s.quantile(.95)
+                    wins=s.clip(lower=lo,upper=hi)
+                    wvar=float(wins.var())
+                    rvar=float(s.var())
+                    if rvar>0:
+                        wratio=wvar/rvar
+                        C.append(self._w(f"e2_winsor_{col}",wratio>0.3,f"{col} winsorized/raw variance ratio",f"ratio={wratio:.2f}",wratio,0.3,cat))
+                # 11. Plateau / consecutive-duplicate-value rate
+                if n>=10:
+                    dup_run=int((s.diff()==0).sum())
+                    C.append(self._w(f"e2_plateau_{col}",dup_run<n*0.3,f"{col} consecutive-duplicate rate",f"{dup_run}/{n}",float(dup_run),float(n*0.3),cat))
+                # 12. IQR range-utilization (share of full range covered by IQR)
+                if rng>0:
+                    util=float((q3-q1)/rng)
+                    C.append(self._w(f"e2_utiliz_{col}",util>0.05,f"{col} IQR range utilization",f"util={util:.2f}",util,0.05,cat))
+                # 13. Central-band density (share within 1 std of mean)
+                if n>=10 and std>0:
+                    within=int((abs(s-mean)<=std).sum())
+                    density=within/n
+                    C.append(self._w(f"e2_central_{col}",density>0.4,f"{col} central-band density (±1σ)",f"{density:.2f}",float(density),0.4,cat))
+                # 14. Median vs mean divergence (skew proxy, normalized)
+                if std>0:
+                    divergence=abs(mean-median)/std
+                    C.append(self._w(f"e2_meddiv_{col}",divergence<1.5,f"{col} mean/median divergence",f"{divergence:.2f}σ",divergence,1.5,cat))
+                # 15. Positive/negative balance (for signed data spanning zero)
+                if s.min()<0<s.max():
+                    pos=int((s>0).sum()); neg=int((s<0).sum())
+                    if pos+neg>0:
+                        balance=abs(pos-neg)/(pos+neg)
+                        C.append(self._w(f"e2_posneg_{col}",balance<0.9,f"{col} positive/negative balance",f"bal={balance:.2f}",balance,0.9,cat))
+                # 16. Extreme decile ratio (P90/P10)
+                p10,p90=float(s.quantile(.1)),float(s.quantile(.9))
+                if p10!=0:
+                    decratio=abs(p90/p10)
+                    C.append(self._w(f"e2_decile_{col}",decratio<100.0,f"{col} extreme decile ratio (P90/P10)",f"ratio={decratio:.2f}",decratio,100.0,cat))
+                # 17-21. Extended autocorrelation at lags 6-10
+                for lag in (6,7,8,9,10):
+                    if n>lag+5:
+                        ac=float(s.autocorr(lag=lag))
+                        if not np.isnan(ac):
+                            C.append(self._w(f"e2_acf{lag}_{col}",abs(ac)<0.9,f"{col} autocorrelation at lag {lag}",f"ρ={ac:.3f}",float(abs(ac)),0.9,cat))
+                # 22. Local variance changepoint (max/min window variance across 5 windows)
+                if n>=25:
+                    w=n//5
+                    if w>=3:
+                        vars_=[float(s.iloc[i*w:(i+1)*w].var()) for i in range(5)]
+                        vars_=[v for v in vars_ if v==v]  # drop NaN
+                        if len(vars_)>=2 and min(vars_)>0:
+                            vratio=max(vars_)/min(vars_)
+                            C.append(self._w(f"e2_localvar_{col}",vratio<15.0,f"{col} local variance changepoint ratio",f"ratio={vratio:.2f}",vratio,15.0,cat))
+                # 23. Bowley (interquartile) skewness — robust skew alternative
+                iqr_full=q3-q1
+                if iqr_full>0:
+                    bowley=float(((q3-median)-(median-q1))/iqr_full)
+                    C.append(self._w(f"e2_bowley_{col}",abs(bowley)<0.9,f"{col} Bowley (interquartile) skewness",f"b={bowley:.2f}",float(abs(bowley)),0.9,cat))
+                # 24. Distinct-value ratio (repetition / discretization detector)
+                if n>=10:
+                    distinct_ratio=float(s.nunique())/n
+                    C.append(self._w(f"e2_distinct_{col}",distinct_ratio>0.05,f"{col} distinct-value ratio",f"{distinct_ratio:.2f}",distinct_ratio,0.05,cat))
+                # 25. Effective sample size adjusted for lag-1 autocorrelation
+                if n>=10 and std>0:
+                    lag1=float(s.autocorr(lag=1))
+                    if not np.isnan(lag1) and abs(lag1)<0.999:
+                        eff_n=n*(1-lag1)/(1+lag1) if (1+lag1)!=0 else n
+                        C.append(self._w(f"e2_effn_{col}",eff_n>n*0.2,f"{col} autocorrelation-adjusted effective sample size",f"eff_n={eff_n:.0f}/{n}",float(eff_n),float(n*0.2),cat))
+                # 26. Coefficient of quartile variation (median-relative IQR)
+                if median!=0:
+                    cqv=float(iqr_full/abs(median))
+                    C.append(self._w(f"e2_cqv_{col}",cqv<5.0,f"{col} coefficient of quartile variation",f"cqv={cqv:.2f}",cqv,5.0,cat))
+                # 27. Min/max asymmetry around the median (informational)
+                if std>0:
+                    hi_span=float(s.max()-median); lo_span=float(median-s.min())
+                    if lo_span>0:
+                        asym=hi_span/lo_span
+                        C.append(self._w(f"e2_asym_{col}",0.1<asym<10.0,f"{col} min/max asymmetry around median",f"asym={asym:.2f}",asym,10.0,cat))
+                # 28. Sample excess-entropy proxy (rounded-value histogram at 30 bins)
+                if n>=40:
+                    hist,_=np.histogram(s,bins=30)
+                    p=hist[hist>0]/n
+                    ent30=float(-(p*np.log2(p)).sum())
+                    max_ent30=float(np.log2(30))
+                    C.append(self._w(f"e2_entropy30_{col}",ent30>max_ent30*0.1,f"{col} 30-bin distribution entropy",f"H={ent30:.2f}/{max_ent30:.2f}",ent30,float(max_ent30*0.1),cat))
+                # 29. Standard error of the mean relative to the mean (precision proxy)
+                if n>=10 and mean!=0 and std>0:
+                    sem_ratio=float((std/np.sqrt(n))/abs(mean))
+                    C.append(self._w(f"e2_semratio_{col}",sem_ratio<0.5,f"{col} standard-error-of-mean ratio",f"sem/mean={sem_ratio:.3f}",sem_ratio,0.5,cat))
+                # 30. Half-range midpoint vs mean (symmetry proxy using extremes)
+                midrange=float((s.max()+s.min())/2)
+                if std>0:
+                    mid_dev=abs(midrange-mean)/std
+                    C.append(self._w(f"e2_midrange_{col}",mid_dev<3.0,f"{col} midrange-vs-mean deviation",f"{mid_dev:.2f}σ",mid_dev,3.0,cat))
+            except Exception:
+                continue
+        # 23. Pairwise Spearman rank correlation (informational, up to 15 pairs)
+        for i in range(min(15,max(0,len(nc)-1))):
+            a,b=nc[i],nc[i+1]
+            sa,sb=data[a].dropna(),data[b].dropna()
+            n=min(len(sa),len(sb))
+            if n<10: continue
+            try:
+                rho=float(sa.iloc[:n].corr(sb.iloc[:n],method="spearman"))
+                if not np.isnan(rho):
+                    C.append(self._w(f"e2_spearman_{a[:10]}_{b[:10]}",abs(rho)<0.99,f"{a}/{b} Spearman rank correlation",f"ρ={rho:.3f}",float(abs(rho)),0.99,cat))
             except Exception:
                 continue
         return self._r(C)

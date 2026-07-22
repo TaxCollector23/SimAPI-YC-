@@ -12,8 +12,8 @@
   "ai_mode": "Deterministic (no key)",
   "ai_used": false,
   "ai_diagnoses": [],
-  "validation_ms_mean": 1181.5,
-  "validation_ms_std": 9.1,
+  "validation_ms_mean": 1323.4,
+  "validation_ms_std": 73.6,
   "models": {
     "gbt": {
       "mape_improvement_mean": 0.66,
@@ -50,5 +50,5 @@
       "measurement_noise": 61.3
     }
   },
-  "elapsed_s": 62.1
+  "elapsed_s": 65.1
 }

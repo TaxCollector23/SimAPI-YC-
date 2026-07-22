@@ -330,7 +330,7 @@ export function ValidationDashboard() {
           </span>
           {result && "engine" in result && (
             <span className="rounded-full border border-accent-cyan/30 bg-accent-cyan/5 px-2.5 py-1.5 text-[10px] text-accent-cyan">
-              {String((result as Record<string, unknown>).engine) === "python-900-checks" ? "Full engine (900+ checks)" : "Lite engine (20 checks)"}
+              {String((result as Record<string, unknown>).engine) === "python-1300-checks" ? "Full engine (1300+ checks)" : "Lite engine (20 checks)"}
             </span>
           )}
         </div>

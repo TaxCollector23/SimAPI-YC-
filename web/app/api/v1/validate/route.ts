@@ -237,7 +237,7 @@ export async function POST(req: Request) {
   return NextResponse.json(
     {
       ...result,
-      engine: engineSource === "python" ? "python-900-checks" : "typescript-20-checks",
+      engine: engineSource === "python" ? "python-1300-checks" : "typescript-20-checks",
       python_backend: engineSource === "python",
       ai: mapAi(review),
       ai_status: review.enabled ? (review.error ? "error" : "completed") : "disabled",
