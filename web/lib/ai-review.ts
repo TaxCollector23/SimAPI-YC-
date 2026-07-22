@@ -40,21 +40,34 @@ export interface DataProfile {
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-// Fallback chain across independent providers. If one is rate-limited,
-// deprecated (404), or returns blank content, the next is tried before
-// failing the whole layer. Verified against GET
+// Fallback chain of (key, model) pairs across up to two OpenRouter accounts.
+// A bad/expired/rate-limited key on one combination falls through to the next
+// key+model, not just the next model on the same key. Verified against GET
 // https://openrouter.ai/api/v1/models — OpenRouter's free catalog changes
 // over time and stale slugs 404 rather than falling through, so this list
 // must be checked periodically, not assumed.
-const _MODEL_CHAIN = [
-  process.env.OPENROUTER_MODEL || "nvidia/nemotron-nano-9b-v2:free",
-  "openai/gpt-oss-20b:free",
-  "google/gemma-4-31b-it:free",
-  "nvidia/nemotron-3-nano-30b-a3b:free",
-  "google/gemma-4-26b-a4b-it:free",
-  "nvidia/nemotron-3-super-120b-a12b:free",
-];
-const MODEL_CHAIN = Array.from(new Set(_MODEL_CHAIN));
+interface KeyModel { key: string; model: string }
+
+function buildKeyModelChain(): KeyModel[] {
+  const key1 = process.env.OPENROUTER_API_KEY;
+  const key2 = process.env.OPENROUTER_API_KEY_2;
+  const chain: KeyModel[] = [];
+  if (key1) {
+    chain.push(
+      { key: key1, model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-nano-9b-v2:free" },
+      { key: key1, model: "google/gemma-4-31b-it:free" },
+      { key: key1, model: "nvidia/nemotron-3-nano-30b-a3b:free" },
+    );
+  }
+  if (key2) {
+    chain.push(
+      { key: key2, model: "openai/gpt-oss-20b:free" },
+      { key: key2, model: "google/gemma-4-26b-a4b-it:free" },
+      { key: key2, model: "nvidia/nemotron-3-super-120b-a12b:free" },
+    );
+  }
+  return chain;
+}
 
 // Only these models accept/benefit from the `reasoning` param. Sending it to
 // a non-reasoning model makes it return blank content instead of an answer.
@@ -66,10 +79,10 @@ function usesReasoningParam(model: string): boolean {
 const TOKENS_SHORT = 500;
 const TIMEOUT_MS = 12_000;
 // Vercel maxDuration is 60s and physics validation runs first; stop trying more
-// models once this wall-clock budget for the AI call is spent, rather than
-// assuming a fixed number of models × timeouts always fits.
+// (key, model) pairs once this wall-clock budget for the AI call is spent,
+// rather than assuming a fixed number of pairs × timeouts always fits.
 const TOTAL_BUDGET_MS = 45_000;
-const REVIEW_VERSION = "2.2-fallback-chain";
+const REVIEW_VERSION = "2.3-multi-key-fallback";
 
 class AbortedError extends Error {}
 /** Thrown for 429/5xx/empty/unparseable responses — safe to try the next model. */
@@ -102,8 +115,9 @@ async function callModel(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-    if (res.status === 404 || res.status === 429 || res.status >= 500) {
-      // 404 = model slug deprecated/renamed on OpenRouter's end — try the next model.
+    if (res.status === 401 || res.status === 404 || res.status === 429 || res.status >= 500) {
+      // 401 = this specific key is invalid/revoked (try the other key);
+      // 404 = model slug deprecated/renamed on OpenRouter's end (try the next model).
       throw new RetryableError(`OpenRouter ${res.status} from ${model}`);
     }
     if (!res.ok) throw new Error(`OpenRouter ${res.status}`);
@@ -131,17 +145,17 @@ function parseLoose(raw: string): Record<string, unknown> {
 }
 
 /**
- * Try each model in MODEL_CHAIN, widening the token budget once per model,
- * but never past the shared wall-clock budget — a hung or slow model can't
- * eat into every other model's chance to answer.
+ * Try each (key, model) pair, widening the token budget once per pair, but
+ * never past the shared wall-clock budget — a hung or slow pair can't eat
+ * into every other pair's chance to answer.
  */
 async function callWithFallback(
-  prompt: string, key: string,
+  prompt: string, chain: KeyModel[],
 ): Promise<{ content: string; parsed: Record<string, unknown>; model: string }> {
   const deadline = Date.now() + TOTAL_BUDGET_MS;
   let lastErr: unknown;
   for (const maxTokens of [TOKENS_SHORT, TOKENS_SHORT * 2]) {
-    for (const model of MODEL_CHAIN) {
+    for (const { key, model } of chain) {
       const remaining = deadline - Date.now();
       if (remaining <= 500) throw lastErr instanceof Error ? lastErr : new Error("AI fallback chain: time budget exhausted");
       try {
@@ -163,8 +177,8 @@ export async function aiReview(
   conditions: Record<string, unknown>,
   profile?: DataProfile,
 ): Promise<AiReview> {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) return { enabled: false, reviewVersion: REVIEW_VERSION };
+  const chain = buildKeyModelChain();
+  if (chain.length === 0) return { enabled: false, reviewVersion: REVIEW_VERSION };
 
   const violations = report.violations ?? [];
   const failedChecks = (report.checks ?? []).filter((c) => c.status === "failed");
@@ -189,7 +203,7 @@ export async function aiReview(
       verdict: "Normal",
       assessment: "Physics engine found no violations. Dataset is within physical bounds and internally consistent.",
       concerns: [],
-      model: MODEL_CHAIN[0],
+      model: chain[0].model,
       reviewVersion: REVIEW_VERSION,
     };
   }
@@ -215,7 +229,7 @@ Respond ONLY with this JSON, no other text:
 {"verdict":"not normal","reason":"2-3 specific sentences naming actual fields and values","recommendation":"one specific actionable step"}`;
 
   try {
-    const { parsed, model } = await callWithFallback(prompt, key);
+    const { parsed, model } = await callWithFallback(prompt, chain);
     const isNormal = String(parsed.verdict ?? "").trim().toLowerCase() === "normal";
     const reason = String(parsed.reason ?? "");
     const rec = String(parsed.recommendation ?? "");
@@ -241,7 +255,7 @@ Respond ONLY with this JSON, no other text:
       verdict: "Not Normal",
       assessment: fallback,
       concerns: fallback ? [fallback] : [],
-      model: MODEL_CHAIN[0],
+      model: chain[0].model,
       reviewVersion: REVIEW_VERSION,
       error: e instanceof AbortedError
         ? `Model timed out after ${TIMEOUT_MS / 1000}s`

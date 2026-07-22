@@ -1,14 +1,15 @@
 """
-SimAPI — AI Validation Layer v2.2 [SIMAPI-DIAG-WIRED + FALLBACK-CHAIN]
+SimAPI — AI Validation Layer v2.3 [SIMAPI-DIAG-WIRED + MULTI-KEY FALLBACK-CHAIN]
 
 Physics engine diagnosis is passed directly into the prompt.
 The AI layer elaborates on confirmed findings — it does not generate its own.
 
 A single free-tier model on OpenRouter can hit its daily quota (429) or return
 blank content independent of anything wrong in this codebase. `MODEL_CHAIN`
-routes around that by trying several independent providers in order before
-giving up, so a 429 on the primary model degrades to a slower answer instead
-of "AI layer unavailable."
+routes around that by trying several independent (key, model) pairs across up
+to two OpenRouter accounts before giving up, so a 429/expired-key/deprecated
+model on one combination degrades to a slower answer instead of
+"AI layer unavailable."
 """
 
 import json
@@ -22,30 +23,39 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-OPENROUTER_API_KEY = os.environ.get("SIMAPI_OPENROUTER_API_KEY", "")
-OPENROUTER_URL     = os.environ.get("SIMAPI_OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
-QUICK_MODEL        = os.environ.get("SIMAPI_AI_QUICK_MODEL", "nvidia/nemotron-nano-9b-v2:free")
-MODEL              = QUICK_MODEL
-TIMEOUT_SECONDS    = int(os.environ.get("SIMAPI_AI_QUICK_TIMEOUT_SECONDS", "18"))
+OPENROUTER_API_KEY   = os.environ.get("SIMAPI_OPENROUTER_API_KEY", "")
+OPENROUTER_API_KEY_2 = os.environ.get("SIMAPI_OPENROUTER_API_KEY_2", "")
+OPENROUTER_URL       = os.environ.get("SIMAPI_OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
+QUICK_MODEL          = os.environ.get("SIMAPI_AI_QUICK_MODEL", "nvidia/nemotron-nano-9b-v2:free")
+MODEL                = QUICK_MODEL
+TIMEOUT_SECONDS      = int(os.environ.get("SIMAPI_AI_QUICK_TIMEOUT_SECONDS", "18"))
 TOKENS_SHORT = 500
 TOKENS_LONG  = 3000
-AI_ENABLED = bool(OPENROUTER_API_KEY)
+AI_ENABLED = bool(OPENROUTER_API_KEY or OPENROUTER_API_KEY_2)
 
-# Fallback chain: OpenRouter's free tier rate-limits per-model, per-day. A 429 or
-# empty response on one model should try the next independent provider, not fail
-# the whole AI layer. Order matters: cheapest/fastest reasoning model first.
-# Verified against GET https://openrouter.ai/api/v1/models — OpenRouter's free
-# catalog changes over time and stale slugs 404 rather than falling through to
-# another provider, so this list must be checked periodically, not assumed.
-_MODEL_CHAIN = [
-    QUICK_MODEL,
-    "openai/gpt-oss-20b:free",
-    "google/gemma-4-31b-it:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
-]
-MODEL_CHAIN = list(dict.fromkeys(_MODEL_CHAIN))  # de-dup, preserve order
+# Fallback chain of (key, model) pairs. Two independent OpenRouter keys, each
+# tried against its own set of models — a bad/expired/rate-limited key on one
+# combination falls through to the next key+model, not just the next model on
+# the same key. Verified against GET https://openrouter.ai/api/v1/models —
+# OpenRouter's free catalog changes over time and stale slugs 404 rather than
+# falling through, so this list must be checked periodically, not assumed.
+_KEY_MODEL_CHAIN: list[tuple[str, str]] = []
+if OPENROUTER_API_KEY:
+    _KEY_MODEL_CHAIN += [
+        (OPENROUTER_API_KEY, QUICK_MODEL),
+        (OPENROUTER_API_KEY, "google/gemma-4-31b-it:free"),
+        (OPENROUTER_API_KEY, "nvidia/nemotron-3-nano-30b-a3b:free"),
+    ]
+if OPENROUTER_API_KEY_2:
+    _KEY_MODEL_CHAIN += [
+        (OPENROUTER_API_KEY_2, "openai/gpt-oss-20b:free"),
+        (OPENROUTER_API_KEY_2, "google/gemma-4-26b-a4b-it:free"),
+        (OPENROUTER_API_KEY_2, "nvidia/nemotron-3-super-120b-a12b:free"),
+    ]
+if not _KEY_MODEL_CHAIN and OPENROUTER_API_KEY:
+    _KEY_MODEL_CHAIN = [(OPENROUTER_API_KEY, QUICK_MODEL)]
+KEY_MODEL_CHAIN = list(dict.fromkeys(_KEY_MODEL_CHAIN))  # de-dup, preserve order
+MODEL_CHAIN = list(dict.fromkeys(m for _, m in KEY_MODEL_CHAIN))  # for logging/back-compat
 
 # Only these models accept/benefit from the `reasoning` param (hidden
 # chain-of-thought token budget). Sending it to a non-reasoning model causes
@@ -152,7 +162,7 @@ Respond ONLY with this JSON, no other text:
 anomaly_score: 0.0=clean, 1.0=seriously corrupted."""
 
 
-def _call_api(prompt: str, max_tokens: int, model: str, timeout: int) -> tuple:
+def _call_api(prompt: str, max_tokens: int, model: str, key: str, timeout: int) -> tuple:
     body = {
         "model": model, "max_tokens": max_tokens, "temperature": 0.1,
         "messages": [{"role": "user", "content": prompt}],
@@ -163,7 +173,7 @@ def _call_api(prompt: str, max_tokens: int, model: str, timeout: int) -> tuple:
 
     req = urllib.request.Request(
         OPENROUTER_URL, data=payload,
-        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        headers={"Authorization": f"Bearer {key}",
                  "Content-Type": "application/json",
                  "HTTP-Referer": "https://simapi.dev",
                  "X-Title": "SimAPI"},
@@ -174,9 +184,10 @@ def _call_api(prompt: str, max_tokens: int, model: str, timeout: int) -> tuple:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
-        if e.code in (404, 429, 500, 502, 503, 504):
-            # 404 = model slug deprecated/renamed on OpenRouter's end, not a
-            # request error on ours — try the next model instead of failing.
+        if e.code in (401, 404, 429, 500, 502, 503, 504):
+            # 401 = this specific key is invalid/revoked (try the other key);
+            # 404 = model slug deprecated/renamed on OpenRouter's end (try the
+            # next model) — neither is a request error on our side.
             raise _RetryableError(f"HTTP {e.code} from {model}") from e
         raise
     return raw, (time.time() - t0) * 1000
@@ -225,19 +236,19 @@ _FALLBACK_BUDGET_SECONDS = float(os.environ.get("SIMAPI_AI_FALLBACK_BUDGET_SECON
 
 def _call_with_fallback(prompt: str, max_tokens: int = TOKENS_SHORT,
                         timeout: int = TIMEOUT_SECONDS) -> tuple[dict, str]:
-    """Try each model in MODEL_CHAIN, widening the token budget once per model
-    before moving on. Returns (parsed_json, model_used). Raises the last error
-    if every model in the chain fails, or if a shared wall-clock budget runs
-    out — a hung model can't eat into every other model's chance to answer."""
+    """Try each (key, model) pair in KEY_MODEL_CHAIN, widening the token budget
+    once per pair before moving on. Returns (parsed_json, model_used). Raises
+    the last error if every pair fails, or if a shared wall-clock budget runs
+    out — a hung model can't eat into every other pair's chance to answer."""
     last_err: Exception | None = None
     deadline = time.time() + _FALLBACK_BUDGET_SECONDS
     for max_tok in (max_tokens, max_tokens * 2):
-        for model in MODEL_CHAIN:
+        for key, model in KEY_MODEL_CHAIN:
             remaining = deadline - time.time()
             if remaining <= 0.5:
                 raise last_err or RuntimeError("AI fallback chain: time budget exhausted")
             try:
-                raw, _ = _call_api(prompt, max_tok, model, min(timeout, remaining))
+                raw, _ = _call_api(prompt, max_tok, model, key, min(timeout, remaining))
                 return _parse(raw), model
             except _RetryableError as e:
                 last_err = e
