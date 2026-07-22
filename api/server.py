@@ -540,9 +540,11 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
     result["columns_renamed"] = ingest_meta.get("columns_renamed", {})
     result["ai_status"] = "pending" if (req.run_ai and AI_ENABLED) else "disabled"
 
-    with _JOBS_LOCK:
-        JOBS[jid] = {"physics": result, "ai_running": False, "ts": time.time()}
-        _prune_jobs()
+   with _JOBS_LOCK:
+    JOBS[jid] = {"physics": result, "ai_running": False, "ts": time.time()}
+    if APIE_AVAILABLE and 'apie_result' in dir():
+        JOBS[jid]["apie_result"] = apie_result
+    _prune_jobs()
 
     metrics.incr("physics_validations_total", status=result["status"])
 
