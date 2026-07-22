@@ -350,28 +350,13 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
             }
 
         if deep_ai and ORCHESTRATOR_ENABLED and physics_result:
-           orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
-           ai_data = orchestrator_dict(orch_result)
-           ai_data["status"] = orch_result.verdict
-           ai_data["anomaly_score"] = 1.0 - orch_result.overall_confidence
+            orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
+            ai_data = orchestrator_dict(orch_result)
+            ai_data["status"] = orch_result.verdict
+            ai_data["anomaly_score"] = 1.0 - orch_result.overall_confidence
         else:
-           diagnosis_context = None
-        try:
-           with _JOBS_LOCK:
-              _ar = JOBS.get(job_id, {}).get("apie_result")
-           if _ar and getattr(_ar, "diagnosis", None):
-             _dx = _ar.diagnosis
-             diagnosis_context = {
-                "primary_finding": getattr(_dx, "primary_diagnosis", None),
-                "pipeline_stage": getattr(_dx, "pipeline_stage", "unknown"),
-                "causal_chain": list(getattr(_dx, "causal_chain", []) or []),
-                "investigation_steps": list(getattr(_dx, "investigation_steps", []) or []),
-                "confidence": float(getattr(_dx, "confidence", 0) or 0),
-            }
-         except Exception:
-           diagnosis_context = None
-    ai_report = validate_with_ai(df, sim_type, conditions, physics_issues, diagnosis_context)
-    ai_data = ai_dict(ai_report)
+            ai_report = validate_with_ai(df, sim_type, conditions, physics_issues, diagnosis_context)
+            ai_data = ai_dict(ai_report)
 
         ai_excl = _ai_exclusion_indices(df, ai_data.get("findings", []))
         with _JOBS_LOCK:
@@ -470,7 +455,6 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
             apie_excl = apie_result.excluded_indices
             merged_excl = sorted(physics_excl | apie_excl)
             result["excluded_indices"] = merged_excl
-            JOBS[job_id]["apie_result"] = apie_result
 
             # Build response
             dx = apie_result.diagnosis
@@ -514,52 +498,14 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
         except Exception as _apie_err:
             result["apie"] = {"error": str(_apie_err), "version": "3.1"}
 
-    # ── APIE v3 reasoning layer ──────────────────────────────────────────────
-    # Runs the five-layer Adaptive Physics Intelligence Engine on the same data.
-    # APIE catches corruption patterns v1 misses: unit errors in fixed parameters,
-    # product law violations (c=fλ), Hooke's law unit conversion, 2nd law violations,
-    # and temporal anomalies. Results merged into the existing exclusion list.
-    try:
-        from core.apie import AdaptivePhysicsIntelligenceEngine
-        _apie_engine = AdaptivePhysicsIntelligenceEngine()
-        apie_result = _apie_engine.validate(
-            df.copy(),
-            domain=req.simulation_type.value,
-            conditions=req.conditions or {},
-            risk_mode="precision",
-        )
-        # Merge APIE exclusions into the response
-        existing_excluded = {int(e["trial_index"]) for e in result.get("exclusions", [])}
-        for idx in apie_result.excluded_indices:
-            if idx not in existing_excluded and idx < len(df):
-                # Add as an APIE-sourced exclusion
-                scores_for_row = [s for s in apie_result.row_scores if s.row_index == idx]
-                diag = scores_for_row[0].diagnosis if scores_for_row else "APIE: physics anomaly detected"
-                result.setdefault("exclusions", []).append({
-                    "trial_index": int(idx),
-                    "exclusion_source": "apie_v3",
-                    "diagnosis": diag,
-                    "severity": scores_for_row[0].severity if scores_for_row else "warning",
-                })
-        # Add APIE metadata to response
-        result["apie_fingerprint"] = {
-            "domain_profile": apie_result.domain_profile,
-            "ai_used": apie_result.ai_used,
-            "ai_diagnosis": apie_result.ai_diagnosis,
-            "new_exclusions": len(apie_result.excluded_indices - existing_excluded),
-            "discovered_invariants": apie_result.discovered_invariants,
-            "processing_ms": apie_result.processing_ms,
-        }
-    except Exception as _apie_err:
-        result["apie_fingerprint"] = {"error": str(_apie_err)[:200]}
     result["columns_renamed"] = ingest_meta.get("columns_renamed", {})
     result["ai_status"] = "pending" if (req.run_ai and AI_ENABLED) else "disabled"
 
-   with _JOBS_LOCK:
-    JOBS[jid] = {"physics": result, "ai_running": False, "ts": time.time()}
-    if APIE_AVAILABLE and 'apie_result' in dir():
-        JOBS[jid]["apie_result"] = apie_result
-    _prune_jobs()
+    with _JOBS_LOCK:
+        JOBS[jid] = {"physics": result, "ai_running": False, "ts": time.time()}
+        if APIE_AVAILABLE and "apie_result" in dir():
+            JOBS[jid]["apie_result"] = apie_result
+        _prune_jobs()
 
     metrics.incr("physics_validations_total", status=result["status"])
 
