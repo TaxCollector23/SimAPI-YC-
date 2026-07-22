@@ -90,9 +90,10 @@ def test_demo_runs(client):
     r = client.post("/v1/demo")
     assert r.status_code == 200
     body = r.json()
-    assert body["trials_submitted"] == 200
-    # The demo seeds three anomalies; at least the NaN/extreme rows are excluded.
-    assert body["trials_excluded"] >= 2
+    # The demo is pristine synthetic aerodynamics data — meant to show a
+    # near-100% pass rate so first-time playground users get a positive result.
+    assert body["trials_submitted"] == 500
+    assert body["trials_excluded"] <= 5
 
 
 def test_unsupported_simulation_type_upload(client):
