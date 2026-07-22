@@ -384,7 +384,7 @@ function RunSimulation() {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function SettingsPanel() {
-  const { user, signOut, firebaseEnabled } = useAuth();
+  const { user, signOut } = useAuth();
   if (!user) return null;
   return (
     <div className="space-y-6">
@@ -399,8 +399,7 @@ function SettingsPanel() {
           <Row label="Name" value={user.name} />
           <Row label="Email" value={user.email} />
           <Row label="User ID" value={<code className="font-mono text-xs text-white/50">{user.uid}</code>} />
-          <Row label="Provider" value={user.provider === "local" ? "Local session" : user.provider} />
-          <Row label="Auth backend" value={firebaseEnabled ? "Firebase" : "Local (browser)"} />
+          <Row label="Auth backend" value="Local (browser)" />
         </dl>
       </div>
 
