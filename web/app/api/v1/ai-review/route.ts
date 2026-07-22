@@ -11,7 +11,7 @@ import type { ValidationReport } from "@/lib/validation-engine";
  * when no key is configured.
  */
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 interface Body {
   report?: Pick<ValidationReport, "status" | "score" | "violations" | "recommendations" | "simulationType" | "checks">;

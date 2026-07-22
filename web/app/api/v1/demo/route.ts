@@ -11,7 +11,7 @@ import { richValidate, demoDataset } from "@/lib/rich-validate";
  * unreachable, so the demo always returns something.
  */
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function POST() {
   const requestId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);

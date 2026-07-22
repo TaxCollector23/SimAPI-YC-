@@ -1,8 +1,14 @@
 """
-SimAPI — AI Validation Layer v2.1 [SIMAPI-DIAG-WIRED]
+SimAPI — AI Validation Layer v2.2 [SIMAPI-DIAG-WIRED + FALLBACK-CHAIN]
 
 Physics engine diagnosis is passed directly into the prompt.
 The AI layer elaborates on confirmed findings — it does not generate its own.
+
+A single free-tier model on OpenRouter can hit its daily quota (429) or return
+blank content independent of anything wrong in this codebase. `MODEL_CHAIN`
+routes around that by trying several independent providers in order before
+giving up, so a 429 on the primary model degrades to a slower answer instead
+of "AI layer unavailable."
 """
 
 import json
@@ -25,8 +31,39 @@ TOKENS_SHORT = 500
 TOKENS_LONG  = 3000
 AI_ENABLED = bool(OPENROUTER_API_KEY)
 
+# Fallback chain: OpenRouter's free tier rate-limits per-model, per-day. A 429 or
+# empty response on one model should try the next independent provider, not fail
+# the whole AI layer. Order matters: cheapest/fastest reasoning model first.
+# Verified against GET https://openrouter.ai/api/v1/models — OpenRouter's free
+# catalog changes over time and stale slugs 404 rather than falling through to
+# another provider, so this list must be checked periodically, not assumed.
+_MODEL_CHAIN = [
+    QUICK_MODEL,
+    "openai/gpt-oss-20b:free",
+    "google/gemma-4-31b-it:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+]
+MODEL_CHAIN = list(dict.fromkeys(_MODEL_CHAIN))  # de-dup, preserve order
+
+# Only these models accept/benefit from the `reasoning` param (hidden
+# chain-of-thought token budget). Sending it to a non-reasoning model causes
+# it to return blank content instead of an answer.
+_REASONING_MODEL_PATTERNS = ("nemotron", "gpt-oss")
+
+
+def _uses_reasoning_param(model: str) -> bool:
+    m = model.lower()
+    return any(p in m for p in _REASONING_MODEL_PATTERNS)
+
+
+class _RetryableError(Exception):
+    """Raised for 429/5xx/empty-content/unparseable responses — try the next model."""
+
+
 # Version marker — confirms this file is the updated version
-_VALIDATOR_VERSION = "2.1-diag-wired"
+_VALIDATOR_VERSION = "2.2-fallback-chain"
 
 
 @dataclass
@@ -115,13 +152,14 @@ Respond ONLY with this JSON, no other text:
 anomaly_score: 0.0=clean, 1.0=seriously corrupted."""
 
 
-def _call_api(prompt: str, max_tokens: int = TOKENS_SHORT,
-              model: str = QUICK_MODEL, timeout: int = TIMEOUT_SECONDS) -> tuple:
-    payload = json.dumps({
+def _call_api(prompt: str, max_tokens: int, model: str, timeout: int) -> tuple:
+    body = {
         "model": model, "max_tokens": max_tokens, "temperature": 0.1,
-        "reasoning": {"exclude": True, "max_tokens": min(250, max_tokens // 2)},
         "messages": [{"role": "user", "content": prompt}],
-    }).encode("utf-8")
+    }
+    if _uses_reasoning_param(model):
+        body["reasoning"] = {"exclude": True, "max_tokens": min(250, max_tokens // 2)}
+    payload = json.dumps(body).encode("utf-8")
 
     req = urllib.request.Request(
         OPENROUTER_URL, data=payload,
@@ -132,22 +170,82 @@ def _call_api(prompt: str, max_tokens: int = TOKENS_SHORT,
         method="POST",
     )
     t0 = time.time()
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        if e.code in (404, 429, 500, 502, 503, 504):
+            # 404 = model slug deprecated/renamed on OpenRouter's end, not a
+            # request error on ours — try the next model instead of failing.
+            raise _RetryableError(f"HTTP {e.code} from {model}") from e
+        raise
     return raw, (time.time() - t0) * 1000
+
+
+def _extract_json_object(text: str) -> dict | None:
+    """Brace-match the first JSON object in text, for models that wrap it in prose."""
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return json.loads(text[start:i + 1])
+                except json.JSONDecodeError:
+                    return None
+    return None
 
 
 def _parse(raw: str) -> dict:
     data = json.loads(raw)
     content = data["choices"][0]["message"].get("content")
     if not content:
-        raise ValueError("Model returned no content (token budget exhausted on hidden reasoning)")
+        raise _RetryableError("Model returned no content (token budget exhausted on hidden reasoning)")
     content = content.strip()
     if content.startswith("```"):
         lines = content.split("\n")
         end = -1 if lines[-1].strip() in ("```", "```json") else len(lines)
         content = "\n".join(lines[1:end])
-    return json.loads(content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        parsed = _extract_json_object(content)
+        if parsed is None:
+            raise _RetryableError("Model returned unparseable content") from None
+        return parsed
+
+
+_FALLBACK_BUDGET_SECONDS = float(os.environ.get("SIMAPI_AI_FALLBACK_BUDGET_SECONDS", "40"))
+
+
+def _call_with_fallback(prompt: str, max_tokens: int = TOKENS_SHORT,
+                        timeout: int = TIMEOUT_SECONDS) -> tuple[dict, str]:
+    """Try each model in MODEL_CHAIN, widening the token budget once per model
+    before moving on. Returns (parsed_json, model_used). Raises the last error
+    if every model in the chain fails, or if a shared wall-clock budget runs
+    out — a hung model can't eat into every other model's chance to answer."""
+    last_err: Exception | None = None
+    deadline = time.time() + _FALLBACK_BUDGET_SECONDS
+    for max_tok in (max_tokens, max_tokens * 2):
+        for model in MODEL_CHAIN:
+            remaining = deadline - time.time()
+            if remaining <= 0.5:
+                raise last_err or RuntimeError("AI fallback chain: time budget exhausted")
+            try:
+                raw, _ = _call_api(prompt, max_tok, model, min(timeout, remaining))
+                return _parse(raw), model
+            except _RetryableError as e:
+                last_err = e
+                continue
+            except (ValueError, KeyError) as e:
+                last_err = e
+                continue
+    raise last_err or RuntimeError("AI fallback chain exhausted with no error recorded")
 
 
 def validate_with_ai(data: pd.DataFrame, simulation_type: str,
@@ -168,12 +266,7 @@ def validate_with_ai(data: pd.DataFrame, simulation_type: str,
         try:
             prompt = _build_prompt(data, simulation_type, conditions,
                                    physics_issues, diagnosis_context)
-            try:
-                raw, api_ms = _call_api(prompt)
-                parsed = _parse(raw)
-            except (ValueError, KeyError):
-                raw, api_ms = _call_api(prompt, max_tokens=TOKENS_SHORT * 2)
-                parsed = _parse(raw)
+            parsed, used_model = _call_with_fallback(prompt)
 
             is_normal = str(parsed.get("verdict", "")).strip().lower() == "normal"
             anomaly = float(parsed.get("anomaly_score", 0.1 if is_normal else 0.7))
@@ -189,7 +282,7 @@ def validate_with_ai(data: pd.DataFrame, simulation_type: str,
             result["report"] = AIValidationReport(
                 status="passed" if is_normal else ("failed" if anomaly > 0.6 else "warning"),
                 verdict="Normal" if is_normal else "Not Normal",
-                model=QUICK_MODEL,
+                model=used_model,
                 processing_ms=round((time.time() - t0) * 1000, 1),
                 findings=[] if is_normal else [AIFinding(
                     severity="warning" if anomaly < 0.7 else "critical",
@@ -212,7 +305,7 @@ def validate_with_ai(data: pd.DataFrame, simulation_type: str,
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
-    thread.join(timeout=TIMEOUT_SECONDS + 5)
+    thread.join(timeout=_FALLBACK_BUDGET_SECONDS + 5)
 
     if not result["done"] or result["report"] is None:
         err = result.get("error") or "Request timed out"

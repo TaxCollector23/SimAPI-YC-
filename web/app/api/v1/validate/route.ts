@@ -11,7 +11,7 @@ import { aiReview, type AiReview } from "@/lib/ai-review";
  * and SDKs consume, plus an optional AI second pass (OPENROUTER_API_KEY).
  */
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 interface ValidateBody {
   data?: Record<string, unknown>[];
