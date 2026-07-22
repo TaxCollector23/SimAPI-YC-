@@ -350,13 +350,28 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
             }
 
         if deep_ai and ORCHESTRATOR_ENABLED and physics_result:
-            orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
-            ai_data = orchestrator_dict(orch_result)
-            ai_data["status"] = orch_result.verdict
-            ai_data["anomaly_score"] = 1.0 - orch_result.overall_confidence
+           orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
+           ai_data = orchestrator_dict(orch_result)
+           ai_data["status"] = orch_result.verdict
+           ai_data["anomaly_score"] = 1.0 - orch_result.overall_confidence
         else:
-            ai_report = validate_with_ai(df, sim_type, conditions, physics_issues, diagnosis_context)
-            ai_data = ai_dict(ai_report)
+           diagnosis_context = None
+        try:
+           with _JOBS_LOCK:
+              _ar = JOBS.get(job_id, {}).get("apie_result")
+           if _ar and getattr(_ar, "diagnosis", None):
+             _dx = _ar.diagnosis
+             diagnosis_context = {
+                "primary_finding": getattr(_dx, "primary_diagnosis", None),
+                "pipeline_stage": getattr(_dx, "pipeline_stage", "unknown"),
+                "causal_chain": list(getattr(_dx, "causal_chain", []) or []),
+                "investigation_steps": list(getattr(_dx, "investigation_steps", []) or []),
+                "confidence": float(getattr(_dx, "confidence", 0) or 0),
+            }
+         except Exception:
+           diagnosis_context = None
+    ai_report = validate_with_ai(df, sim_type, conditions, physics_issues, diagnosis_context)
+    ai_data = ai_dict(ai_report)
 
         ai_excl = _ai_exclusion_indices(df, ai_data.get("findings", []))
         with _JOBS_LOCK:
