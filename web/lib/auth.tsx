@@ -4,8 +4,6 @@
  * Authentication context.
  *
  * A real local session backed by PBKDF2-hashed accounts in localStorage.
- * (Previously had an optional Firebase Auth path for Google/email — removed
- * for reliability; this local session is fully functional on its own.)
  */
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import { hashPassword } from "./crypto";

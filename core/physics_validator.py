@@ -295,10 +295,38 @@ class PhysicsValidator:
         self.checks_run = 0
         self.total_processing_ms = 0.0
 
-    def validate(self, data, simulation_type, conditions, job_id=None, max_exclusions=200):
+    def validate(self, data, simulation_type, conditions, job_id=None, max_exclusions=200,
+                 profile=None, auto_profile=True):
         t0 = time.time()
         job_id = job_id or str(uuid.uuid4())[:8]
         all_checks, all_excl, warnings_list = [], [], []
+
+        # ── Phase A: semantic profile ──────────────────────────────────────
+        # Classify the dataset BEFORE validating it. A designed parameter sweep
+        # and a time series produce identical-looking data to a check that
+        # assumes row order is time; only the profile can tell them apart.
+        _suppression_log: list = []
+        if profile is None and auto_profile:
+            try:
+                from core.dataset_profile import profile_dataset
+                data, profile = profile_dataset(
+                    data, str(simulation_type), conditions, canonicalize=True)
+            except Exception as ex:
+                warnings_list.append(f"dataset_profile: {ex}")
+                profile = None
+
+        # Regime-justified bound overrides, applied for this call only.
+        _bounds_patch: dict = {}
+        if profile is not None and getattr(profile, "mask", None):
+            try:
+                dom = BOUNDS.get(simulation_type)
+                if isinstance(dom, dict):
+                    for b in profile.mask.bound_overrides:
+                        if b.column in dom:
+                            _bounds_patch[b.column] = dom[b.column]
+                            dom[b.column] = (b.lo, b.hi)
+            except Exception as ex:
+                warnings_list.append(f"bound_override: {ex}")
 
         layers = [
             self._input_quality, self._plausibility, self._numerical_stability,
@@ -336,6 +364,41 @@ class PhysicsValidator:
                     all_checks.extend(checks); all_excl.extend(excls)
                 except Exception as ex:
                     warnings_list.append(f"{layer.__name__}: {ex}")
+
+        # Restore any patched bounds so the module-level table stays pristine
+        # across calls (BOUNDS is shared process-wide).
+        if _bounds_patch:
+            dom = BOUNDS.get(simulation_type)
+            if isinstance(dom, dict):
+                for col, orig in _bounds_patch.items():
+                    dom[col] = orig
+
+        # ── Apply the check mask ───────────────────────────────────────────
+        if profile is not None and getattr(profile, "mask", None):
+            try:
+                from core.dataset_profile import apply_mask
+                all_checks, all_excl, _suppression_log = apply_mask(
+                    all_checks, all_excl, profile, list(data.columns))
+            except Exception as ex:
+                warnings_list.append(f"apply_mask: {ex}")
+
+            # Exact-match duplicates replace cosine similarity. Re-add them so
+            # suppressing the cosine check never loses a genuine finding.
+            try:
+                already = {e.trial_index for e in all_excl}
+                for group in getattr(profile, "exact_duplicate_groups", []):
+                    keep = group[0]
+                    for idx in group[1:]:
+                        if idx not in already:
+                            all_excl.append(TrialExclusion(
+                                trial_index=int(idx),
+                                reason=(f"Exact duplicate of trial {keep + 1} "
+                                        "(all columns identical)"),
+                                severity="warning",
+                            ))
+                            already.add(idx)
+            except Exception as ex:
+                warnings_list.append(f"exact_duplicates: {ex}")
 
         excl_idx = {e.trial_index for e in all_excl}
         valid = data[~data.index.isin(excl_idx)].copy()
@@ -390,9 +453,11 @@ class PhysicsValidator:
             issues=issues, all_checks_count=len(unique_names),
             passed_count=len(unique_passed), warning_count=len(unique_warned), failed_count=len(unique_failed),
             exclusions=all_excl[:max_exclusions], statistics=statistics, warnings=warnings_list,
-            provenance={"validator_version":"3.1.0","simulation_type":simulation_type.value,
+            provenance={"validator_version":"4.0.0","simulation_type":simulation_type.value,
                        "conditions":conditions,"columns_validated":list(data.columns),
-                       "total_checks":len(unique_names),"total_invocations":len(all_checks)},
+                       "total_checks":len(unique_names),"total_invocations":len(all_checks),
+                       "dataset_profile": (profile.to_dict() if profile is not None else None),
+                       "suppressions": _suppression_log},
             training_ready=training_ready, processing_time_ms=round(ms,2),
             checks_by_category=cats,
         )
