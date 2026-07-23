@@ -24,13 +24,10 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor, IsolationForest, RandomForestRegressor
-from sklearn.metrics import mean_absolute_error
-from sklearn.model_selection import train_test_split
+from sklearn.ensemble import IsolationForest, RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
@@ -176,7 +173,7 @@ def gen_joint_dynamics(n: int) -> pd.DataFrame:
 
 def inject_realistic_corruptions(
     df: pd.DataFrame, domain: str, rate: float = 0.02, seed: int = 0
-) -> Tuple[pd.DataFrame, Dict[str, set]]:
+) -> tuple[pd.DataFrame, dict[str, set]]:
     """
     Inject realistic corruptions at 1-3% rate.
     These are based on actual incident types seen in production sim pipelines:
@@ -189,7 +186,7 @@ def inject_realistic_corruptions(
     rng_c = np.random.default_rng(seed)
     df = df.copy().reset_index(drop=True)
     n = len(df)
-    log: Dict[str, set] = {
+    log: dict[str, set] = {
         'solver_divergence': set(),
         'unit_error': set(),
         'sensor_drift': set(),
@@ -397,7 +394,7 @@ def run_realistic_benchmark(n_train=8000, n_test=2000, seeds=(42, 123, 456)):
         
         for seed in seeds:
             np.random.seed(seed)
-            rng_local = np.random.default_rng(seed)
+            np.random.default_rng(seed)
             
             # Generate data
             clean_all = cfg['gen'](n_train + n_test)
@@ -516,7 +513,7 @@ def run_realistic_benchmark(n_train=8000, n_test=2000, seeds=(42, 123, 456)):
             vals = [s['cat_recall'].get(cat, 0) for s in domain_seeds if s['cat_recall'].get(cat,0) >= 0]
             if vals: cat_avgs[cat] = np.mean(vals)
         
-        print(f"\n   SimAPI per-corruption-type recall:")
+        print("\n   SimAPI per-corruption-type recall:")
         for cat, val in cat_avgs.items():
             print(f"     {cat:25s}: {val:.0f}%")
         
@@ -525,7 +522,7 @@ def run_realistic_benchmark(n_train=8000, n_test=2000, seeds=(42, 123, 456)):
             ma = mean_mape('apie');  mi  = mean_mape('iso_forest')
             gain_vs_corrupt = (mco - ma) / mco * 100
             gain_vs_iso     = (mi  - ma) / mi  * 100 if mi else 0
-            print(f"\n   Random Forest MAPE on test set:")
+            print("\n   Random Forest MAPE on test set:")
             print(f"     Clean training data: {mc:.3f}%")
             print(f"     Corrupted (no filter): {mco:.3f}%  (+{(mco-mc)/mc*100:.1f}% error vs clean)")
             print(f"     After Isolation Forest: {mi:.3f}%")

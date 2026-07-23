@@ -28,7 +28,7 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from core.apie import AdaptivePhysicsIntelligenceEngine, AI_ENABLED, USE_ANTHROPIC_DIRECT
+from core.apie import AI_ENABLED, USE_ANTHROPIC_DIRECT, AdaptivePhysicsIntelligenceEngine
 
 # Physics constants — must match PhysicsValidator for clean data consistency
 RHO, MU, L, C_SOUND, R_AIR = 1.225, 1.8e-5, 0.5, 343.0, 287.05
@@ -183,7 +183,7 @@ def _prec_recall(excluded: set, log: dict[str, set]) -> dict:
 def run_benchmark(seeds: tuple = (42, 123, 456, 789, 1337)) -> dict:
     ai_mode = ("Claude (Anthropic)" if USE_ANTHROPIC_DIRECT
                else "OpenRouter" if AI_ENABLED else "Deterministic (no key)")
-    print(f"\nSimAPI APIE Benchmark v2.0")
+    print("\nSimAPI APIE Benchmark v2.0")
     print(f"Scale: n≈{int(N_TOTAL*(1-TEST_FRAC)):,} train / {int(N_TOTAL*TEST_FRAC):,} test")
     print(f"AI mode: {ai_mode}")
     print("=" * 72)
@@ -230,7 +230,7 @@ def run_benchmark(seeds: tuple = (42, 123, 456, 789, 1337)) -> dict:
             print(f"    AI: {ai_diag[:100]}...")
 
     # ── Summary ───────────────────────────────────────────────────────────
-    corruption_rate = float(np.mean([
+    float(np.mean([
         len(set().union(*log.values())) / len(train_pool)
         for _ in [None]  # computed once; reuse last log
     ]))

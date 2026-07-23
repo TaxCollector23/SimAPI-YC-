@@ -35,8 +35,7 @@ Design principles
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import asdict, dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -45,7 +44,7 @@ import pandas as pd
 # Canonical column names
 # ═══════════════════════════════════════════════════════════════════════════════
 
-CANONICAL_ALIASES: Dict[str, str] = {
+CANONICAL_ALIASES: dict[str, str] = {
     # Aerodynamics
     "cd": "drag_coefficient", "c_d": "drag_coefficient", "coef_drag": "drag_coefficient",
     "drag_coeff": "drag_coefficient", "cdrag": "drag_coefficient",
@@ -90,7 +89,7 @@ TIME_COLUMN_HINTS = {
 }
 
 
-def canonicalize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]]:
+def canonicalize_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, str]]:
     """
     Map non-standard column names onto canonical names.
 
@@ -103,13 +102,13 @@ def canonicalize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]
     existing = set(df.columns)
 
     # Count how many source columns want each canonical target.
-    demand: Dict[str, List[str]] = {}
+    demand: dict[str, list[str]] = {}
     for col, low in lowered.items():
         target = CANONICAL_ALIASES.get(low)
         if target and target not in existing:
             demand.setdefault(target, []).append(col)
 
-    rename: Dict[str, str] = {}
+    rename: dict[str, str] = {}
     for target, sources in demand.items():
         if len(sources) == 1:          # unambiguous
             rename[sources[0]] = target
@@ -125,7 +124,7 @@ def canonicalize_columns(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, str]
 class Suppression:
     """One scoped, explained check suppression. Never silent."""
     check_family: str           # e.g. "near_duplicates"
-    columns: List[str]          # [] means dataset-wide
+    columns: list[str]          # [] means dataset-wide
     reason: str                 # shown verbatim in the report
     source: str = "deterministic"   # "deterministic" | "ai" | "user"
 
@@ -143,13 +142,13 @@ class BoundOverride:
 @dataclass
 class CheckMask:
     """What the physics engine should skip or relax, and why."""
-    suppressions: List[Suppression] = field(default_factory=list)
-    bound_overrides: List[BoundOverride] = field(default_factory=list)
+    suppressions: list[Suppression] = field(default_factory=list)
+    bound_overrides: list[BoundOverride] = field(default_factory=list)
 
-    def suppressed_families(self) -> Dict[str, Suppression]:
+    def suppressed_families(self) -> dict[str, Suppression]:
         return {s.check_family: s for s in self.suppressions}
 
-    def is_suppressed(self, family: str, column: Optional[str] = None) -> bool:
+    def is_suppressed(self, family: str, column: str | None = None) -> bool:
         for s in self.suppressions:
             if s.check_family != family:
                 continue
@@ -159,7 +158,7 @@ class CheckMask:
                 return True
         return False
 
-    def bounds_for(self, column: str) -> Optional[Tuple[float, float]]:
+    def bounds_for(self, column: str) -> tuple[float, float] | None:
         for b in self.bound_overrides:
             if b.column == column:
                 return (b.lo, b.hi)
@@ -177,17 +176,17 @@ class DatasetProfile:
     """Semantic understanding of the dataset, produced before validation."""
     design_type: str                  # parameter_sweep | time_series | monte_carlo | mixed | unknown
     design_confidence: float          # 0-1
-    swept_columns: List[str]          # monotonic-by-design independent variables
-    constant_columns: List[str]       # held fixed by design
-    response_columns: List[str]       # everything else (dependent variables)
+    swept_columns: list[str]          # monotonic-by-design independent variables
+    constant_columns: list[str]       # held fixed by design
+    response_columns: list[str]       # everything else (dependent variables)
     regime: str                       # e.g. "subsonic", "transonic", "supersonic", "unknown"
     regime_evidence: str
     row_order_is_time: bool
-    exact_duplicate_groups: List[List[int]]
-    column_renames: Dict[str, str]
+    exact_duplicate_groups: list[list[int]]
+    column_renames: dict[str, str]
     n_rows: int
     n_numeric_cols: int
-    notes: List[str]
+    notes: list[str]
     mask: CheckMask
     ai_refined: bool = False
 
@@ -243,7 +242,7 @@ def _step_regularity(v: np.ndarray) -> float:
     return float(1.0 - min(1.0, np.median(np.abs(np.abs(d) - med)) / med))
 
 
-def _exact_duplicate_groups(df: pd.DataFrame, cols: List[str]) -> List[List[int]]:
+def _exact_duplicate_groups(df: pd.DataFrame, cols: list[str]) -> list[list[int]]:
     """
     Groups of *genuinely identical* rows, compared per column on a relative
     scale. This is the correct replacement for cosine similarity: cosine on raw
@@ -257,14 +256,14 @@ def _exact_duplicate_groups(df: pd.DataFrame, cols: List[str]) -> List[List[int]
     scale[~np.isfinite(scale) | (scale == 0)] = 1.0
     Xn = X / scale
 
-    seen: Dict[bytes, List[int]] = {}
+    seen: dict[bytes, list[int]] = {}
     for i in range(len(Xn)):
         key = np.round(Xn[i], 9).tobytes()
         seen.setdefault(key, []).append(i)
     return [idx for idx in seen.values() if len(idx) > 1]
 
 
-def _detect_regime(df: pd.DataFrame) -> Tuple[str, str]:
+def _detect_regime(df: pd.DataFrame) -> tuple[str, str]:
     """Classify the physical regime so bounds can be widened where justified."""
     if "mach_number" in df.columns:
         m = pd.to_numeric(df["mach_number"], errors="coerce").dropna()
@@ -308,7 +307,7 @@ TEMPORAL_FAMILIES = [
 ]
 
 # Regime-justified bound widening. Base bounds assume sea-level subsonic flight.
-REGIME_BOUNDS: Dict[str, List[Tuple[str, float, float]]] = {
+REGIME_BOUNDS: dict[str, list[tuple[str, float, float]]] = {
     "transonic":  [("velocity", 0.0, 500.0),  ("mach_number", 0.0, 1.3)],
     "supersonic": [("velocity", 0.0, 2000.0), ("mach_number", 0.0, 6.0)],
     "hypersonic": [("velocity", 0.0, 8000.0), ("mach_number", 0.0, 30.0)],
@@ -318,16 +317,16 @@ REGIME_BOUNDS: Dict[str, List[Tuple[str, float, float]]] = {
 def profile_dataset(
     df: pd.DataFrame,
     simulation_type: str = "",
-    conditions: Optional[dict] = None,
+    conditions: dict | None = None,
     canonicalize: bool = True,
-) -> Tuple[pd.DataFrame, DatasetProfile]:
+) -> tuple[pd.DataFrame, DatasetProfile]:
     """
     Classify a dataset and build its CheckMask. Pure statistics, no network.
 
     Returns (possibly_renamed_df, profile).
     """
-    notes: List[str] = []
-    renames: Dict[str, str] = {}
+    notes: list[str] = []
+    renames: dict[str, str] = {}
 
     if canonicalize:
         df, renames = canonicalize_columns(df)
@@ -342,9 +341,9 @@ def profile_dataset(
     n = len(df)
 
     # ── Constant / swept / response classification ──────────────────────────
-    constant_cols: List[str] = []
-    swept_cols: List[str] = []
-    sweep_scores: Dict[str, float] = {}
+    constant_cols: list[str] = []
+    swept_cols: list[str] = []
+    sweep_scores: dict[str, float] = {}
 
     for c in num_cols:
         v = pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
@@ -485,7 +484,7 @@ def profile_dataset(
 # Mask application
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _columns_mentioned(text: str, known: List[str]) -> List[str]:
+def _columns_mentioned(text: str, known: list[str]) -> list[str]:
     """Which known column names appear in a check name or exclusion reason."""
     low = (text or "").lower()
     # Longest-first so 'joint_velocity' wins over 'velocity'.
@@ -495,7 +494,7 @@ def _columns_mentioned(text: str, known: List[str]) -> List[str]:
 # Findings state their physics in prose ("Mann-Kendall drift in velocity"), not
 # by family name, so family membership is resolved from vocabulary. Order
 # matters: the first match wins.
-FAMILY_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
+FAMILY_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
     ("near_duplicates", ("near-duplicate", "near duplicate", "cosine", "sim=", "duplicate of trial")),
     ("temporal_drift",  ("mann-kendall", "mann kendall", "drift", "drifted", "trend",
                          "change-point", "changepoint", "segment", "creep",
@@ -509,9 +508,9 @@ FAMILY_KEYWORDS: List[Tuple[str, Tuple[str, ...]]] = [
 ]
 
 
-def _resolve_family(text: str, category: str) -> List[str]:
+def _resolve_family(text: str, category: str) -> list[str]:
     """All plausible family labels for a finding, from its category and prose."""
-    fams: List[str] = []
+    fams: list[str] = []
     if category:
         fams.append(category)
     low = (text or "").lower()
@@ -532,7 +531,7 @@ NEVER_SUPPRESS = (
 
 
 def apply_mask(checks: list, exclusions: list, profile: DatasetProfile,
-               known_columns: List[str]) -> Tuple[list, list, List[dict]]:
+               known_columns: list[str]) -> tuple[list, list, list[dict]]:
     """
     Drop checks and exclusions the profile has shown to be physically meaningless
     for this dataset shape.
@@ -545,9 +544,9 @@ def apply_mask(checks: list, exclusions: list, profile: DatasetProfile,
     if not mask.suppressions:
         return checks, exclusions, []
 
-    log: Dict[str, dict] = {}
+    log: dict[str, dict] = {}
 
-    def _suppressed(text: str, category: str) -> Optional[Suppression]:
+    def _suppressed(text: str, category: str) -> Suppression | None:
         low = (text or "").lower()
         if any(w in low for w in NEVER_SUPPRESS):
             return None

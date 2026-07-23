@@ -37,10 +37,10 @@ import re
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field, asdict
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from core.followup_probes import (
@@ -69,7 +69,7 @@ PIPELINE_VERSION = "4.0-grounded"
 # Failure mode library — the model selects from this, it cannot invent entries
 # ═══════════════════════════════════════════════════════════════════════════════
 
-FAILURE_MODES: Dict[str, dict] = {
+FAILURE_MODES: dict[str, dict] = {
     "unit_scale_error": {
         "label": "Unit scale error",
         "signature": "values off by a clean power of ten (×1000, ×60, ÷1000)",
@@ -128,7 +128,7 @@ FAILURE_MODES: Dict[str, dict] = {
     },
 }
 
-PROBE_REGISTRY: Dict[str, Callable] = {
+PROBE_REGISTRY: dict[str, Callable] = {
     "gas_constant": lambda df, **k: probe_gas_constant(df),
     "duplicate_cosine": lambda df, **k: probe_duplicate_cosine(df),
     "regime_change": lambda df, col=None, **k: probe_regime_change(df, col) if col else {"skipped": "no column"},
@@ -147,13 +147,13 @@ PROBE_REGISTRY: Dict[str, Callable] = {
 class RootCause:
     mode_key: str
     label: str
-    affected_trials: List[int]
-    evidence: List[str]                  # verbatim engine findings, never paraphrased
+    affected_trials: list[int]
+    evidence: list[str]                  # verbatim engine findings, never paraphrased
     stage: str
     status: str = "hypothesis"           # hypothesis | confirmed | refuted
-    probe_name: Optional[str] = None
-    probe_result: Optional[dict] = None
-    confidence: Optional[float] = None   # None until a probe confirms
+    probe_name: str | None = None
+    probe_result: dict | None = None
+    confidence: float | None = None   # None until a probe confirms
     action: str = ""
     source: str = "deterministic"        # deterministic | ai
 
@@ -164,15 +164,15 @@ class RootCause:
 @dataclass
 class PipelineResult:
     version: str
-    root_causes: List[RootCause]
+    root_causes: list[RootCause]
     narrative: str
     narrative_source: str                # "ai" | "deterministic"
     n_findings_in: int
     n_causes_out: int
-    phase_timings: Dict[str, float]
-    degraded: List[str]                  # phases that fell back, and why
-    model_cluster: Optional[str] = None
-    model_narrate: Optional[str] = None
+    phase_timings: dict[str, float]
+    degraded: list[str]                  # phases that fell back, and why
+    model_cluster: str | None = None
+    model_narrate: str | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -224,7 +224,7 @@ def _call_llm(prompt: str, model: str, timeout: int, max_tokens: int = 1200) -> 
 # Ordered most-specific first. A finding is assigned to the FIRST rule it
 # matches, and a trial is reported under its single most specific cause — a
 # solver blow-up is not also "measurement noise" just because it is an outlier.
-_DET_RULES: List[Tuple[str, Tuple[str, ...]]] = [
+_DET_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("unit_scale_error",      ("gas constant", "p/(ρt)", "expected 287", "unit error",
                                "×1000", "/1000", "ideal gas")),
     ("unit_offset_error",     ("273.15", "celsius", "kelvin", "°c")),
@@ -243,12 +243,12 @@ _DET_RULES: List[Tuple[str, Tuple[str, ...]]] = [
 _RULE_PRIORITY = {k: i for i, (k, _) in enumerate(_DET_RULES)}
 
 
-def cluster_deterministic(exclusions: List[dict]) -> List[RootCause]:
+def cluster_deterministic(exclusions: list[dict]) -> list[RootCause]:
     """
     Vocabulary-based clustering. Runs with no network and is the floor the AI
     path must beat; if the model returns anything unusable we keep this.
     """
-    buckets: Dict[str, Dict[str, Any]] = {}
+    buckets: dict[str, dict[str, Any]] = {}
     for ex in exclusions:
         reason = str(ex.get("reason", ""))
         low = reason.lower()
@@ -265,14 +265,14 @@ def cluster_deterministic(exclusions: List[dict]) -> List[RootCause]:
     # A trial can trip several checks; report it once, under the most specific
     # cause. Duplicating a trial across causes inflates the apparent number of
     # problems and makes the report read as noise.
-    owner: Dict[int, str] = {}
+    owner: dict[int, str] = {}
     for key, b in buckets.items():
         for t in b["trials"]:
             cur = owner.get(t)
             if cur is None or _RULE_PRIORITY[key] < _RULE_PRIORITY[cur]:
                 owner[t] = key
 
-    out: List[RootCause] = []
+    out: list[RootCause] = []
     for key, b in buckets.items():
         trials = sorted(t for t in b["trials"] if owner.get(t) == key)
         if not trials:
@@ -288,8 +288,8 @@ def cluster_deterministic(exclusions: List[dict]) -> List[RootCause]:
     return out
 
 
-def cluster_ai(exclusions: List[dict], sim_type: str, profile_summary: str,
-               fallback: List[RootCause]) -> Tuple[List[RootCause], Optional[str]]:
+def cluster_ai(exclusions: list[dict], sim_type: str, profile_summary: str,
+               fallback: list[RootCause]) -> tuple[list[RootCause], str | None]:
     """Ask the model to group findings. Returns (causes, degradation_reason)."""
     if not AI_ENABLED or not exclusions:
         return fallback, "no API key" if not AI_ENABLED else None
@@ -327,7 +327,7 @@ Respond ONLY with JSON:
     valid_trials = {e.get("trial_index") for e in exclusions}
     valid_reasons = {str(e.get("reason", "")) for e in exclusions}
 
-    causes: List[RootCause] = []
+    causes: list[RootCause] = []
     for rc in (parsed.get("root_causes") or [])[:8]:
         key = rc.get("mode_key")
         if key not in FAILURE_MODES:                       # invented mode -> drop
@@ -360,7 +360,7 @@ Respond ONLY with JSON:
 # Phase D — verification
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def verify(causes: List[RootCause], df: pd.DataFrame, sim_type: str) -> List[RootCause]:
+def verify(causes: list[RootCause], df: pd.DataFrame, sim_type: str) -> list[RootCause]:
     """
     Run each cause's probe. The probe is deterministic code — this is what turns
     a hypothesis into a finding, and it is the only place confidence is created.
@@ -370,7 +370,7 @@ def verify(causes: List[RootCause], df: pd.DataFrame, sim_type: str) -> List[Roo
         if fn is None:
             continue
         try:
-            kwargs: Dict[str, Any] = {"sim_type": sim_type}
+            kwargs: dict[str, Any] = {"sim_type": sim_type}
             if c.probe_name == "regime_change":
                 num = [x for x in df.columns if pd.api.types.is_numeric_dtype(df[x])]
                 kwargs["col"] = num[0] if num else None
@@ -392,7 +392,7 @@ def verify(causes: List[RootCause], df: pd.DataFrame, sim_type: str) -> List[Roo
     return causes
 
 
-def _probe_supports(res: dict) -> Optional[bool]:
+def _probe_supports(res: dict) -> bool | None:
     """True = probe confirms, False = refutes, None = inconclusive."""
     if not isinstance(res, dict) or res.get("skipped") or res.get("error"):
         return None
@@ -416,11 +416,11 @@ _BANNED = re.compile(
 )
 
 
-def narrate_deterministic(causes: List[RootCause], n_rows: int, n_excluded: int) -> str:
+def narrate_deterministic(causes: list[RootCause], n_rows: int, n_excluded: int) -> str:
     if not causes:
         return (f"No root causes identified. {n_excluded} of {n_rows} trials were "
                 "excluded by individual checks.")
-    parts: List[str] = []
+    parts: list[str] = []
     for c in causes[:4]:
         marker = {"confirmed": "Confirmed", "refuted": "Refuted", "hypothesis": "Suspected"}[c.status]
         trials = ", ".join(str(t + 1) for t in c.affected_trials[:6])
@@ -430,8 +430,8 @@ def narrate_deterministic(causes: List[RootCause], n_rows: int, n_excluded: int)
     return " ".join(parts)
 
 
-def narrate_ai(causes: List[RootCause], sim_type: str, n_rows: int,
-               n_excluded: int, profile_summary: str) -> Tuple[str, str, Optional[str]]:
+def narrate_ai(causes: list[RootCause], sim_type: str, n_rows: int,
+               n_excluded: int, profile_summary: str) -> tuple[str, str, str | None]:
     """Returns (narrative, source, degradation_reason)."""
     det = narrate_deterministic(causes, n_rows, n_excluded)
     if not AI_ENABLED or not causes:
@@ -491,8 +491,8 @@ def run_pipeline(df: pd.DataFrame, sim_type: str, physics_result: dict,
     """
     Cluster → verify → narrate. Never raises; degradations are reported, not thrown.
     """
-    timings: Dict[str, float] = {}
-    degraded: List[str] = []
+    timings: dict[str, float] = {}
+    degraded: list[str] = []
     exclusions = physics_result.get("exclusions") or []
     n_rows = int(physics_result.get("trials_submitted") or len(df))
     n_excl = int(physics_result.get("trials_excluded") or len(

@@ -44,11 +44,8 @@ from api.errors import (
 from api.observability import log, metrics, request_id_ctx
 from api.security import authenticate, enforce_rate_limit
 from core.ai_orchestrator import AI_ENABLED as ORCHESTRATOR_ENABLED
-from core.ai_orchestrator import orchestrate as ai_orchestrate
-from core.ai_orchestrator import result_to_dict as orchestrator_dict
-from core.ai_validator import AI_ENABLED, validate_with_ai
+from core.ai_validator import AI_ENABLED
 from core.ai_validator import MODEL as AI_MODEL
-from core.ai_validator import report_to_dict as ai_dict
 from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
@@ -336,18 +333,10 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                 JOBS[job_id]["ai_running"] = True
 
         # Build diagnosis context from APIE causal diagnosis engine
-        diagnosis_context = None
         with _JOBS_LOCK:
             apie_result = JOBS.get(job_id, {}).get("apie_result")
         if apie_result and hasattr(apie_result, "diagnosis") and apie_result.diagnosis:
-            dx = apie_result.diagnosis
-            diagnosis_context = {
-                "primary_finding": dx.primary_diagnosis,
-                "pipeline_stage": dx.pipeline_stage,
-                "causal_chain": dx.causal_chain,
-                "investigation_steps": dx.investigation_steps,
-                "confidence": dx.confidence,
-            }
+            pass
 
         # ── Grounded AI pipeline (cluster -> verify -> narrate) ────────────
         # Replaces the single-shot "second opinion" call. Every root cause is
