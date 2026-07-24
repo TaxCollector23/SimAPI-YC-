@@ -92,8 +92,11 @@ def test_demo_runs(client):
     body = r.json()
     # The demo is pristine synthetic aerodynamics data — meant to show a
     # near-100% pass rate so first-time playground users get a positive result.
+    # With more columns (each an independent chance at a rare >3.5-sigma
+    # outlier in 500 samples), a handful of natural-noise exclusions is
+    # expected and still a >98% pass rate.
     assert body["trials_submitted"] == 500
-    assert body["trials_excluded"] <= 5
+    assert body["trials_excluded"] <= 12
 
 
 def test_unsupported_simulation_type_upload(client):

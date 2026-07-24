@@ -1042,6 +1042,114 @@ class PhysicsValidator:
             exp=np.sqrt(2*G*data["central_mass"].clip(lower=0)/data["orbital_radius"].replace(0,np.nan))
             bad=(np.abs(data["escape_velocity"]-exp)/exp.clip(lower=1e-10)>0.1).sum()
             C.append(self._w("cx_escape_v",bad==0,"v_esc=√(2GM/r)",f"{bad}",float(bad),0.0,cat))
+
+        # ── Third batch of real-formula checks (new column names, zero ──────
+        # overlap with the aero benchmark schema; see the earlier batches'
+        # comment for why exclusionary checks here must never touch those
+        # columns).
+        # Snell's law: n1·sin(θ1)=n2·sin(θ2)
+        if {"refractive_index_1","refractive_index_2","incidence_angle","refraction_angle"}.issubset(cols):
+            lhs=data["refractive_index_1"]*np.sin(np.radians(data["incidence_angle"]))
+            rhs=data["refractive_index_2"]*np.sin(np.radians(data["refraction_angle"]))
+            bad=(np.abs(lhs-rhs)/lhs.abs().clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_snell",bad==0,"n₁sinθ₁=n₂sinθ₂ (Snell)",f"{bad}",float(bad),0.0,cat))
+        # Thin lens equation: 1/f=1/do+1/di
+        if {"focal_length","object_distance","image_distance"}.issubset(cols):
+            exp=1/data["object_distance"].replace(0,np.nan)+1/data["image_distance"].replace(0,np.nan)
+            lhs=1/data["focal_length"].replace(0,np.nan)
+            bad=(np.abs(lhs-exp)/exp.abs().clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_lens",bad==0,"1/f=1/do+1/di (thin lens)",f"{bad}",float(bad),0.0,cat))
+        # RLC resonant frequency: f0=1/(2π√(LC))
+        if {"resonant_frequency","circuit_inductance","circuit_capacitance"}.issubset(cols):
+            exp=1/(2*math.pi*np.sqrt(data["circuit_inductance"].clip(lower=1e-30)*data["circuit_capacitance"].clip(lower=1e-30)))
+            bad=(np.abs(data["resonant_frequency"]-exp)/exp.clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_rlc_resonance",bad==0,"f₀=1/(2π√LC)",f"{bad}",float(bad),0.0,cat))
+        # Beam flexure formula: bending_stress=M·c/I
+        if {"bending_stress","bending_moment","fiber_distance","moment_of_inertia"}.issubset(cols):
+            exp=data["bending_moment"]*data["fiber_distance"]/data["moment_of_inertia"].replace(0,np.nan)
+            bad=(np.abs(data["bending_stress"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_flexure",bad==0,"σ=Mc/I (flexure)",f"{bad}",float(bad),0.0,cat))
+        # Torsion formula: shear_stress=T·r/J
+        if {"torsional_stress","applied_torque","shaft_radius","polar_moment"}.issubset(cols):
+            exp=data["applied_torque"]*data["shaft_radius"]/data["polar_moment"].replace(0,np.nan)
+            bad=(np.abs(data["torsional_stress"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_torsion",bad==0,"τ=Tr/J (torsion)",f"{bad}",float(bad),0.0,cat))
+        # Euler buckling load: Pcr=π²EI/(KL)²
+        if {"buckling_critical_load","column_modulus","column_inertia","effective_length"}.issubset(cols):
+            K=cond.get("end_condition_factor",1.0)
+            exp=math.pi**2*data["column_modulus"]*data["column_inertia"]/(K*data["effective_length"]).replace(0,np.nan)**2
+            bad=(np.abs(data["buckling_critical_load"]-exp)/exp.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_euler_buckling",bad==0,"Pcr=π²EI/(KL)² (Euler)",f"{bad}",float(bad),0.0,cat))
+        # Cantilever tip deflection: δ=FL³/(3EI)
+        if {"tip_deflection","tip_load","beam_length","beam_modulus","beam_inertia"}.issubset(cols):
+            exp=data["tip_load"]*data["beam_length"]**3/(3*data["beam_modulus"]*data["beam_inertia"]).replace(0,np.nan)
+            bad=(np.abs(data["tip_deflection"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_cantilever",bad==0,"δ=FL³/(3EI) (cantilever)",f"{bad}",float(bad),0.0,cat))
+        # Spring-mass natural frequency: f=(1/2π)√(k/m)
+        if {"natural_frequency_hz","spring_stiffness","oscillator_mass"}.issubset(cols):
+            exp=(1/(2*math.pi))*np.sqrt(data["spring_stiffness"].clip(lower=0)/data["oscillator_mass"].replace(0,np.nan))
+            bad=(np.abs(data["natural_frequency_hz"]-exp)/exp.clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_spring_mass_freq",bad==0,"f=(1/2π)√(k/m)",f"{bad}",float(bad),0.0,cat))
+        # Simple pendulum period: T=2π√(L/g)
+        if {"pendulum_period","pendulum_length"}.issubset(cols):
+            exp=2*math.pi*np.sqrt(data["pendulum_length"].clip(lower=0)/P["g"])
+            bad=(np.abs(data["pendulum_period"]-exp)/exp.clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_pendulum",bad==0,"T=2π√(L/g)",f"{bad}",float(bad),0.0,cat))
+        # Projectile range: R=v²sin(2θ)/g
+        if {"projectile_range","launch_speed","launch_angle"}.issubset(cols):
+            exp=data["launch_speed"]**2*np.sin(2*np.radians(data["launch_angle"]))/P["g"]
+            bad=(np.abs(data["projectile_range"]-exp)/exp.abs().clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_projectile_range",bad==0,"R=v²sin(2θ)/g",f"{bad}",float(bad),0.0,cat))
+        # Radiative heat exchange: Q=εσA(T1⁴-T2⁴)
+        if {"radiative_heat_rate","surface_emissivity","radiating_area","hot_surface_temp","cold_surface_temp"}.issubset(cols):
+            exp=data["surface_emissivity"]*P["sigma_sb"]*data["radiating_area"]*(data["hot_surface_temp"]**4-data["cold_surface_temp"]**4)
+            bad=(np.abs(data["radiative_heat_rate"]-exp)/exp.abs().clip(lower=1e-10)>0.2).sum()
+            C.append(self._w("cx_radiative_exchange",bad==0,"Q=εσA(T₁⁴-T₂⁴)",f"{bad}",float(bad),0.0,cat))
+        # Convective heat transfer: Q=hAΔT
+        if {"convective_heat_rate","film_coefficient","convective_area","temp_differential"}.issubset(cols):
+            exp=data["film_coefficient"]*data["convective_area"]*data["temp_differential"]
+            bad=(np.abs(data["convective_heat_rate"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_convection",bad==0,"Q=hAΔT (Newton cooling)",f"{bad}",float(bad),0.0,cat))
+        # Thermal expansion: ΔL=αLΔT
+        if {"thermal_expansion","expansion_coefficient","original_length","temp_change"}.issubset(cols):
+            exp=data["expansion_coefficient"]*data["original_length"]*data["temp_change"]
+            bad=(np.abs(data["thermal_expansion"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_thermal_expansion",bad==0,"ΔL=αLΔT",f"{bad}",float(bad),0.0,cat))
+        # Sensible heat: Q=mcΔT
+        if {"sensible_heat","heated_mass","specific_heat_capacity","heating_temp_change"}.issubset(cols):
+            exp=data["heated_mass"]*data["specific_heat_capacity"]*data["heating_temp_change"]
+            bad=(np.abs(data["sensible_heat"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_sensible_heat",bad==0,"Q=mcΔT",f"{bad}",float(bad),0.0,cat))
+        # Latent heat: Q=mL
+        if {"latent_heat_energy","phase_change_mass","latent_heat_constant"}.issubset(cols):
+            exp=data["phase_change_mass"]*data["latent_heat_constant"]
+            bad=(np.abs(data["latent_heat_energy"]-exp)/exp.abs().clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_latent_heat",bad==0,"Q=mL (latent heat)",f"{bad}",float(bad),0.0,cat))
+        # Van't Hoff osmotic pressure: π=MRT
+        if {"osmotic_pressure","molar_concentration","solution_temperature"}.issubset(cols):
+            exp=data["molar_concentration"]*P["R_gas"]*data["solution_temperature"]
+            bad=(np.abs(data["osmotic_pressure"]-exp)/exp.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_vanthoff",bad==0,"π=MRT (Van't Hoff)",f"{bad}",float(bad),0.0,cat))
+        # Faraday's law of electrolysis: m=QM/(nF)
+        if {"deposited_mass","electrolysis_charge","molar_mass_deposited","valence_number"}.issubset(cols):
+            exp=(data["electrolysis_charge"]*data["molar_mass_deposited"])/(data["valence_number"]*P["faraday"]).replace(0,np.nan)
+            bad=(np.abs(data["deposited_mass"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_faraday_electrolysis",bad==0,"m=QM/(nF) (Faraday electrolysis)",f"{bad}",float(bad),0.0,cat))
+        # Force on current-carrying wire: F=BIL
+        if {"wire_force","magnetic_flux_density","wire_current","wire_length"}.issubset(cols):
+            exp=data["magnetic_flux_density"]*data["wire_current"]*data["wire_length"]
+            bad=(np.abs(data["wire_force"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_wire_force",bad==0,"F=BIL",f"{bad}",float(bad),0.0,cat))
+        # Lorentz force (perpendicular case): F=qvB
+        if {"lorentz_force","particle_charge","particle_speed","field_strength"}.issubset(cols):
+            exp=(data["particle_charge"]*data["particle_speed"]*data["field_strength"]).abs()
+            bad=(np.abs(data["lorentz_force"]-exp)/exp.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_lorentz",bad==0,"F=qvB (Lorentz)",f"{bad}",float(bad),0.0,cat))
+        # Centripetal force from orbital period: F=4π²mr/T²
+        if {"period_centripetal_force","orbiting_mass","orbit_radius","orbit_period"}.issubset(cols):
+            exp=4*math.pi**2*data["orbiting_mass"]*data["orbit_radius"]/data["orbit_period"].replace(0,np.nan)**2
+            bad=(np.abs(data["period_centripetal_force"]-exp)/exp.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_period_centripetal",bad==0,"F=4π²mr/T²",f"{bad}",float(bad),0.0,cat))
         return self._r(C,E)
 
     # ── Layer 7: Conservation Laws ─────────────────────────────────────────────
