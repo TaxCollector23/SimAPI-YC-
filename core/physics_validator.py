@@ -970,6 +970,78 @@ class PhysicsValidator:
             exp_j=data["force"]*data["time_interval"]
             bad=(np.abs(data["impulse"]-exp_j)/exp_j.abs().clip(lower=1e-10)>0.2).sum()
             C.append(self._w("cx_impulse",bad==0,"J=FΔt",f"{bad}",float(bad),0.0,cat))
+
+        # ── More real-formula cross-checks (new column names, zero overlap ──────
+        # with the aero benchmark schema — see the layer-level comment above
+        # for why exclusionary checks here must never touch those columns).
+        # Hydrostatic pressure: ΔP=ρgΔh
+        if {"hydrostatic_pressure","fluid_density","depth"}.issubset(cols):
+            exp=data["fluid_density"]*P["g"]*data["depth"]
+            bad=(np.abs(data["hydrostatic_pressure"]-exp)/exp.clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_hydrostatic",bad==0,"ΔP=ρgΔh (hydrostatic)",f"{bad}",float(bad),0.0,cat))
+        # Capacitance: C=ε₀ε_r·A/d (parallel plate)
+        if {"capacitance","relative_permittivity","plate_area","plate_separation"}.issubset(cols):
+            exp=P["eps0"]*data["relative_permittivity"]*data["plate_area"]/data["plate_separation"].replace(0,np.nan)
+            bad=(np.abs(data["capacitance"]-exp)/exp.clip(lower=1e-15)>0.15).sum()
+            C.append(self._w("cx_capacitance",bad==0,"C=ε₀ε_r·A/d",f"{bad}",float(bad),0.0,cat))
+        # Inductor energy: E=0.5·L·I²
+        if {"inductor_energy","inductance","circuit_current"}.issubset(cols):
+            exp=0.5*data["inductance"]*data["circuit_current"]**2
+            bad=(np.abs(data["inductor_energy"]-exp)/exp.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_inductor_energy",bad==0,"E=½LI²",f"{bad}",float(bad),0.0,cat))
+        # RC time constant: τ=RC
+        if {"rc_time_constant","circuit_resistance","circuit_capacitance"}.issubset(cols):
+            exp=data["circuit_resistance"]*data["circuit_capacitance"]
+            bad=(np.abs(data["rc_time_constant"]-exp)/exp.abs().clip(lower=1e-15)>0.1).sum()
+            C.append(self._w("cx_rc_tau",bad==0,"τ=RC",f"{bad}",float(bad),0.0,cat))
+        # RL time constant: τ=L/R
+        if {"rl_time_constant","inductance","circuit_resistance"}.issubset(cols):
+            exp=data["inductance"]/data["circuit_resistance"].replace(0,np.nan)
+            bad=(np.abs(data["rl_time_constant"]-exp)/exp.abs().clip(lower=1e-15)>0.1).sum()
+            C.append(self._w("cx_rl_tau",bad==0,"τ=L/R",f"{bad}",float(bad),0.0,cat))
+        # Kepler's 3rd law: T²=4π²a³/GM
+        if {"orbital_period","semi_major_axis","central_mass"}.issubset(cols):
+            G=6.674e-11
+            exp_t2=4*math.pi**2*data["semi_major_axis"]**3/(G*data["central_mass"].replace(0,np.nan))
+            bad=(np.abs(data["orbital_period"]**2-exp_t2)/exp_t2.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_kepler3",bad==0,"T²=4π²a³/GM (Kepler's 3rd law)",f"{bad}",float(bad),0.0,cat))
+        # Circular orbital velocity: v=√(GM/r)
+        if {"orbital_velocity","central_mass","orbital_radius"}.issubset(cols):
+            G=6.674e-11
+            exp_v=np.sqrt(G*data["central_mass"].clip(lower=0)/data["orbital_radius"].replace(0,np.nan))
+            bad=(np.abs(data["orbital_velocity"]-exp_v)/exp_v.clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_orbital_v",bad==0,"v=√(GM/r)",f"{bad}",float(bad),0.0,cat))
+        # de Broglie wavelength: λ=h/p
+        if {"debroglie_wavelength","particle_momentum"}.issubset(cols):
+            exp=P["h_planck"]/data["particle_momentum"].abs().replace(0,np.nan)
+            bad=(np.abs(data["debroglie_wavelength"]-exp)/exp.clip(lower=1e-40)>0.1).sum()
+            C.append(self._w("cx_debroglie",bad==0,"λ=h/p (de Broglie)",f"{bad}",float(bad),0.0,cat))
+        # Photon energy: E=hf
+        if {"photon_energy","photon_frequency"}.issubset(cols):
+            exp=P["h_planck"]*data["photon_frequency"]
+            bad=(np.abs(data["photon_energy"]-exp)/exp.clip(lower=1e-40)>0.05).sum()
+            C.append(self._w("cx_photon_energy",bad==0,"E=hf (photon energy)",f"{bad}",float(bad),0.0,cat))
+        # Deep-water wave dispersion: ω²=gk (kd≫1 limit)
+        if {"angular_frequency","wave_number"}.issubset(cols):
+            exp=np.sqrt(P["g"]*data["wave_number"].clip(lower=0))
+            bad=(np.abs(data["angular_frequency"]-exp)/exp.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_deepwater_dispersion",bad==0,"ω=√(gk) (deep-water dispersion)",f"{bad}",float(bad),0.0,cat))
+        # Archard wear law proportionality: wear_volume ∝ load·sliding_distance/hardness
+        if {"wear_volume","normal_load","sliding_distance","material_hardness"}.issubset(cols):
+            proxy=data["normal_load"]*data["sliding_distance"]/data["material_hardness"].replace(0,np.nan)
+            corr=data["wear_volume"].corr(proxy)
+            C.append(self._w("cx_archard",corr>0.5,"Wear∝load·distance/hardness (Archard)",f"corr={corr:.3f}",float(corr) if pd.notna(corr) else 0.0,0.5,cat))
+        # Centripetal acceleration: a=v²/r (kinematic, distinct from cx_centripetal's force form)
+        if {"centripetal_acceleration","tangential_velocity","orbital_radius"}.issubset(cols):
+            exp=data["tangential_velocity"]**2/data["orbital_radius"].replace(0,np.nan)
+            bad=(np.abs(data["centripetal_acceleration"]-exp)/exp.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_centripetal_accel",bad==0,"a=v²/r",f"{bad}",float(bad),0.0,cat))
+        # Escape velocity: v_esc=√(2GM/r)
+        if {"escape_velocity","central_mass","orbital_radius"}.issubset(cols):
+            G=6.674e-11
+            exp=np.sqrt(2*G*data["central_mass"].clip(lower=0)/data["orbital_radius"].replace(0,np.nan))
+            bad=(np.abs(data["escape_velocity"]-exp)/exp.clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_escape_v",bad==0,"v_esc=√(2GM/r)",f"{bad}",float(bad),0.0,cat))
         return self._r(C,E)
 
     # ── Layer 7: Conservation Laws ─────────────────────────────────────────────
