@@ -46,6 +46,7 @@ from api.security import authenticate, enforce_rate_limit
 from core.ai_orchestrator import AI_ENABLED as ORCHESTRATOR_ENABLED
 from core.ai_validator import AI_ENABLED
 from core.ai_validator import MODEL as AI_MODEL
+from core.dimensional import validate as dimensional_validate
 from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
@@ -643,6 +644,80 @@ async def validate_upload(
 async def validate_physics_only(req: ValidateRequest, _: str = Depends(caller_identity)):
     req.run_ai = False
     return await _validate_core(req)
+
+
+@app.post("/v1/validate/dimensional", tags=["validation"])
+async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_identity)):
+    """
+    Dimensional-analysis validation engine (core/dimensional/).
+
+    Replaces hand-written per-column checks with column-name -> SI-dimension
+    resolution, dimensionless (Pi) group discovery, ~30 shipped physical
+    constants as majority-corruption-proof anchors, bimodal-split detection,
+    a Pi-space response-surface residual layer, semantic bounds, and
+    declared-conditions assertions. See core/dimensional/engine.py.
+
+    This runs alongside -- not in place of -- /v1/validate (the deterministic
+    check-based engine with the published 99%+ precision benchmark). Both are
+    live; this endpoint is the newer, narrower-rule-count architecture for
+    callers who want to try it directly.
+    """
+    df, ingest_meta = ingester.ingest(req.data, format_hint="json")
+    conditions_dict = dict(req.conditions or {})
+    report = dimensional_validate(df, conditions=conditions_dict)
+
+    def _row_finding_dict(f):
+        return {
+            "row_index": f.row_id,
+            "output_class": f.output_class,
+            "reason": f.reason,
+            "layer": f.layer,
+            "weight": round(f.weight, 3),
+            "factor": f.factor,
+            "counterfactual_repair": f.counterfactual,
+        }
+
+    def _law_dict(law):
+        return {
+            "kind": law.kind,
+            "label": law.label,
+            "columns": list(law.columns),
+            "expected_value": law.expected_value,
+            "observed_median": law.observed_median,
+            "coverage": round(law.coverage, 3),
+            "weight": round(law.weight, 3),
+            "n_violations": len(law.violated_rows),
+            "note": law.note,
+        }
+
+    return _json_safe({
+        "job_id": req.job_id or uuid.uuid4().hex[:8],
+        "n_rows": report.n_rows,
+        "impossible": sorted(report.impossible_rows),
+        "inconsistent": sorted(report.inconsistent_rows),
+        "unsuitable_for_training": sorted(report.unsuitable_rows),
+        "n_impossible": len(report.impossible_rows),
+        "n_inconsistent": len(report.inconsistent_rows),
+        "n_unsuitable_for_training": len(report.unsuitable_rows),
+        "training_ready": len(report.impossible_rows) == 0,
+        "laws_discovered": [_law_dict(law) for law in report.laws],
+        "n_anchored_constants": sum(1 for law in report.laws if law.kind == "anchored_constant"),
+        "row_findings": [_row_finding_dict(f) for f in report.row_findings],
+        "units_resolved": {
+            c: {
+                "confidence": round(u.confidence, 2), "source": u.source,
+                "usable": u.usable, "unit_label": u.unit_label,
+            }
+            for c, u in report.units.columns.items()
+        },
+        "units_conflicts": [c.__dict__ for c in report.units_conflicts],
+        "condition_assertions": [
+            {"label": a.label, "declared": a.declared, "implied": a.implied,
+             "rel_dev": round(a.rel_dev, 4), "columns": list(a.columns), "row_ids": a.row_ids}
+            for a in report.condition_assertions
+        ],
+        "columns_renamed": ingest_meta.get("columns_renamed", {}),
+    })
 
 
 @app.post("/v1/validate/setup", tags=["validation"])

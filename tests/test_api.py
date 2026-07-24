@@ -142,3 +142,33 @@ def test_repair_handles_empty_data_gracefully(client):
     r = client.post("/v1/repair", json={"data": []})
     assert r.status_code == 200
     assert r.json()["proposals"] == []
+
+
+def test_validate_dimensional_endpoint(client, sample_payload):
+    r = client.post("/v1/validate/dimensional", json=sample_payload)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["n_rows"] == 30
+    assert "impossible" in body and "inconsistent" in body and "unsuitable_for_training" in body
+    assert isinstance(body["laws_discovered"], list)
+    assert isinstance(body["units_resolved"], dict)
+    # Ingestion normalizes cd/cl/re/ma to their canonical names before the
+    # dimensional engine sees them; all four should resolve as dimensionless.
+    for col in ("drag_coefficient", "lift_coefficient", "reynolds_number", "mach_number"):
+        assert body["units_resolved"][col]["usable"], body["units_resolved"]
+
+
+def test_validate_dimensional_catches_unit_swap(client):
+    import numpy as np
+    rng = np.random.default_rng(0)
+    n = 60
+    T = 293.15 + rng.normal(0, 1, n)
+    rho = 1.225 + rng.normal(0, 0.006, n)
+    P = rho * 287.05 * T
+    P[5] = P[5] / 1000.0  # Pa written as kPa
+    data = [{"temperature": float(t), "density": float(r), "pressure": float(p)}
+            for t, r, p in zip(T, rho, P, strict=True)]
+    r = client.post("/v1/validate/dimensional", json={"data": data, "simulation_type": "aerodynamics"})
+    assert r.status_code == 200
+    body = r.json()
+    assert 5 in body["impossible"]
