@@ -810,6 +810,101 @@ class PhysicsValidator:
             exp_va=data["magnetic_field"].abs()/np.sqrt(P["mu0"]*data["density"].clip(lower=1e-30))
             bad=(np.abs(data["alfven_speed"]-exp_va)/exp_va.clip(lower=1e-30)>0.3).sum()
             C.append(self._w("cx_alfven",bad==0,"vA=B/√(μ₀ρ)",f"{bad}",float(bad),0.0,cat))
+
+        # ── Fundamental-law cross-checks (universal, not domain-gated) ──────────
+        # Newton's 2nd law: F=ma
+        if {"force","mass","acceleration"}.issubset(cols):
+            exp_f=data["mass"]*data["acceleration"]
+            bad=(np.abs(data["force"]-exp_f)/exp_f.abs().clip(lower=1e-10)>0.2).sum()
+            C.append(self._w("cx_newton2",bad==0,"F=ma (Newton's 2nd law)",f"{bad}",float(bad),0.0,cat))
+        # Momentum p=mv
+        if {"momentum","mass","velocity"}.issubset(cols):
+            exp_p=data["mass"]*data["velocity"]
+            bad=(np.abs(data["momentum"]-exp_p)/exp_p.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_momentum",bad==0,"p=mv",f"{bad}",float(bad),0.0,cat))
+        # Kinetic energy KE=0.5mv²
+        if {"kinetic_energy","mass","velocity"}.issubset(cols):
+            exp_ke=0.5*data["mass"]*data["velocity"]**2
+            bad=(np.abs(data["kinetic_energy"]-exp_ke)/exp_ke.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_kinetic_energy",bad==0,"KE=½mv²",f"{bad}",float(bad),0.0,cat))
+        # Gravitational PE=mgh
+        if {"potential_energy","mass","height"}.issubset(cols):
+            exp_pe=data["mass"]*P["g"]*data["height"]
+            bad=(np.abs(data["potential_energy"]-exp_pe)/exp_pe.abs().clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_grav_pe",bad==0,"PE=mgh",f"{bad}",float(bad),0.0,cat))
+        # Centripetal force F=mv²/r
+        if {"centripetal_force","mass","velocity","radius"}.issubset(cols):
+            exp_f=data["mass"]*data["velocity"]**2/data["radius"].replace(0,np.nan)
+            bad=(np.abs(data["centripetal_force"]-exp_f)/exp_f.abs().clip(lower=1e-10)>0.2).sum()
+            C.append(self._w("cx_centripetal",bad==0,"F=mv²/r",f"{bad}",float(bad),0.0,cat))
+        # Buoyancy F=ρVg (Archimedes)
+        if {"buoyant_force","density","volume"}.issubset(cols):
+            exp_f=data["density"]*data["volume"]*P["g"]
+            bad=(np.abs(data["buoyant_force"]-exp_f)/exp_f.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_buoyancy",bad==0,"F=ρVg (Archimedes)",f"{bad}",float(bad),0.0,cat))
+        # Ohm's law V=IR
+        if {"voltage","current","resistance"}.issubset(cols):
+            exp_v=data["current"]*data["resistance"]
+            bad=(np.abs(data["voltage"]-exp_v)/exp_v.abs().clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_ohms_law",bad==0,"V=IR (Ohm's law)",f"{bad}",float(bad),0.0,cat))
+        # Electrical power P=IV
+        if {"electrical_power","current","voltage"}.issubset(cols):
+            exp_p=data["current"]*data["voltage"]
+            bad=(np.abs(data["electrical_power"]-exp_p)/exp_p.abs().clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_elec_power",bad==0,"P=IV",f"{bad}",float(bad),0.0,cat))
+        # Coulomb's law F=kq1q2/r²
+        if {"coulomb_force","charge_1","charge_2","separation"}.issubset(cols):
+            k=1/(4*math.pi*P["eps0"])
+            exp_f=k*data["charge_1"]*data["charge_2"]/data["separation"].replace(0,np.nan)**2
+            bad=(np.abs(data["coulomb_force"]-exp_f.abs())/exp_f.abs().clip(lower=1e-15)>0.2).sum()
+            C.append(self._w("cx_coulomb",bad==0,"F=kq₁q₂/r² (Coulomb)",f"{bad}",float(bad),0.0,cat))
+        # Spring potential energy PE=0.5kx²
+        if {"spring_energy","spring_constant","displacement"}.issubset(cols):
+            exp_pe=0.5*data["spring_constant"]*data["displacement"]**2
+            bad=(np.abs(data["spring_energy"]-exp_pe)/exp_pe.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_spring_pe",bad==0,"PE=½kx² (spring)",f"{bad}",float(bad),0.0,cat))
+        # Angular velocity ω=2πf
+        if {"angular_velocity","frequency"}.issubset(cols):
+            exp_w=2*math.pi*data["frequency"]
+            bad=(np.abs(data["angular_velocity"]-exp_w)/exp_w.abs().clip(lower=1e-10)>0.1).sum()
+            C.append(self._w("cx_omega_freq",bad==0,"ω=2πf",f"{bad}",float(bad),0.0,cat))
+        # Torricelli's law: efflux velocity v=√(2gh)
+        if {"efflux_velocity","head_height"}.issubset(cols):
+            exp_v=np.sqrt(2*P["g"]*data["head_height"].clip(lower=0))
+            bad=(np.abs(data["efflux_velocity"]-exp_v)/exp_v.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_torricelli",bad==0,"v=√(2gh) (Torricelli)",f"{bad}",float(bad),0.0,cat))
+        # Fourier conduction q=kAΔT/L
+        if {"conductive_heat_rate","thermal_conductivity","temperature_gradient"}.issubset(cols):
+            exp_q=data["thermal_conductivity"]*data["temperature_gradient"].abs()
+            bad=(np.abs(data["conductive_heat_rate"].abs()-exp_q)/exp_q.clip(lower=1e-10)>0.3).sum()
+            C.append(self._w("cx_fourier",bad==0,"q=k·ΔT/L (Fourier conduction)",f"{bad}",float(bad),0.0,cat))
+        # Newtonian viscosity τ=μ(dv/dy)
+        if {"shear_stress","dynamic_viscosity","velocity_gradient"}.issubset(cols):
+            exp_tau=data["dynamic_viscosity"]*data["velocity_gradient"]
+            bad=(np.abs(data["shear_stress"]-exp_tau)/exp_tau.abs().clip(lower=1e-10)>0.2).sum()
+            C.append(self._w("cx_newton_viscosity",bad==0,"τ=μ(dv/dy)",f"{bad}",float(bad),0.0,cat))
+        # Capacitor energy E=0.5CV²
+        if {"capacitor_energy","capacitance","voltage"}.issubset(cols):
+            exp_e=0.5*data["capacitance"]*data["voltage"]**2
+            bad=(np.abs(data["capacitor_energy"]-exp_e)/exp_e.clip(lower=1e-10)>0.15).sum()
+            C.append(self._w("cx_capacitor_energy",bad==0,"E=½CV² (capacitor)",f"{bad}",float(bad),0.0,cat))
+        # Doppler shift (moving source, non-relativistic): f_obs=f_src·c/(c-v)
+        if {"observed_frequency","source_frequency","source_velocity"}.issubset(cols):
+            c=P["c_sound"]
+            denom=(c-data["source_velocity"]).clip(lower=1.0)
+            exp_f=data["source_frequency"]*c/denom
+            bad=(np.abs(data["observed_frequency"]-exp_f)/exp_f.clip(lower=1e-10)>0.2).sum()
+            C.append(self._w("cx_doppler",bad==0,"f_obs=f_src·c/(c-v) (Doppler)",f"{bad}",float(bad),0.0,cat))
+        # Work-energy theorem: W=Fd
+        if {"work","force","displacement"}.issubset(cols):
+            exp_w=data["force"]*data["displacement"]
+            bad=(np.abs(data["work"]-exp_w)/exp_w.abs().clip(lower=1e-10)>0.2).sum()
+            C.append(self._w("cx_work_energy",bad==0,"W=Fd",f"{bad}",float(bad),0.0,cat))
+        # Impulse-momentum: J=FΔt
+        if {"impulse","force","time_interval"}.issubset(cols):
+            exp_j=data["force"]*data["time_interval"]
+            bad=(np.abs(data["impulse"]-exp_j)/exp_j.abs().clip(lower=1e-10)>0.2).sum()
+            C.append(self._w("cx_impulse",bad==0,"J=FΔt",f"{bad}",float(bad),0.0,cat))
         return self._r(C,E)
 
     # ── Layer 7: Conservation Laws ─────────────────────────────────────────────
