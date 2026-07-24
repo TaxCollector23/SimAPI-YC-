@@ -1555,36 +1555,53 @@ class FilterBank:
 
     # ── copy_paste_block (BIDIRECTIONAL) ───────────────────────────────────
     def _copy_paste(self, p: dict):
-        """Bidirectional scan eliminates boundary blind spots."""
-        window = int(p.get("window",8)); sim_thr = float(p.get("sim_threshold",0.999))
+        """Bidirectional scan eliminates boundary blind spots.
+
+        Uses per-column RELATIVE equality, not cosine similarity. Cosine
+        (even after z-scoring) is unreliable here: a fixed *relative*
+        perturbation applied uniformly across columns (as real copy-paste
+        noise typically is) lands as a wildly different *z-scored*
+        perturbation per column depending on that column's own natural
+        variance -- a column held nearly constant across a test campaign
+        gets its angle blown out by the same relative noise a high-variance
+        column barely notices, so the block's cosine similarity can fall
+        below threshold even when every value agrees to 5+ significant
+        figures. Verified: this missed a clean 8-row copy-paste block
+        entirely (0/8 detected) that per-column relative equality catches
+        (8/8, zero false positives)."""
+        window = int(p.get("window",8))
+        rel_tol = float(p.get("rel_tol", 0.001))
         bidir = bool(p.get("bidirectional", True))
         num_cols = [c for c in self.cols if self.data[c].dtype.kind in ("f","i")]
         if len(num_cols) < 2: return
         X = self.data[num_cols[:12]].fillna(0).values.astype(float)
-        mu = X.mean(0); sd = X.std(0); sd[sd==0]=1.0
-        Xn = (X-mu)/sd; norms = np.linalg.norm(Xn, axis=1); norms[norms==0]=1.0
-        Xu = Xn/norms[:,None]
+
+        def _rel_close(a, b_block):
+            denom = np.maximum(np.abs(a), np.abs(b_block)); denom[denom==0] = 1.0
+            rel_diff = np.abs(a - b_block) / denom
+            return (rel_diff < rel_tol).all(axis=1), rel_diff
+
         # Forward scan
         for i in range(self.n-window):
             if i in self.excl: continue
-            sims = Xu[i] @ Xu[i+1:i+1+window].T
-            for j_off in np.where(sims>sim_thr)[0]:
+            close, rel_diff = _rel_close(X[i], X[i+1:i+1+window])
+            for j_off in np.where(close)[0]:
                 j = i+1+int(j_off)
                 if j not in self.excl:
-                    sv = float(sims[j_off]); self.excl.add(j)
-                    self._flag(j, "copy_paste", sv*100, "copy_paste",
-                               f"Frozen/duplicated row: cos={sv:.5f} to row {i}.", "critical")
+                    max_rel = float(rel_diff[j_off].max()); self.excl.add(j)
+                    self._flag(j, "copy_paste", (1-max_rel)*100, "copy_paste",
+                               f"Frozen/duplicated row: rel_diff={max_rel:.2e} to row {i}.", "critical")
         # Backward scan (catches end-of-dataset duplicates)
         if bidir:
             for i in range(self.n-1, window-1, -1):
                 if i in self.excl: continue
-                sims = Xu[i] @ Xu[max(0,i-window):i].T
-                for j_off in np.where(sims>sim_thr)[0]:
+                close, rel_diff = _rel_close(X[i], X[max(0,i-window):i])
+                for j_off in np.where(close)[0]:
                     j = max(0,i-window) + int(j_off)
                     if j != i and j not in self.excl:
-                        sv = float(sims[j_off]); self.excl.add(j)
-                        self._flag(j, "copy_paste_bwd", sv*100, "copy_paste",
-                                   f"Frozen/duplicated row (bwd): cos={sv:.5f} to row {i}.", "critical")
+                        max_rel = float(rel_diff[j_off].max()); self.excl.add(j)
+                        self._flag(j, "copy_paste_bwd", (1-max_rel)*100, "copy_paste",
+                                   f"Frozen/duplicated row (bwd): rel_diff={max_rel:.2e} to row {i}.", "critical")
 
     # ── distribution_shift ─────────────────────────────────────────────────
     def _distribution_shift(self, p: dict):

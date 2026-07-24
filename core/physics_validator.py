@@ -1253,28 +1253,48 @@ class PhysicsValidator:
         return C,E
 
     def _near_duplicates(self, data, sim, cond):
-        """Detect blocks of near-identical trials in feature space — catches
-        copy-paste contamination even when values were slightly perturbed.
-        (numpy cosine similarity; equivalent to StandardScaler+cosine_similarity.)"""
+        """Detect blocks of near-identical trials — catches copy-paste
+        contamination even when values were slightly perturbed.
+
+        Uses per-column RELATIVE equality, not cosine similarity. Cosine
+        (even after z-scoring) is unreliable here: a fixed *relative*
+        perturbation applied uniformly across columns (as real copy-paste
+        noise typically is) lands as a wildly different *z-scored*
+        perturbation per column depending on that column's own natural
+        variance — a column that's nearly constant across the dataset
+        (e.g. a Reynolds number held fixed for a test campaign) gets its
+        angle blown out by the same relative noise a high-variance column
+        barely notices, and the block's cosine similarity falls below
+        threshold even though every value agrees to 5+ significant figures.
+        Verified: this missed a clean 8-row copy-paste block entirely in
+        testing (0/8 detected) that per-column relative equality catches
+        (8/8)."""
         C=[]; E=[]; cat="near_duplicates"
         nc=self._nc(data)
         if len(nc)<2 or len(data)<10: return self._r(C,E)
         X=data[nc].fillna(0).values.astype(float)
-        mu=X.mean(0); sd=X.std(0); sd[sd==0]=1.0
-        X=(X-mu)/sd
-        norms=np.linalg.norm(X,axis=1); norms[norms==0]=1.0
-        Xn=X/norms[:,None]
-        window=5; n=len(Xn)
-        for i in range(n-window):
-            sims=Xn[i]@Xn[i+1:i+1+window].T
-            if (sims>0.999).any():
-                matches=[i+1+j+1 for j,sv in enumerate(sims) if sv>0.999]
-                mx=float(sims.max())
+        window=8; n=len(X)
+        rel_tol=0.001
+        flagged=set()
+        for i in range(n-1):
+            end=min(i+1+window,n)
+            a=X[i]
+            b=X[i+1:end]
+            denom=np.maximum(np.abs(a),np.abs(b)); denom[denom==0]=1.0
+            rel_diff=np.abs(a-b)/denom
+            close=(rel_diff<rel_tol).all(axis=1)
+            if close.any():
+                matches=[i+1+j+1 for j,cv in enumerate(close) if cv]
+                max_rel=float(rel_diff[close].max())
                 C.append(self._w(f"nd_block_{i}",False,
                     f"Trial {i+1} is nearly identical to trials {matches}",
-                    "Cosine similarity > 0.999 — likely copy-paste or data duplication",
-                    mx,0.999,cat))
-                E.append(TrialExclusion(i,f"Near-duplicate of trials {matches} (sim={mx:.4f})","warning"))
+                    f"Per-column relative difference < {rel_tol*100:.0f}% — likely copy-paste or data duplication",
+                    max_rel,rel_tol,cat))
+                for j,cv in enumerate(close):
+                    if cv:
+                        flagged.add(i+1+j)
+        for idx in sorted(flagged):
+            E.append(TrialExclusion(idx,f"Near-duplicate of an earlier trial (rel diff < {rel_tol*100:.0f}%)","warning"))
         return self._r(C,E)
 
     # ── Layer 10: Monotonicity ────────────────────────────────────────────────
