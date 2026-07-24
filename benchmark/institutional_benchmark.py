@@ -28,23 +28,23 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import IsolationForest, RandomForestRegressor
-from sklearn.metrics import mean_absolute_error
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from core.apie import AdaptivePhysicsIntelligenceEngine
-from core.run_history import RunHistoryTracker
-from core.adversarial import AdversarialRedTeam
 from benchmark.realistic_benchmark import (
-    gen_drone_propeller, gen_actuator_fea, gen_motor_thermal, gen_joint_dynamics,
+    gen_actuator_fea,
+    gen_drone_propeller,
+    gen_joint_dynamics,
+    gen_motor_thermal,
     inject_realistic_corruptions,
 )
+from core.adversarial import AdversarialRedTeam
+from core.apie import AdaptivePhysicsIntelligenceEngine
+from core.run_history import RunHistoryTracker
 
 apie = AdaptivePhysicsIntelligenceEngine()
 rng = np.random.default_rng(42)
@@ -127,7 +127,7 @@ DOMAINS = {
 def run_institutional_benchmark(
     n_train: int = 8000,
     n_test: int = 2000,
-    seeds: Tuple = (42, 123, 456),
+    seeds: tuple = (42, 123, 456),
     run_adversarial: bool = True,
 ) -> dict:
     print("=" * 72)
@@ -155,7 +155,7 @@ def run_institutional_benchmark(
             cr = len(all_corrupt) / n_train
 
             # ── Build run history (simulate 10 prior runs) ──────────────
-            for prior_seed in range(seed, seed + 10):
+            for _prior_seed in range(seed, seed + 10):
                 prior_clean = cfg['gen'](n_train)
                 prior_result = apie.validate(prior_clean, cfg['apie_domain'], {})
                 tracker.check_and_update(
@@ -270,7 +270,7 @@ def run_institutional_benchmark(
         all_cats = set()
         for s in seed_results:
             all_cats.update(s['per_cat'].keys())
-        print(f"\n   SimAPI per-corruption-type recall:")
+        print("\n   SimAPI per-corruption-type recall:")
         for cat in sorted(all_cats):
             vals = [s['per_cat'].get(cat, 0) for s in seed_results]
             avg_cat = np.mean(vals)
@@ -295,7 +295,7 @@ def run_institutional_benchmark(
         cr_catch = np.mean([s['cross_caught'] for s in seed_results])
         cr_outl  = np.mean([s['cross_outlier'] for s in seed_results])
         dx_acc   = np.mean([s['dx_correct'] for s in seed_results])
-        print(f"\n   Institutional features:")
+        print("\n   Institutional features:")
         print(f"     Cross-run anomalies detected: {cr_catch*100:.0f}% of runs")
         print(f"     Corrupted run flagged as outlier: {cr_outl*100:.0f}%")
         print(f"     Causal diagnosis accuracy:    {dx_acc*100:.0f}%")
@@ -350,7 +350,7 @@ def run_institutional_benchmark(
             tier_display = {'easy':'🟢 Easy','medium':'🟡 Medium','hard':'🔴 Hard','very_hard':'💀 VeryHard'}.get(ar.tier, ar.tier)
             print(f"   {ar.attack_name:38s} {tier_display:15s} {dr:9.0f}%  {ar.fp_rate*100:7.2f}%")
         
-        print(f"\n   Blind spots (APIE detection rate <30%):")
+        print("\n   Blind spots (APIE detection rate <30%):")
         for bs in rt_report.blind_spots:
             print(f"     ⚠️  {bs}")
         print()

@@ -22,7 +22,7 @@ const releases: Release[] = [
       "Multi-format ingestion: YAML, TOML, TXT, and Markdown join CSV/JSON/VTK/NumPy/OpenFOAM.",
       "`simapi doctor [--fix]` and `simapi explain` added to both CLIs — real environment diagnostics and per-issue explanations, not stubs.",
       "Fixed a real bug where the deployed site's \"Full engine\" health check queried the wrong path and could never report a connected Python backend.",
-      "Fixed Firebase session persistence: added the missing onIdTokenChanged listener so login state and token refresh track Firebase's actual session instead of a stale local cache.",
+
     ],
   },
   {

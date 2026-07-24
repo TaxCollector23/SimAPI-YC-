@@ -44,11 +44,8 @@ from api.errors import (
 from api.observability import log, metrics, request_id_ctx
 from api.security import authenticate, enforce_rate_limit
 from core.ai_orchestrator import AI_ENABLED as ORCHESTRATOR_ENABLED
-from core.ai_orchestrator import orchestrate as ai_orchestrate
-from core.ai_orchestrator import result_to_dict as orchestrator_dict
-from core.ai_validator import AI_ENABLED, validate_with_ai
+from core.ai_validator import AI_ENABLED
 from core.ai_validator import MODEL as AI_MODEL
-from core.ai_validator import report_to_dict as ai_dict
 from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
@@ -336,29 +333,73 @@ def _run_ai_async(job_id: str, df: pd.DataFrame, sim_type: str,
                 JOBS[job_id]["ai_running"] = True
 
         # Build diagnosis context from APIE causal diagnosis engine
-        diagnosis_context = None
         with _JOBS_LOCK:
             apie_result = JOBS.get(job_id, {}).get("apie_result")
         if apie_result and hasattr(apie_result, "diagnosis") and apie_result.diagnosis:
-            dx = apie_result.diagnosis
-            diagnosis_context = {
-                "primary_finding": dx.primary_diagnosis,
-                "pipeline_stage": dx.pipeline_stage,
-                "causal_chain": dx.causal_chain,
-                "investigation_steps": dx.investigation_steps,
-                "confidence": dx.confidence,
-            }
+            pass
 
-        if deep_ai and ORCHESTRATOR_ENABLED and physics_result:
-            orch_result = ai_orchestrate(df, sim_type, conditions, physics_result, context)
-            ai_data = orchestrator_dict(orch_result)
-            ai_data["status"] = orch_result.verdict
-            ai_data["anomaly_score"] = 1.0 - orch_result.overall_confidence
-        else:
-            ai_report = validate_with_ai(df, sim_type, conditions, physics_issues, diagnosis_context)
-            ai_data = ai_dict(ai_report)
+        # ── Grounded AI pipeline (cluster -> verify -> narrate) ────────────
+        # Replaces the single-shot "second opinion" call. Every root cause is
+        # verified by a deterministic probe before it is reported, and the whole
+        # pipeline degrades to a deterministic summary rather than to an error.
+        from core.ai_pipeline import run_pipeline
 
-        ai_excl = _ai_exclusion_indices(df, ai_data.get("findings", []))
+        profile_summary = ""
+        try:
+            prov = (physics_result or {}).get("provenance") or {}
+            dp = prov.get("dataset_profile") or {}
+            if dp:
+                profile_summary = (
+                    f"{dp.get('design_type', 'unknown').replace('_', ' ')}, "
+                    f"regime {dp.get('regime', 'unknown')}, "
+                    f"swept: {', '.join((dp.get('swept_columns') or [])[:3]) or 'none'}"
+                )
+        except Exception:
+            pass
+
+        pipe = run_pipeline(
+            df, sim_type, physics_result or {}, profile_summary, use_ai=True,
+        )
+
+        confirmed = [c for c in pipe.root_causes if c.status == "confirmed"]
+        hypotheses = [c for c in pipe.root_causes if c.status == "hypothesis"]
+        status = ("passed" if not pipe.root_causes
+                  else "failed" if confirmed else "warning")
+
+        ai_data = {
+            "status": status,
+            "verdict": "Normal" if not pipe.root_causes else "Not Normal",
+            "pipeline_version": pipe.version,
+            "model": pipe.model_narrate or "deterministic",
+            "processing_ms": sum(pipe.phase_timings.values()),
+            "phase_timings": pipe.phase_timings,
+            "degraded": pipe.degraded,
+            "narrative": pipe.narrative,
+            "narrative_source": pipe.narrative_source,
+            "dataset_summary": pipe.narrative,
+            "anomaly_score": 0.0 if not pipe.root_causes else (0.85 if confirmed else 0.45),
+            "n_findings_in": pipe.n_findings_in,
+            "n_causes_out": pipe.n_causes_out,
+            "root_causes": [c.to_dict() for c in pipe.root_causes],
+            "findings": [{
+                "severity": "critical" if c.status == "confirmed" else "warning",
+                "category": c.mode_key,
+                "title": c.label,
+                "detail": (f"{c.stage} — affects trial(s) "
+                           f"{', '.join(str(t + 1) for t in c.affected_trials[:8])}. {c.action}"),
+                "trials": [t + 1 for t in c.affected_trials],
+                "confidence": c.confidence,
+                "status": c.status,
+                "evidence": c.evidence[:4],
+                "source": c.source,
+            } for c in pipe.root_causes],
+            "recommendations": [c.action for c in (confirmed + hypotheses)[:4]],
+            "error": None,
+        }
+
+        # The AI layer never removes rows. Exclusions are the physics engine's
+        # decision alone; the pipeline only explains them.
+        ai_excl = []
         with _JOBS_LOCK:
             if job_id not in JOBS:
                 return

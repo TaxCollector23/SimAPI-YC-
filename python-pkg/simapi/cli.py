@@ -31,15 +31,15 @@ Exit codes:
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import shutil
 import sys
 import time
-import hashlib
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 # ── Version & paths ───────────────────────────────────────────────────────────
 
@@ -94,7 +94,8 @@ def banner():
     for i, row in enumerate(ART):
         r, g, b = GRAD[i] if i < len(GRAD) else GRAD[-1]
         print(pad + _rgb(r, g, b, row))
-    center = lambda s: (" " * ((width - len(s)) // 2) + s) if width >= len(s) else s
+    def center(s):
+        return (" " * ((width - len(s)) // 2) + s) if width >= len(s) else s
     print("\n" + center(C["bold"](C["white"](f"SimAPI CLI v{VERSION}"))))
     print(center(C["dim"]("Physics-Informed Simulation Validator — local engine, no data leaves your machine")) + "\n")
 
@@ -229,9 +230,9 @@ def _resolve_domain(args: dict, file: str) -> str:
 
 # ── Core engine runner ────────────────────────────────────────────────────────
 
-def _run_apie(data: list, domain: str, conditions: dict, config_key: Optional[str] = None):
+def _run_apie(data: list, domain: str, conditions: dict, config_key: str | None = None):
     """Run the full local APIE engine. Returns (apie_result, cross_run_result)."""
-    import sys, os
+    import sys
     # Add project root to path
     cli_dir = Path(__file__).resolve().parent
     project_root = cli_dir.parent.parent
@@ -239,6 +240,7 @@ def _run_apie(data: list, domain: str, conditions: dict, config_key: Optional[st
         sys.path.insert(0, str(project_root))
 
     import pandas as pd
+
     from core.apie import AdaptivePhysicsIntelligenceEngine
     from core.run_history import RunHistoryTracker
 
@@ -383,7 +385,7 @@ def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, stat
         add()
 
         # Group by corruption type
-        type_groups: Dict[str, List] = {}
+        type_groups: dict[str, list] = {}
         for s in result.row_scores:
             if s.row_index in result.excluded_indices:
                 ctype = s.corruption_type or "unknown"
@@ -398,7 +400,7 @@ def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, stat
 
             # Show sample corrupted rows with details
             for s in scores[:5]:
-                sigma_str = f"{s.max_sigma:.1f}σ" if s.max_sigma < 1000 else f">1000σ"
+                sigma_str = f"{s.max_sigma:.1f}σ" if s.max_sigma < 1000 else ">1000σ"
                 sev_color = C["red"] if s.severity == "critical" else C["amber"]
                 add(f"    {sev_color('→')} Row {s.row_index:>5d}  [{sigma_str}]  {s.diagnosis[:80] if s.diagnosis else ''}")
                 # Show the check that caught it
@@ -551,24 +553,24 @@ def _build_markdown_report(result, cross_run, df, file, domain, elapsed_ms, stat
     sha = hashlib.sha256(json.dumps(df.to_dict("records"), default=str, sort_keys=True).encode()).hexdigest()[:16]
 
     lines = [
-        f"# SimAPI Validation Report",
-        f"",
+        "# SimAPI Validation Report",
+        "",
         f"> **Generated:** {ts}  ",
         f"> **File:** `{file}`  ",
         f"> **Domain:** `{domain}`  ",
         f"> **Dataset SHA-256:** `{sha}...`  ",
         f"> **SimAPI Version:** v{VERSION} (local engine)  ",
-        f"",
+        "",
         f"## {status_icons.get(status, '⚠️')} Status: {status.replace('_', ' ')}",
-        f"",
-        f"| Metric | Value |",
-        f"|---|---|",
+        "",
+        "| Metric | Value |",
+        "|---|---|",
         f"| Total rows | {n:,} |",
         f"| Auto-removed (corrupted) | **{n_auto}** ({cr_pct:.1f}%) |",
         f"| Flagged for review | {n_review} |",
         f"| Clean rows | {n_clean:,} ({100-cr_pct:.1f}%) |",
         f"| Validation time | {elapsed_ms:.0f}ms |",
-        f"",
+        "",
     ]
 
     # Discovered invariants
@@ -592,7 +594,7 @@ def _build_markdown_report(result, cross_run, df, file, domain, elapsed_ms, stat
             "They have been removed from the training-ready dataset.",
             "",
         ]
-        type_groups: Dict[str, List] = {}
+        type_groups: dict[str, list] = {}
         for s in result.row_scores:
             if s.row_index in result.excluded_indices:
                 ctype = s.corruption_type or "unknown"
@@ -602,8 +604,8 @@ def _build_markdown_report(result, cross_run, df, file, domain, elapsed_ms, stat
             lines += [
                 f"### {ctype.replace('_', ' ').title()} ({len(scores)} rows)",
                 "",
-                f"| Row | Sigma | Severity | Check | Diagnosis |",
-                f"|---|---|---|---|---|",
+                "| Row | Sigma | Severity | Check | Diagnosis |",
+                "|---|---|---|---|---|",
             ]
             for s in scores[:20]:
                 sigma_str = f"{s.max_sigma:.1f}σ" if s.max_sigma < 1e6 else ">1e6σ"
@@ -723,7 +725,7 @@ def _build_markdown_report(result, cross_run, df, file, domain, elapsed_ms, stat
             "### 2. Get the clean dataset",
             "",
             f"Run `simapi validate {file} --export clean.csv` to save the {n_clean:,} clean rows.",
-            f"",
+            "",
             f"- Clean rows: **{n_clean:,}** / {n:,} ({100-cr_pct:.1f}%)",
             "",
         ]
@@ -811,7 +813,7 @@ def _build_sarif_report(result, file: str, domain: str) -> str:
             })
     for flag in result.flagged_for_review:
         results.append({
-            "ruleId": f"simapi/review_required",
+            "ruleId": "simapi/review_required",
             "level": "note",
             "message": {"text": flag.get("diagnosis") or f"Row {flag['row_index']} flagged for review"},
             "locations": [{
@@ -1245,7 +1247,7 @@ def cmd_init(args):
     """Create a simapi.json configuration file in the current directory."""
     path = Path("simapi.json")
     if path.exists() and "--force" not in (args.get("_") or []):
-        _fail(f"simapi.json already exists. Use --force to overwrite.")
+        _fail("simapi.json already exists. Use --force to overwrite.")
     cfg = {
         "$schema": "https://sim-api.vercel.app/schema/simapi.json",
         "simulation_type": args.get("domain") or "aerodynamics",
@@ -1267,11 +1269,7 @@ def cmd_doctor(args):
     problems = 0
 
     # Python version
-    if sys.version_info >= (3, 8):
-        _ok(f"Python {sys.version.split()[0]}")
-    else:
-        _warn(f"Python {sys.version.split()[0]} — 3.8+ required")
-        problems += 1
+    _ok(f"Python {sys.version.split()[0]}")
 
     # Core modules
     for mod, desc in [
@@ -1294,7 +1292,7 @@ def cmd_doctor(args):
         project_root = cli_dir.parent.parent
         if str(project_root) not in _sys.path:
             _sys.path.insert(0, str(project_root))
-        from core.apie import AdaptivePhysicsIntelligenceEngine, DOMAIN_LIBRARY
+        from core.apie import DOMAIN_LIBRARY, AdaptivePhysicsIntelligenceEngine
         _ok(f"APIE engine ({len(DOMAIN_LIBRARY)} domain profiles)")
     except ImportError as e:
         print(f"  {C['red']('✗')} APIE engine not found: {e}")
@@ -1327,8 +1325,8 @@ def cmd_version(args):
 
 # ── Argument parser ────────────────────────────────────────────────────────────
 
-def _parse(argv: List[str]) -> dict:
-    args: Dict[str, Any] = {
+def _parse(argv: list[str]) -> dict:
+    args: dict[str, Any] = {
         "_": [], "domain": None, "json": False, "quiet": False,
         "fail_on": None, "report": None, "export": None, "sarif": None,
         "config_key": None, "last": 20, "force": False, "apply": False,

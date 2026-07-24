@@ -150,7 +150,7 @@ export async function POST(req: Request) {
       const upstream = await fetch(`${PYTHON_API}/v1/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: rows, simulation_type: simType, conditions: body.conditions ?? {}, run_ai: false }),
+        body: JSON.stringify({ data: rows, simulation_type: simType, conditions: body.conditions ?? {}, run_ai: true }),
         signal: AbortSignal.timeout(35_000),
       });
       if (upstream.ok) {
