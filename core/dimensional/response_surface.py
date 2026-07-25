@@ -29,7 +29,18 @@ import pandas as pd
 from .units_resolver import UnitsResolution
 
 K_NEIGHBORS = 15
+MIN_ROWS_FOR_KNN = K_NEIGHBORS + 5
 MAX_ROWS_FOR_KNN = 1500  # O(n^2) pairwise distance; bound it for the perf budget
+# Below MIN_ROWS_FOR_KNN there aren't enough rows to fit a local response
+# surface against covariates at all -- but that doesn't mean nothing can be
+# said. A row whose value is a huge global outlier *within its own column*
+# (999.0 among four values near 0.3) needs no covariates and no minimum
+# neighbourhood, just a median and a spread -- the degenerate case of "does
+# this row fit the response surface" when there's no surface to fit against.
+# This is what makes small, hand-pasted playground datasets (5-20 rows)
+# behave the same as the statistically-larger case instead of silently
+# validating everything.
+MIN_ROWS_FOR_GLOBAL_Z = 4
 MATERIAL_FRACTION = 0.02
 NEAR_CONSTANT_CV = 0.01
 Z_RANK_THRESHOLD = 4.0
@@ -95,20 +106,57 @@ def _knn_predict(y: np.ndarray, feats: np.ndarray, k: int) -> tuple[np.ndarray, 
     return pred, one_sided
 
 
+def _global_z_outliers(y_raw: np.ndarray, valid_rows: pd.Index, target: str) -> SurfaceFinding | None:
+    """Degenerate response-surface check for datasets too small for k-NN:
+    is this row a robust outlier within its own column, full stop. Same two
+    required guards as the k-NN path (material-vs-spread, near-constant is
+    handled by the caller before this is reached)."""
+    y_log = _pseudo_log(y_raw)
+    med = float(np.median(y_log))
+    mad = float(np.median(np.abs(y_log - med)))
+    scale = mad * 1.4826 if mad > 0 else max(np.std(y_log), 1e-12)
+    z = np.abs(y_log - med) / scale
+
+    p5, p95 = np.percentile(y_raw, 5), np.percentile(y_raw, 95)
+    spread = p95 - p5
+    raw_med = float(np.median(y_raw))
+    material = np.abs(y_raw - raw_med) / max(spread, 1e-30)
+
+    candidates = np.where((z > Z_RANK_THRESHOLD) & (material > MATERIAL_FRACTION))[0]
+    # max(1, ...) so a single flagged row is never excluded by its own count
+    # equalling the cap on a small sample (1 of 5 rows *is* 20%).
+    if len(candidates) and len(candidates) <= max(1, int(0.2 * len(y_raw))):
+        return SurfaceFinding(
+            column=target,
+            row_ids=[int(valid_rows[p]) for p in candidates],
+            residual_z=[float(z[p]) for p in candidates],
+            material_deviation=[float(material[p]) for p in candidates],
+            note="global outlier within column (too few rows to fit a local response surface)",
+        )
+    return None
+
+
 def find_surface_anomalies(
     data: pd.DataFrame, units: UnitsResolution, pi_feature_columns: list[str] | None = None,
 ) -> list[SurfaceFinding]:
     usable = [c for c in units.usable_columns() if c in data.columns]
     if len(usable) < 3:
+        # With only 2 columns, any "outlier" in one is indistinguishable
+        # from a genuine functional relationship to the other (e.g. an
+        # anchor's a*b=const, where b is a smooth, deterministic function
+        # of a) -- that's Layer 3's job, not a context-free univariate
+        # check here. The global-z fallback below is for too few ROWS,
+        # not too few columns to have real context.
         return []
     numeric = data[usable].apply(pd.to_numeric, errors="coerce")
     valid_rows = numeric.dropna().index
-    if len(valid_rows) < K_NEIGHBORS + 5:
+    if len(valid_rows) < MIN_ROWS_FOR_GLOBAL_Z:
         return []
     numeric = numeric.loc[valid_rows]
     if len(numeric) > MAX_ROWS_FOR_KNN:
         numeric = numeric.sample(MAX_ROWS_FOR_KNN, random_state=0).sort_index()
         valid_rows = numeric.index
+    knn_available = len(valid_rows) >= MIN_ROWS_FOR_KNN
 
     findings: list[SurfaceFinding] = []
     for target in usable:
@@ -123,7 +171,7 @@ def find_surface_anomalies(
             mode = med
             rel_dev = np.abs(y_raw - mode) / max(abs(mode), 1e-30)
             bad = np.where(rel_dev > 0.05)[0]
-            if len(bad) and len(bad) < 0.2 * len(y_raw):
+            if len(bad) and len(bad) <= max(1, int(0.2 * len(y_raw))):
                 findings.append(SurfaceFinding(
                     column=target,
                     row_ids=[int(valid_rows[p]) for p in bad],
@@ -134,7 +182,10 @@ def find_surface_anomalies(
             continue
 
         predictors = [c for c in usable if c != target]
-        if len(predictors) < 2:
+        if not knn_available or len(predictors) < 2:
+            finding = _global_z_outliers(y_raw, valid_rows, target)
+            if finding is not None:
+                findings.append(finding)
             continue
         feat_cols = predictors[:12]
         feats = np.column_stack([_pseudo_log(numeric[c].to_numpy(dtype=float)) for c in feat_cols])
@@ -160,7 +211,7 @@ def find_surface_anomalies(
         # keeps the corners of a factorial design out of the findings.
         interior = one_sided < ONE_SIDED_MAX
         candidates = np.where((z > Z_RANK_THRESHOLD) & (material > MATERIAL_FRACTION) & interior)[0]
-        if len(candidates) and len(candidates) < 0.15 * len(y_raw):
+        if len(candidates) and len(candidates) <= max(1, int(0.15 * len(y_raw))):
             findings.append(SurfaceFinding(
                 column=target,
                 row_ids=[int(valid_rows[p]) for p in candidates],

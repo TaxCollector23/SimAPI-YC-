@@ -584,3 +584,75 @@ def test_report_states_the_known_impossible_boundary():
     assert text == KNOWN_IMPOSSIBLE
     assert "turbulence model" in text
     assert "does not mean the physics is right" in text
+
+
+# ── Regression: tiny hand-pasted playground datasets must not go silent ────
+def test_small_playground_dataset_catches_obvious_outlier():
+    """A 5-row dataset with one wildly-wrong drag coefficient (999.0 among
+    values near 0.31) is exactly what a first-time user pastes into the
+    playground. Response-surface k-NN needs >= 20 rows and silently no-ops
+    below that -- this pins the small-n fallback (a global robust-z check
+    within the column, no covariates needed) that catches it anyway."""
+    df = pd.DataFrame({
+        "cd": [0.312, 0.315, 999.0, 0.308, 0.320],
+        "cl": [0.847, 0.851, 0.848, 0.839, 0.855],
+        "re": [415000, 418000, 410000, 421000, 409000],
+        "ma": [0.044, 0.044, 0.044, 0.044, 0.043],
+        "p":  [101325, 101800, 101200, 100900, 101500],
+        "v":  [15.0, 15.0, 15.0, 15.0, 14.2],
+    })
+    report = validate(df)
+    flagged = report.impossible_rows | report.inconsistent_rows
+    assert 2 in flagged, f"the 999.0 cd row was not caught; report={report.summary()}"
+    assert len(flagged) == 1, f"clean rows were falsely flagged: {sorted(flagged)}"
+
+
+def test_small_dataset_no_false_positives_on_clean_rows():
+    """Same shape as above with the corrupted row removed -- must report
+    nothing. A small-n fallback that catches real outliers but also flags
+    ordinary rows would be worse than the silence it replaces."""
+    df = pd.DataFrame({
+        "cd": [0.312, 0.315, 0.308, 0.320],
+        "cl": [0.847, 0.851, 0.839, 0.855],
+        "re": [415000, 418000, 421000, 409000],
+        "ma": [0.044, 0.044, 0.044, 0.043],
+        "p":  [101325, 101800, 100900, 101500],
+        "v":  [15.0, 15.0, 15.0, 14.2],
+    })
+    report = validate(df)
+    assert report.impossible_rows == set()
+    assert report.inconsistent_rows == set()
+
+
+def test_sparse_optional_column_does_not_flag_every_row():
+    """A column present in a minority of rows (an optional per-trial field)
+    must not make every OTHER row look like it has a missing/corrupted
+    value. Regression for a real bug: one row with an extra optional field
+    caused all 5 rows to be flagged impossible for 'NaN' in that column."""
+    rows = [
+        {"stress": 245e6, "strain": 0.00196, "elastic_modulus": 125e9, "damping_ratio": 0.043},
+        {"stress": 251e6, "strain": 0.00201, "elastic_modulus": 125e9, "damping_ratio": 0.044},
+        {"stress": 248e6, "strain": 0.00198, "elastic_modulus": 125e9, "damping_ratio": 0.043},
+        {"stress": 244e6, "strain": 0.00250, "elastic_modulus": 125e9, "damping_ratio": 0.043},
+        {"stress": 248e6, "strain": 0.00198, "elastic_modulus": 125e9, "stress_concentration": 0.85},
+    ]
+    df = pd.DataFrame(rows)
+    report = validate(df)
+    # Row 4 is missing damping_ratio, which IS populated in 4/5 rows (a
+    # real, dense field) -- that's a legitimate finding.
+    assert report.impossible_rows == {4}
+    # The other four rows must not be flagged just because they lack the
+    # sparse, 1-row-only stress_concentration field.
+    assert not ({0, 1, 2, 3} & report.impossible_rows)
+
+
+def test_definitional_nonnegative_quantity_bound():
+    """Turbulent kinetic energy is a variance-derived quantity -- negative
+    is impossible by definition, same category as mass/density already in
+    SEMANTIC_BOUNDS. No statistical method or anchor is needed for this."""
+    df = pd.DataFrame({
+        "velocity": [10.2, 9.8, 10.5],
+        "turbulent_kinetic_energy": [0.12, 0.11, -0.05],
+    })
+    report = validate(df)
+    assert 2 in report.impossible_rows

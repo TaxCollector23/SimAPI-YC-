@@ -37,6 +37,8 @@ SEMANTIC_BOUNDS: list[tuple[str, float, float, bool, bool, str]] = [
     (r"\bcloud_cover\b", 0.0, 100.0, True, True, "must lie in [0,100]%"),
     (r"\bmole_fraction|mass_fraction\b", 0.0, 1.0, True, True, "must lie in [0,1]"),
     (r"\bspring_constant|stiffness\b", 0.0, float("inf"), False, True, "must be > 0"),
+    (r"\bturbulent_kinetic_energy|^tke$|turbulent_dissipation\b", 0.0, float("inf"), True, True,
+     "must be >= 0 (a variance-derived quantity, non-negative by definition)"),
 ]
 
 
@@ -85,16 +87,24 @@ def check_structural(data: pd.DataFrame, rel_tol: float = 1e-9) -> list[Structur
     findings: list[StructuralFinding] = []
     numeric_cols = list(data.select_dtypes(include=[np.number]).columns)
 
-    # Non-finite values.
-    if numeric_cols:
-        sub = data[numeric_cols].apply(pd.to_numeric, errors="coerce")
+    # Non-finite values -- but only within columns that are actually meant
+    # to be populated every row. A column present in a MINORITY of rows
+    # (e.g. an optional per-trial field like stress_concentration) is
+    # sparse-by-design, not a structural defect: every other row is
+    # correctly "missing" it, not corrupted. Without this floor, one sparse
+    # column makes every OTHER row NaN in that column and the whole dataset
+    # gets flagged impossible. Only a column that's meant to always be
+    # present (populated in most rows) can make its absence a real finding.
+    dense_cols = [c for c in numeric_cols if data[c].notna().mean() >= 0.5] if len(data) else []
+    if dense_cols:
+        sub = data[dense_cols].apply(pd.to_numeric, errors="coerce")
         non_finite_mask = ~np.isfinite(sub.to_numpy(dtype=float))
         bad_rows = np.where(non_finite_mask.any(axis=1))[0]
         if len(bad_rows):
             findings.append(StructuralFinding(
                 kind="non_finite",
                 row_ids=[int(data.index[p]) for p in bad_rows],
-                detail=f"{len(bad_rows)} row(s) with NaN/Inf in {numeric_cols}",
+                detail=f"{len(bad_rows)} row(s) with NaN/Inf in {dense_cols}",
             ))
 
     # Exact duplicates by PER-COLUMN RELATIVE equality -- never cosine
