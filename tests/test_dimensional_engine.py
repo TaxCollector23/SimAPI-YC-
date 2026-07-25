@@ -230,3 +230,146 @@ def test_9_in_range_corruption_ranked_top():
     ranked = sorted(zip(cd_finding.row_ids, cd_finding.residual_z, strict=True), key=lambda x: -x[1])
     top2_rows = [r for r, _ in ranked[:2]]
     assert corrupt_row in top2_rows, f"corrupted row not in top-2: {ranked[:5]}"
+
+
+# ── Test 4: time series with real gauge drift + explicit time_s column ────
+def test_4_temporal_gauge_drift_caught():
+    n = 150
+    rng = np.random.default_rng(16)
+    time_s = np.arange(n, dtype=float) * 2.0  # 2s cadence, monotonic
+    T = 293.15 + rng.normal(0, 0.5, n)
+    rho = 1.225 + rng.normal(0, 0.003, n)
+    # Real gauge drift: the density sensor slowly biases upward over the
+    # back half of the run (a common real failure -- e.g. thermal creep in
+    # a pressure transducer), NOT a single bad row.
+    drift = np.where(time_s > time_s[int(n*0.4)],
+                      (time_s - time_s[int(n*0.4)]) * 0.0004, 0.0)
+    rho_drifted = rho + drift
+    # Pressure is measured independently (from the TRUE, undrifted density) --
+    # a real gauge drift is exactly this: one sensor's reported value biases
+    # away from physical reality while everything it should be consistent
+    # with does not, which is what actually breaks the anchor over time.
+    P = rho * 287.05 * T
+    df = pd.DataFrame({"time_s": time_s, "temperature": T, "density": rho_drifted, "pressure": P})
+
+    report = validate(df)
+    drift_laws = [law for law in report.laws if law.kind == "temporal_drift"]
+    assert drift_laws, f"expected a temporal_drift finding; laws={[l.kind for l in report.laws]}"
+    # The drift should be attributed to rows in the drifting (later) segment,
+    # not scattered randomly across the whole run.
+    drift_rows = set(drift_laws[0].violated_rows)
+    late_rows = set(range(int(n*0.6), n))
+    assert len(drift_rows & late_rows) > len(drift_rows) * 0.5, \
+        f"drift rows should concentrate late in the run: {sorted(drift_rows)[:10]}"
+
+
+# ── Test 6: 15 domains x 1 subtle corruption each -> >=12/15, 0 FP ────────
+def test_6_fifteen_domains_subtle_corruption():
+    from core.dimensional.dimensions import CONSTANTS
+
+    by_name = {c.name: c for c in CONSTANTS}
+    rng = np.random.default_rng(17)
+    n = 80
+    scenarios: list[tuple[str, pd.DataFrame, set]] = []
+
+    def two_col_product(col_a, col_b, const_name, corrupt_factor=1.15):
+        """a*b == const exactly; both columns must be DIMENSIONALLY consistent
+        with the constant (their combination must actually sum to its
+        dimension, not just share a name-guessed dimension)."""
+        c = by_name[const_name]
+        a = rng.uniform(1.0, 5.0, n)
+        b = c.value / a
+        df = pd.DataFrame({col_a: a, col_b: b})
+        df.loc[5, col_b] *= corrupt_factor
+        return df, {5}
+
+    def two_col_ratio(col_a, col_b, const_name, corrupt_factor=1.15):
+        """a/b == const exactly."""
+        c = by_name[const_name]
+        b = rng.uniform(1.0, 5.0, n)
+        a = c.value * b
+        df = pd.DataFrame({col_a: a, col_b: b})
+        df.loc[5, col_b] *= corrupt_factor
+        return df, {5}
+
+    # 1. Ideal gas (R_air): P/(rho*T) -- 3-column anchor.
+    T = 293.15 + rng.normal(0, 0.5, n)
+    rho = 1.225 + rng.normal(0, 0.003, n)
+    P = rho * 287.05 * T
+    df1 = pd.DataFrame({"temperature": T, "density": rho, "pressure": P})
+    df1.loc[3, "pressure"] /= 1000.0
+    scenarios.append(("ideal_gas/R_air", df1, {3}))
+
+    # 2-3. mass=density*volume (M = ML^-3 * L^3) -- electron/proton mass.
+    d1, t1 = two_col_product("density_a", "volume_a", "m_e")
+    scenarios.append(("m_e", d1, t1))
+    d2, t2 = two_col_product("density_b", "volume_b", "m_p")
+    scenarios.append(("m_p", d2, t2))
+
+    # 4. charge=current*time (T*I) -- elementary charge.
+    d3, t3 = two_col_product("current_a", "time_a", "e_charge")
+    scenarios.append(("e_charge", d3, t3))
+
+    # 5. density=mass/volume (M/L^3) -- water density.
+    d4, t4 = two_col_ratio("mass_a", "volume_c", "rho_water")
+    scenarios.append(("rho_water", d4, t4))
+
+    # 6. viscosity=pressure*time (ML^-1T^-2 * T = ML^-1T^-1) -- water viscosity.
+    d5, t5 = two_col_product("pressure_a", "time_b", "mu_water")
+    scenarios.append(("mu_water", d5, t5))
+
+    # 7. surface_tension=force/length (MLT^-2/L = MT^-2) -- water surface tension.
+    d6, t6 = two_col_ratio("force_a", "length_a", "sigma_water")
+    scenarios.append(("sigma_water", d6, t6))
+
+    # 8. specific_heat=energy/(mass*temperature) -- 3-column, air c_p.
+    energy = rng.uniform(1.0, 5.0, n)
+    mass = rng.uniform(1.0, 5.0, n)
+    temp = by_name["c_p_air"].value * mass / energy  # so energy/(mass*temp)=c_p
+    df8 = pd.DataFrame({"energy_a": energy, "mass_c": mass, "temperature_a": temp})
+    df8.loc[5, "temperature_a"] *= 1.15
+    scenarios.append(("c_p_air", df8, {5}))
+
+    # 9. acceleration=velocity/time -- standard gravity.
+    d7, t7 = two_col_ratio("velocity_a", "time_c", "g")
+    scenarios.append(("g", d7, t7))
+
+    # 10. pressure=force/area -- standard atmosphere.
+    d8, t8 = two_col_ratio("force_b", "area_a", "atm")
+    scenarios.append(("atm", d8, t8))
+
+    # 11. length=velocity*time -- Earth radius.
+    d9, t9 = two_col_product("velocity_b", "time_d", "R_earth")
+    scenarios.append(("R_earth", d9, t9))
+
+    # 12. mass=density*volume -- solar mass.
+    d10, t10 = two_col_product("density_c", "volume_d", "M_sun")
+    scenarios.append(("M_sun", d10, t10))
+
+    # 13. velocity=length/time -- speed of sound in air.
+    d11, t11 = two_col_ratio("length_b", "time_e", "c_sound_air")
+    scenarios.append(("c_sound_air", d11, t11))
+
+    # 14. time=length/velocity -- seconds in a Julian year.
+    d12, t12 = two_col_ratio("length_c", "velocity_c", "year_s")
+    scenarios.append(("year_s", d12, t12))
+
+    # 15. pressure=force/area -- torr.
+    d13, t13 = two_col_ratio("force_c", "area_b", "torr")
+    scenarios.append(("torr", d13, t13))
+
+    detected = 0
+    false_positives = 0
+    per_scenario = []
+    for name, df, truth in scenarios:
+        report = validate(df)
+        flagged = report.impossible_rows | report.inconsistent_rows
+        hit = bool(flagged & truth)
+        detected += int(hit)
+        fp = len(flagged - truth)
+        false_positives += fp
+        per_scenario.append((name, hit, fp))
+
+    assert len(scenarios) == 15
+    assert detected >= 12, f"only {detected}/15 domains detected their corruption: {per_scenario}"
+    assert false_positives == 0, f"{false_positives} false positives across 15 domains: {per_scenario}"

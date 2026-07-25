@@ -300,3 +300,89 @@ def layer4_bimodal_split(data: pd.DataFrame, groups: list[PiGroup]) -> list[LawF
                   f"clusters at {low_med:.4g} and {high_med:.4g}"),
         ))
     return findings
+
+
+# ── Temporal drift (gauge drift on an established law, when a time column ──
+# is present). Not a distinct spec layer number -- it's the same anchored/
+# constant-law machinery from Layers 2-3, tested against time instead of
+# just against the population median. A random outlier and a drifting gauge
+# both violate the law, but only drift is *correlated with time*; that's
+# the distinguishing signal a plain violation count can't see.
+DRIFT_MIN_ROWS = 20
+DRIFT_CORR_THRESHOLD = 0.5
+
+
+def find_time_column(data: pd.DataFrame) -> str | None:
+    candidates = [c for c in data.columns if "time" in c.lower()]
+    for c in candidates:
+        s = pd.to_numeric(data[c], errors="coerce")
+        if s.notna().sum() >= DRIFT_MIN_ROWS and s.is_monotonic_increasing:
+            return c
+    return candidates[0] if candidates else None
+
+
+def detect_temporal_drift(data: pd.DataFrame, laws: list[LawFinding], time_col: str) -> list[LawFinding]:
+    """For each established law (anchor or Pi-constant), test whether the
+    residual (value vs expected) is correlated with time. A real gauge drift
+    shows a strong, monotonic time-correlation; an isolated corrupted row or
+    ordinary noise does not."""
+    if time_col not in data.columns:
+        return []
+    t = pd.to_numeric(data[time_col], errors="coerce")
+    if t.notna().sum() < DRIFT_MIN_ROWS:
+        return []
+
+    findings: list[LawFinding] = []
+    for law in laws:
+        if law.kind not in ("anchored_constant", "pi_constant") or law.expected_value is None:
+            continue
+        cols = [c for c in law.columns if c in data.columns]
+        if not cols:
+            continue
+        sub = data[cols].apply(pd.to_numeric, errors="coerce")
+        valid = sub.dropna().index.intersection(t.dropna().index)
+        if len(valid) < DRIFT_MIN_ROWS:
+            continue
+
+        # Reconstruct the law's value per row from its own violated-row
+        # bookkeeping isn't available generically here, so recompute from
+        # columns directly isn't possible without the exponents -- instead,
+        # use the already-computed per-row factor for violated rows and 1.0
+        # (on-law) for the rest, which is exactly the drift signal: does the
+        # "how far off" number grow with time?
+        factor = pd.Series(1.0, index=valid)
+        for rid, f in law.violated_rows.items():
+            if rid in factor.index:
+                factor.loc[rid] = f
+        residual = (factor - 1.0).to_numpy()
+        tv = t.loc[valid].to_numpy()
+
+        if np.std(residual) < 1e-12 or np.std(tv) < 1e-12:
+            continue
+        corr = float(np.corrcoef(tv, residual)[0, 1])
+        if not np.isfinite(corr) or abs(corr) < DRIFT_CORR_THRESHOLD:
+            continue
+        # Require the drift to actually be material by the end of the run,
+        # not just a statistically-detectable but tiny time-correlation.
+        order = np.argsort(tv)
+        tail = residual[order][-max(5, len(order)//10):]
+        if np.median(np.abs(tail)) < ROW_VIOLATION_REL:
+            continue
+
+        drifting_rows = [rid for rid, f in law.violated_rows.items() if rid in valid]
+        if not drifting_rows:
+            continue
+        findings.append(LawFinding(
+            kind="temporal_drift",
+            label=f"{law.label} drifts with {time_col} (corr={corr:.2f})",
+            columns=law.columns,
+            expected_value=law.expected_value,
+            observed_median=law.observed_median,
+            scale=law.scale,
+            violated_rows=dict(law.violated_rows),
+            coverage=law.coverage,
+            weight=min(1.0, law.weight + 0.1),  # time-correlated is stronger evidence than isolated
+            note=f"gauge/sensor drift: residual vs {time_col} correlation={corr:.2f} "
+                 f"(law: {law.note})",
+        ))
+    return findings

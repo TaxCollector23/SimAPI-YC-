@@ -100,12 +100,30 @@ class ValidationReport:
         }
 
 
+def openrouter_llm_resolver(columns: list[str]) -> dict[str, dict]:
+    """The real OpenRouter-backed Layer 0 fallback (core/dimensional/
+    llm_units.py) for columns the dictionary can't classify. Not the
+    default on `validate()` -- network calls should be opt-in, not
+    automatic just because a key happens to be configured in the
+    environment. Pass this explicitly:
+    `validate(df, llm_resolver=openrouter_llm_resolver)`.
+    Callers who want it are api/server.py's /v1/validate/dimensional
+    endpoint; the test suite deliberately does not, so it stays fast and
+    network-independent (none of its columns need an LLM anyway)."""
+    from .llm_units import llm_resolve_columns
+    return llm_resolve_columns(columns)
+
+
 def validate(
     data: pd.DataFrame,
     conditions: dict | None = None,
     llm_resolver: Callable[[list[str]], dict[str, dict]] | None = None,
     max_columns: int = 15,
 ) -> ValidationReport:
+    """`llm_resolver`, if provided, classifies columns the dictionary
+    resolver couldn't (see core.dimensional.engine.openrouter_llm_resolver
+    for the real OpenRouter-backed implementation). Defaults to None --
+    dictionary-only, deterministic, no network dependency."""
     conditions = conditions or {}
     data = data.reset_index(drop=True)
     n_rows = len(data)
@@ -143,6 +161,15 @@ def validate(
     splits = pi_laws.layer4_bimodal_split(si_data, groups)
 
     laws: list[pi_laws.LawFinding] = anchors + const_laws + splits
+
+    # ── Temporal drift: when a time column exists, real gauge/sensor drift
+    # is distinguished from an isolated corrupted row by being CORRELATED
+    # with time, not just present. Reuses the same anchored/constant laws
+    # above rather than being a separate detection family.
+    time_col = pi_laws.find_time_column(si_data)
+    if time_col:
+        drift_findings = pi_laws.detect_temporal_drift(si_data, laws, time_col)
+        laws = laws + drift_findings
 
     # ── Layer 5 ──────────────────────────────────────────────────────────
     surface_findings = find_surface_anomalies(si_data, units)

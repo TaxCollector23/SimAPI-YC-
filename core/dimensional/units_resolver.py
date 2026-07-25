@@ -88,15 +88,16 @@ _PATTERNS: list[tuple[str, str, float]] = [
     (r"^t(_(static|total|stag|inf|infty|wall))?$|^temp(erature)?(_\w+)?$",
      "temperature", 0.75),
     (r"^rho(_(inf|infty|static))?$|^density(_\w+)?$", "density", 0.85),
-    (r"^(dynamic_)?viscosity$", "dynamic_viscosity", 0.8),
+    (r"^(dynamic_)?viscosity(_\w+)?$", "dynamic_viscosity", 0.8),
     (r"^nu$", "kinematic_viscosity", 0.55),
     (r"^mu$", "dynamic_viscosity", 0.55),
     (r"^(enthalpy|energy)(_\w+)?$", "energy", 0.75),
     (r"^power(_\w+)?$", "power", 0.8),
     (r"^heat_?flux$|^q_?wall$|^tau_?wall$", "heat_flux", 0.8),
     (r"^entropy(_\w+)?$", "entropy", 0.8),
-    (r"^specific_heat$|^c_?p$|^c_?v$", "specific_heat", 0.7),
-    (r"^thermal_conductivity$", "thermal_conductivity", 0.6),
+    (r"^spec(ific)?_?heat(_\w+)?$|^c_?p$|^c_?v$", "specific_heat", 0.7),
+    (r"^thermal_conductivity(_\w+)?$", "thermal_conductivity", 0.6),
+    (r"^surf(ace)?_?tension(_\w+)?$|^surftens(_\w+)?$", "surface_tension", 0.75),
     # Mechanics
     (r"^(force|thrust|drag|lift|load)(_\w+)?$", "force", 0.75),
     (r"^(torque|moment)(_\w+)?$", "torque", 0.75),
@@ -109,7 +110,7 @@ _PATTERNS: list[tuple[str, str, float]] = [
     (r"^(length|chord|span|diameter|radius|height|depth|thickness|"
      r"distance|displacement)(_\w+)?$", "length", 0.6),
     (r"^(x|y|z)$", "length", 0.5),
-    (r"^time(_s)?$|^t_s$", "time", 0.8),
+    (r"^time(_\w+)?$|^t_s$", "time", 0.8),
     # EM
     (r"^voltage(_\w+)?$|^volt$", "voltage", 0.8),
     (r"^current(_\w+)?$", "current", 0.55),

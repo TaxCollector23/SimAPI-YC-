@@ -47,6 +47,7 @@ from core.ai_orchestrator import AI_ENABLED as ORCHESTRATOR_ENABLED
 from core.ai_validator import AI_ENABLED
 from core.ai_validator import MODEL as AI_MODEL
 from core.dimensional import validate as dimensional_validate
+from core.dimensional.engine import openrouter_llm_resolver
 from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
@@ -664,7 +665,7 @@ async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_ide
     """
     df, ingest_meta = ingester.ingest(req.data, format_hint="json")
     conditions_dict = dict(req.conditions or {})
-    report = dimensional_validate(df, conditions=conditions_dict)
+    report = dimensional_validate(df, conditions=conditions_dict, llm_resolver=openrouter_llm_resolver)
 
     def _row_finding_dict(f):
         return {
