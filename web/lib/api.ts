@@ -129,6 +129,90 @@ export async function runDemo(): Promise<ValidationResult> {
   return r.json();
 }
 
+// ── Dimensional-analysis engine (core/dimensional/) ─────────────────────────
+export interface DimensionalLaw {
+  kind: "anchored_constant" | "pi_constant" | "bimodal_split" | "temporal_drift" | string;
+  label: string;
+  columns: string[];
+  expected_value: number | null;
+  observed_median: number | null;
+  coverage: number;
+  weight: number;
+  n_violations: number;
+  note: string;
+}
+export interface DimensionalRowFinding {
+  row_index: number;
+  output_class: "impossible" | "inconsistent" | "unsuitable_for_training";
+  reason: string;
+  layer: string;
+  weight: number;
+  factor: number | null;
+  counterfactual_repair: string | null;
+}
+export interface DimensionalUnitColumn {
+  confidence: number;
+  source: "dictionary" | "llm" | "unresolved";
+  usable: boolean;
+  unit_label: string;
+}
+export interface DimensionalUnitsConflict {
+  column: string;
+  [key: string]: unknown;
+}
+export interface DimensionalConditionAssertion {
+  label: string;
+  declared: number;
+  implied: number;
+  rel_dev: number;
+  columns: string[];
+  row_ids: number[];
+}
+export interface DimensionalTrainingSuitability {
+  kind: string;
+  detail: string;
+  columns: string[];
+  row_ids: number[];
+  severity: string;
+}
+export interface DimensionalResult {
+  job_id: string;
+  n_rows: number;
+  impossible: number[];
+  inconsistent: number[];
+  unsuitable_for_training: number[];
+  n_impossible: number;
+  n_inconsistent: number;
+  n_unsuitable_for_training: number;
+  training_ready: boolean;
+  laws_discovered: DimensionalLaw[];
+  n_anchored_constants: number;
+  row_findings: DimensionalRowFinding[];
+  units_resolved: Record<string, DimensionalUnitColumn>;
+  units_conflicts: DimensionalUnitsConflict[];
+  condition_assertions: DimensionalConditionAssertion[];
+  training_suitability: DimensionalTrainingSuitability[];
+  suppressions: string[];
+  known_impossible: string;
+  columns_renamed: Record<string, string>;
+  processing_ms?: number;
+}
+
+export async function validateDimensional(
+  data: Record<string, unknown>[],
+  conditions: Record<string, number> = {},
+): Promise<DimensionalResult> {
+  const t0 = performance.now();
+  const r = await fetch(`${API_BASE}/v1/validate/dimensional`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data, conditions }),
+  });
+  const json = await r.json();
+  if (!r.ok) throw new Error(json?.error?.message ?? r.statusText);
+  return { ...json, processing_ms: Math.round(performance.now() - t0) };
+}
+
 export async function pollAI(jobId: string): Promise<{
   ai_running: boolean; ai_status: string; ai: AIResult | null;
   ai_exclusions?: number[]; exclusions?: Exclusion[];

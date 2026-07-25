@@ -10,13 +10,14 @@ import {
 import { cn } from "@/lib/utils";
 import { PreflightPanel } from "./preflight-panel";
 import { HistoryPanel } from "./history-panel";
+import { DimensionalResultPanel } from "./dimensional-result-panel";
 import { recordRun } from "@/lib/run-history";
 import { useAuth } from "@/lib/auth";
 import { touchKey } from "@/lib/dashboard-store";
 import {
-  validate, runDemo, pollAI, generateKey,
+  validate, runDemo, validateDimensional, pollAI, generateKey,
   DEMO_KEY, healthCheck,
-  type ValidationResult, type Issue,
+  type ValidationResult, type Issue, type DimensionalResult,
 } from "@/lib/api";
 
 // ── Simulation type config ────────────────────────────────────────────────────
@@ -212,7 +213,9 @@ export function ValidationDashboard() {
   const [rawInput,  setRawInput]    = useState(JSON.stringify(simConfig.example, null, 2));
   const [apiKey,    setApiKey]      = useState(DEMO_KEY);
   const [phase,     setPhase]       = useState<"idle"|"running"|"done"|"error">("idle");
+  const [engineMode, setEngineMode] = useState<"legacy"|"dimensional">("legacy");
   const [result,    setResult]      = useState<ValidationResult | null>(null);
+  const [dimResult, setDimResult]   = useState<DimensionalResult | null>(null);
   const [error,     setError]       = useState<string | null>(null);
   const [serverUp,  setServerUp]    = useState<boolean | null>(null);
   const [showAll,   setShowAll]     = useState(false);
@@ -270,8 +273,22 @@ export function ValidationDashboard() {
 
   async function run(demo = false) {
     if (!serverUp) { setError("API server offline. Run: python launch.py"); return; }
-    stopPoll(); setPhase("running"); setError(null); setResult(null); setShowAll(false);
+    stopPoll(); setPhase("running"); setError(null); setResult(null); setDimResult(null); setShowAll(false);
     try {
+      if (engineMode === "dimensional") {
+        let data: Record<string, unknown>[];
+        if (demo) {
+          data = selectedSim.example.length > 0 ? selectedSim.example : JSON.parse(rawInput);
+        } else {
+          try { data = JSON.parse(rawInput); }
+          catch { throw new Error("Invalid JSON. Check your input above."); }
+          if (!Array.isArray(data)) throw new Error("Input must be a JSON array: [{...}, {...}, ...]");
+        }
+        const dres = await validateDimensional(data, conditions);
+        setDimResult(dres); setPhase("done");
+        return;
+      }
+
       let res: ValidationResult;
       if (demo) {
         res = await runDemo();
@@ -328,7 +345,11 @@ export function ValidationDashboard() {
               serverUp ? "bg-pass animate-pulse" : serverUp === false ? "bg-red-400" : "bg-white/20")} />
             {serverUp === null ? "Checking..." : serverUp ? "API online" : "API offline"}
           </span>
-          {result && "engine" in result && (
+          {engineMode === "dimensional" ? (
+            <span className="rounded-full border border-accent-cyan/30 bg-accent-cyan/5 px-2.5 py-1.5 text-[10px] text-accent-cyan">
+              Dimensional analysis (new architecture)
+            </span>
+          ) : result && "engine" in result && (
             <span className="rounded-full border border-accent-cyan/30 bg-accent-cyan/5 px-2.5 py-1.5 text-[10px] text-accent-cyan">
               {String((result as Record<string, unknown>).engine) === "python-1700-checks" ? "Full engine (1700+ checks)" : "Lite engine (20 checks)"}
             </span>
@@ -356,6 +377,28 @@ export function ValidationDashboard() {
 
         {/* ── LEFT: Controls ── */}
         <div className="space-y-4">
+
+          {/* Engine selector */}
+          <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
+            <label className="text-xs uppercase tracking-widest text-white/35 block mb-2">Validation Engine</label>
+            <div className="flex gap-1 rounded-xl border border-white/[0.06] bg-black/20 p-1">
+              {([
+                ["legacy", "Full engine (1700+ checks)"],
+                ["dimensional", "Dimensional analysis (new)"],
+              ] as const).map(([id, label]) => (
+                <button key={id} onClick={() => { setEngineMode(id); setPhase("idle"); setResult(null); setDimResult(null); }}
+                  className={cn("flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                    engineMode === id ? "bg-white/10 text-white" : "text-white/40 hover:text-white")}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-[10px] text-white/25 leading-relaxed">
+              {engineMode === "dimensional"
+                ? "~25 rules: units resolution, Pi-group discovery, anchored physical constants, and a response-surface residual layer — replaces per-column checks with dimensional analysis."
+                : "The deterministic, hand-written check engine with the published 99%+ precision benchmark, plus an AI second pass."}
+            </p>
+          </div>
 
           {/* Simulation type */}
           <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
@@ -395,6 +438,7 @@ export function ValidationDashboard() {
           )}
 
           {/* API key */}
+          {engineMode === "legacy" && (
           <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
             <div className="flex items-center justify-between mb-2">
               <label className="text-xs uppercase tracking-widest text-white/35 flex items-center gap-1.5">
@@ -419,6 +463,7 @@ export function ValidationDashboard() {
               {apiKey === DEMO_KEY ? "Shared demo key · Click Generate for a permanent key" : "Your key · active now"}
             </p>
           </div>
+          )}
 
           {/* Data input */}
           <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
@@ -450,7 +495,9 @@ export function ValidationDashboard() {
             <button onClick={() => run(true)} disabled={phase === "running"}
               className="btn-ghost w-full flex items-center justify-center gap-2 text-sm">
               <RefreshCw className="h-4 w-4" />
-              Load demo dataset (200 trials, 5 corruption types)
+              {engineMode === "dimensional"
+                ? `Run example dataset (${selectedSim.example.length || "N/A"} trials)`
+                : "Load demo dataset (200 trials, 5 corruption types)"}
             </button>
           </div>
 
@@ -474,7 +521,11 @@ export function ValidationDashboard() {
                 <Play className="h-7 w-7 text-white/15" />
               </div>
               <p className="text-white/35">Configure your simulation and hit Run</p>
-              <p className="text-xs text-white/20 mt-1.5">500+ physics checks · AI reasoning · results in seconds</p>
+              <p className="text-xs text-white/20 mt-1.5">
+                {engineMode === "dimensional"
+                  ? "Units resolution · Pi-group discovery · anchored constants · results in seconds"
+                  : "1700+ physics checks · AI reasoning · results in seconds"}
+              </p>
             </div>
           )}
 
@@ -482,8 +533,12 @@ export function ValidationDashboard() {
           {phase === "running" && (
             <div className="rounded-2xl border border-white/[0.07] bg-ink-900/40 flex flex-col items-center justify-center py-40">
               <Loader2 className="h-8 w-8 animate-spin text-accent-cyan mb-4" />
-              <p className="text-white/50 text-sm">Running physics validation...</p>
-              <p className="text-xs text-white/25 mt-1">AI analysis will appear automatically after</p>
+              <p className="text-white/50 text-sm">
+                {engineMode === "dimensional" ? "Running dimensional-analysis validation..." : "Running physics validation..."}
+              </p>
+              <p className="text-xs text-white/25 mt-1">
+                {engineMode === "dimensional" ? "Layer 0 unit resolution can take a few seconds on unfamiliar columns" : "AI analysis will appear automatically after"}
+              </p>
             </div>
           )}
 
@@ -499,7 +554,12 @@ export function ValidationDashboard() {
           )}
 
           <AnimatePresence>
-            {phase === "done" && result && (
+            {phase === "done" && engineMode === "dimensional" && dimResult && (
+              <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+                <DimensionalResultPanel result={dimResult} />
+              </motion.div>
+            )}
+            {phase === "done" && engineMode === "legacy" && result && (
               <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
 
                 {/* Summary header */}
