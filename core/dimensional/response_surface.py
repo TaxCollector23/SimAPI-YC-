@@ -33,6 +33,11 @@ MAX_ROWS_FOR_KNN = 1500  # O(n^2) pairwise distance; bound it for the perf budge
 MATERIAL_FRACTION = 0.02
 NEAR_CONSTANT_CV = 0.01
 Z_RANK_THRESHOLD = 4.0
+# Above this, a row's k-nearest neighbours lie essentially all to one side,
+# so the local fit is extrapolating. 0.5 means the mean neighbour offset is
+# half the mean neighbour distance -- a clearly lopsided neighbourhood,
+# while an interior point on any reasonable sampling sits well below it.
+ONE_SIDED_MAX = 0.5
 
 
 @dataclass
@@ -48,11 +53,32 @@ def _pseudo_log(x: np.ndarray) -> np.ndarray:
     return np.sign(x) * np.log1p(np.abs(x))
 
 
-def _knn_predict(y: np.ndarray, feats: np.ndarray, k: int) -> np.ndarray:
+def _knn_predict(y: np.ndarray, feats: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
+    """Returns (prediction, one_sidedness) per row.
+
+    `one_sidedness` measures whether a row's neighbourhood surrounds it or
+    sits entirely to one side:
+
+        ||mean(neighbour - x)|| / mean(||neighbour - x||)
+
+    ~0 for an interior point (neighbours cancel out around it), ~1 for a
+    point at the edge of the sampled design space (every neighbour lies
+    inward). It is a ratio of distances, so it is scale-free and needs no
+    tuning per dataset.
+
+    This is the guard for the failure the spec names explicitly -- a
+    2-factor design where the OLD engine excluded 60/60 valid trials. At a
+    design corner k-NN has no neighbours beyond the corner, so the local
+    fit EXTRAPOLATES, and on any curved response (a quadratic Cd(AoA) is
+    the normal case, not a pathology) the residual it produces measures the
+    curvature of the physics rather than anything wrong with the row. The
+    corner is where curvature is largest, so the most extreme legitimate
+    design points look the most anomalous -- exactly backwards.
+    """
     n = len(y)
     k = min(k, n - 1)
     if k < 2:
-        return y.copy()
+        return y.copy(), np.zeros(n)
     # Pairwise distances -- fine at benchmark/test scale (hundreds-low
     # thousands of rows); a production path would use a KD-tree.
     diff = feats[:, None, :] - feats[None, :, :]
@@ -60,7 +86,13 @@ def _knn_predict(y: np.ndarray, feats: np.ndarray, k: int) -> np.ndarray:
     np.fill_diagonal(dist2, np.inf)
     nn_idx = np.argpartition(dist2, kth=k - 1, axis=1)[:, :k]
     pred = np.array([np.median(y[nn_idx[i]]) for i in range(n)])
-    return pred
+
+    offsets = feats[nn_idx] - feats[:, None, :]          # (n, k, d)
+    mean_off = np.linalg.norm(offsets.mean(axis=1), axis=1)
+    mean_dist = np.linalg.norm(offsets, axis=2).mean(axis=1)
+    one_sided = np.divide(mean_off, mean_dist,
+                          out=np.zeros(n), where=mean_dist > 0)
+    return pred, one_sided
 
 
 def find_surface_anomalies(
@@ -111,18 +143,23 @@ def find_surface_anomalies(
         feats = (feats - fmean) / fstd
 
         y_log = _pseudo_log(y_raw)
-        pred_log = _knn_predict(y_log, feats, K_NEIGHBORS)
+        pred_log, one_sided = _knn_predict(y_log, feats, K_NEIGHBORS)
         resid_log = y_log - pred_log
         mad = float(np.median(np.abs(resid_log - np.median(resid_log))))
         scale = mad * 1.4826 if mad > 0 else max(np.std(resid_log), 1e-12)
         z = np.abs(resid_log - np.median(resid_log)) / scale
 
-        pred_raw = _knn_predict(y_raw, feats, K_NEIGHBORS)
+        pred_raw, _ = _knn_predict(y_raw, feats, K_NEIGHBORS)
         material = np.abs(y_raw - pred_raw) / max(spread, 1e-30)
 
         # Guard 1: material against the column's own range, not merely
         # large against other residuals.
-        candidates = np.where((z > Z_RANK_THRESHOLD) & (material > MATERIAL_FRACTION))[0]
+        # Guard 3 (design-space boundary): a row whose neighbours all lie to
+        # one side is being extrapolated to, not interpolated -- its residual
+        # reflects the curvature of the response, not a defect. This is what
+        # keeps the corners of a factorial design out of the findings.
+        interior = one_sided < ONE_SIDED_MAX
+        candidates = np.where((z > Z_RANK_THRESHOLD) & (material > MATERIAL_FRACTION) & interior)[0]
         if len(candidates) and len(candidates) < 0.15 * len(y_raw):
             findings.append(SurfaceFinding(
                 column=target,

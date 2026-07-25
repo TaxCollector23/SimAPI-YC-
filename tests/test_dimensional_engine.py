@@ -373,3 +373,214 @@ def test_6_fifteen_domains_subtle_corruption():
     assert len(scenarios) == 15
     assert detected >= 12, f"only {detected}/15 domains detected their corruption: {per_scenario}"
     assert false_positives == 0, f"{false_positives} false positives across 15 domains: {per_scenario}"
+
+
+# ── Test 3: 2-factor design, quadratic Cd(AoA) -> corners NOT flagged ─────
+def test_3_two_factor_design_corners_not_flagged():
+    """The documented failure of the OLD engine: a 2-factor design where it
+    excluded 60/60 valid trials. The corners of a factorial design are the
+    extreme (but entirely intentional) combinations -- they must survive."""
+    rng = np.random.default_rng(3)
+    aoa_levels = np.linspace(0.0, 12.0, 6)
+    mach_levels = np.linspace(0.3, 0.8, 5)
+    aoa, mach, cd = [], [], []
+    for a in aoa_levels:
+        for m in mach_levels:
+            for _rep in range(2):  # 6 x 5 x 2 = 60 trials
+                aoa.append(a)
+                mach.append(m)
+                # Genuine quadratic response in AoA plus mild Mach dependence.
+                cd.append(0.021 + 0.00042 * a**2 + 0.019 * m**2
+                          + rng.normal(0, 2e-4))
+    df = pd.DataFrame({"angle_of_attack": aoa, "mach": mach, "drag_coefficient": cd})
+    assert len(df) == 60
+
+    report = validate(df)
+    flagged = report.impossible_rows | report.inconsistent_rows
+    assert flagged == set(), (
+        f"{len(flagged)} of 60 valid 2-factor trials flagged "
+        f"(the old engine's 60/60 failure): {sorted(flagged)[:10]}")
+
+    # Specifically the design corners -- max/min of both factors.
+    corners = set(df.index[((df.angle_of_attack == aoa_levels[0]) | (df.angle_of_attack == aoa_levels[-1]))
+                           & ((df.mach == mach_levels[0]) | (df.mach == mach_levels[-1]))])
+    assert corners, "test setup: expected to identify corner trials"
+    assert not (corners & flagged), f"design corners flagged: {sorted(corners & flagged)}"
+
+
+# ── Test 5: cruise altitude, NO temperature column -> ISA-derived, 1 only ─
+def test_5_cruise_altitude_no_temperature_column():
+    """Declared conditions are the anchor of last resort: with no temperature
+    column there is no P/(rho*T) anchor available from the data itself, so
+    the ISA model for the declared altitude has to supply it."""
+    n = 80
+    rng = np.random.default_rng(5)
+    alt = 10668.0  # FL350, a real cruise altitude
+    t_isa, p_isa, rho_isa = isa_at_altitude(alt)
+
+    rho = rho_isa * (1 + rng.normal(0, 0.004, n))
+    p = rho * 287.05 * t_isa          # consistent with ISA temperature
+    v = rng.uniform(230, 250, n)      # cruise TAS, varies freely
+    df = pd.DataFrame({"pressure": p, "density": rho, "velocity": v})
+    assert not any("temp" in c for c in df.columns), "test setup: no temperature column"
+
+    # Exactly one genuinely corrupted trial.
+    df.loc[7, "pressure"] *= 1.6
+
+    report = validate(df, conditions={"altitude_m": alt})
+    flagged = report.impossible_rows | report.inconsistent_rows
+    assert 7 in flagged, f"the one true corruption was missed; flagged={sorted(flagged)}"
+    assert flagged == {7}, f"expected exactly 1 finding, got {sorted(flagged)}"
+
+
+# ── "Unsuitable for training": the class the spec says barely exists ──────
+def test_design_space_gap_reported_as_dataset_level_not_row_exclusions():
+    n = 120
+    rng = np.random.default_rng(20)
+    # A deliberate void: AoA is swept 0-4 deg and 12-16 deg, never between.
+    low = rng.uniform(0.0, 4.0, n // 2)
+    high = rng.uniform(12.0, 16.0, n // 2)
+    aoa = np.concatenate([low, high])
+    df = pd.DataFrame({
+        "angle_of_attack": aoa,
+        "drag_coefficient": 0.021 + 0.00042 * aoa**2 + rng.normal(0, 1e-4, n),
+    })
+    report = validate(df)
+    gaps = [s for s in report.suitability if s.kind == "design_space_gap"]
+    assert gaps, f"expected a coverage gap; got {[s.kind for s in report.suitability]}"
+    assert any("angle_of_attack" in s.columns for s in gaps)
+    # Crucially: a coverage gap must NOT translate into row exclusions.
+    assert report.impossible_rows == set()
+    assert report.inconsistent_rows == set()
+
+
+def test_feature_target_leakage_detected():
+    n = 60
+    rng = np.random.default_rng(21)
+    lift = rng.uniform(100, 900, n)
+    df = pd.DataFrame({
+        "lift_force": lift,
+        "lift_force_kn": lift / 1000.0,  # the target, rescaled = pure leakage
+        "velocity": rng.uniform(10, 60, n),
+    })
+    report = validate(df)
+    leaks = [s for s in report.suitability if s.kind == "feature_target_leakage"]
+    assert leaks, f"expected leakage finding; got {[s.kind for s in report.suitability]}"
+    assert {"lift_force", "lift_force_kn"} == set(leaks[0].columns)
+
+
+def test_regime_imbalance_detected():
+    n = 200
+    rng = np.random.default_rng(22)
+    # 95% of the campaign sits at low AoA; the stall regime is barely sampled.
+    aoa = np.concatenate([rng.uniform(0, 2, 190), rng.uniform(14, 18, 10)])
+    df = pd.DataFrame({
+        "angle_of_attack": aoa,
+        "drag_coefficient": 0.021 + 0.00042 * aoa**2 + rng.normal(0, 1e-4, n),
+    })
+    report = validate(df)
+    imbalance = [s for s in report.suitability if s.kind == "regime_imbalance"]
+    assert imbalance, f"expected imbalance; got {[s.kind for s in report.suitability]}"
+
+
+def test_suppressions_are_reported_with_reasons():
+    """A validator that hides what it chose not to run cannot be audited."""
+    n = 40
+    df = _ideal_gas_dataset(n, seed=23)
+    df["run_id"] = [f"RUN-{i:04d}" for i in range(n)]
+    df["mystery_quantity_xyz"] = np.random.default_rng(23).uniform(1, 5, n)
+
+    report = validate(df)
+    assert report.suppressions, "no suppressions recorded"
+    joined = " ".join(report.suppressions)
+    assert "run_id" in joined, f"non-numeric column not accounted for: {report.suppressions}"
+    assert "mystery_quantity_xyz" in joined, f"unresolved column not accounted for: {report.suppressions}"
+    # Each entry must say WHY, not just what.
+    for s in report.suppressions:
+        assert len(s) > 40 and ":" in s, f"suppression lacks a reason: {s!r}"
+
+
+# ── The design-space boundary guard must not become a blind spot ──────────
+def test_boundary_guard_still_catches_interior_corruption():
+    """The guard added for Test 3 suppresses Layer 5 where k-NN extrapolates
+    (the edge of the sampled design space). Verify it did not simply switch
+    Layer 5 off: on a well-sampled sweep an INTERIOR corruption is still
+    caught, so what the guard removed is the boundary rows, not the detector."""
+    n = 400
+    rng = np.random.default_rng(24)
+    re = np.exp(rng.uniform(np.log(1e4), np.log(1e6), n))
+    mach = rng.uniform(0.2, 0.8, n)
+    cd = 0.05 + 0.02 * np.log10(re) / 6.0 + 0.03 * mach**2 + rng.normal(0, 2e-4, n)
+    df = pd.DataFrame({"reynolds_number": re, "mach": mach, "drag_coefficient": cd})
+
+    # An interior row: mid-range in BOTH factors, so its neighbourhood
+    # genuinely surrounds it and the guard does not apply.
+    interior = df.index[
+        (df.reynolds_number > np.quantile(re, 0.4)) & (df.reynolds_number < np.quantile(re, 0.6))
+        & (df.mach > np.quantile(mach, 0.4)) & (df.mach < np.quantile(mach, 0.6))
+    ]
+    assert len(interior) > 0, "test setup: expected interior rows"
+    victim = int(interior[0])
+    df.loc[victim, "drag_coefficient"] *= 1.075  # the spec's +7.5%, in-range
+
+    report = validate(df)
+    flagged = report.impossible_rows | report.inconsistent_rows
+    assert victim in flagged, (
+        f"interior corruption missed -- the boundary guard has over-suppressed "
+        f"Layer 5; flagged={sorted(flagged)}")
+
+
+def test_layer5_sensitivity_limit_on_coarse_replicated_grid_is_documented():
+    """Honest boundary, measured rather than assumed.
+
+    On a COARSE REPLICATED factorial grid (few discrete levels, several reps
+    per cell) Layer 5 is materially less sensitive than on a well-sampled
+    sweep: the k nearest neighbours span whole cells, so the local median
+    carries the response's curvature as approximation error, which inflates
+    the MAD used to normalise and depresses the z-score of a real anomaly.
+    Measured here: a genuine +30% Cd corruption reaches only z=2.7, under the
+    z>4 threshold, so it is not reported.
+
+    This is the same deterministic-data effect the spec flags as a source of
+    false positives, appearing here as a false negative. It is pinned as a
+    test so the limit stays visible and tracked instead of being discovered
+    in the field. On designs like this, detection rests on Layers 2/3/4
+    (exact laws and anchors), which do not depend on sampling density.
+
+    A local linear fit was tried as a fix -- it cancels the gradient and does
+    lift sensitivity -- but it regressed acceptance Test 3 (design corners
+    became false positives again), so it was reverted rather than tuned.
+    """
+    rng = np.random.default_rng(24)
+    aoa_levels = np.linspace(0.0, 12.0, 6)
+    mach_levels = np.linspace(0.3, 0.8, 5)
+    aoa, mach, cd = [], [], []
+    for a in aoa_levels:
+        for m in mach_levels:
+            for _rep in range(4):
+                aoa.append(a)
+                mach.append(m)
+                cd.append(0.021 + 0.00042 * a**2 + 0.019 * m**2 + rng.normal(0, 2e-4))
+    df = pd.DataFrame({"angle_of_attack": aoa, "mach": mach, "drag_coefficient": cd})
+    interior = df.index[(df.angle_of_attack == aoa_levels[2]) & (df.mach == mach_levels[2])]
+    victim = int(interior[0])
+    df.loc[victim, "drag_coefficient"] *= 1.30
+
+    report = validate(df)
+    flagged = report.impossible_rows | report.inconsistent_rows
+    # Documenting the limit: the corruption is missed. What must NOT happen is
+    # the engine inventing findings on the valid rows in its place.
+    assert victim not in flagged, (
+        "Layer 5 sensitivity on coarse replicated grids has IMPROVED -- this test "
+        "pins a known limit; tighten or remove it now that it holds.")
+    assert len(flagged) <= 1, f"valid grid rows falsely flagged: {sorted(flagged)}"
+
+
+def test_report_states_the_known_impossible_boundary():
+    """Stating this boundary explicitly is what makes the rest credible."""
+    from core.dimensional.engine import KNOWN_IMPOSSIBLE
+    report = validate(_ideal_gas_dataset(30, seed=25))
+    text = report.summary()["known_impossible"]
+    assert text == KNOWN_IMPOSSIBLE
+    assert "turbulence model" in text
+    assert "does not mean the physics is right" in text

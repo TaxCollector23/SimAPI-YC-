@@ -23,6 +23,27 @@ Layers:
 Arbitration is weighted voting (not vote counting), with root-cause
 clustering and counterfactual repair. Output is three classes -- impossible,
 inconsistent, unsuitable-for-training -- not one exclusion list.
+
+KNOWN-IMPOSSIBLE (documented deliberately; not attempted)
+---------------------------------------------------------
+Self-consistent-but-wrong data is outside what this or any output-only
+validator can detect.
+
+A simulation run with the wrong turbulence model produces output that is
+dimensionally perfect, smooth, satisfies every anchor and every discovered
+Pi law, sits inside every semantic bound, and is simply incorrect. Every
+layer above tests the data against ITSELF (or against physical constants
+that the wrong model also respects), so there is no signal in the output
+to find. Detecting it requires comparison against experiment or a trusted
+reference run -- i.e. information that is not in the dataset -- and is
+addressed by the roadmap in which the platform runs the simulation itself.
+
+This boundary is stated in the report (see `KNOWN_IMPOSSIBLE`, surfaced by
+`ValidationReport.summary()`) rather than left implicit, because a
+validator that quietly implies it caught everything is not credible about
+what it did catch. A clean report from this engine means "consistent with
+itself, with physical constants, and with declared conditions" -- it does
+not mean "physically correct".
 """
 from __future__ import annotations
 
@@ -37,9 +58,22 @@ from .declared_conditions import check_declared_conditions
 from .pi_basis import PiGroup, find_pi_groups, select_columns
 from .response_surface import SurfaceFinding, find_surface_anomalies
 from .rules import SemanticViolation, StructuralFinding, check_semantic_bounds, check_structural
+from .training_suitability import SuitabilityFinding, assess_training_suitability
 from .units_resolver import UnitsResolution, resolve_units
 
 OUTPUT_CLASSES = ("impossible", "inconsistent", "unsuitable_for_training")
+
+# Shipped in every report. See the module docstring: stating the boundary
+# explicitly is what makes the rest of the reporting credible.
+KNOWN_IMPOSSIBLE = (
+    "Self-consistent-but-wrong data is not detectable from output alone. A run "
+    "with (for example) the wrong turbulence model yields dimensionally perfect, "
+    "smooth, anchor-satisfying output that is simply incorrect. A clean report "
+    "here means the data is consistent with itself, with physical constants, and "
+    "with the declared conditions -- it does not mean the physics is right. "
+    "Establishing that requires comparison against experiment or a trusted "
+    "reference run."
+)
 
 
 @dataclass
@@ -74,6 +108,7 @@ class ValidationReport:
     condition_assertions: list
     units_conflicts: list[UnitsConflict]
     row_findings: list[RowFinding]
+    suitability: list[SuitabilityFinding] = field(default_factory=list)
     suppressions: list[str] = field(default_factory=list)
 
     @property
@@ -97,6 +132,11 @@ class ValidationReport:
             "inconsistent": sorted(self.inconsistent_rows),
             "unsuitable_for_training": sorted(self.unsuitable_rows),
             "units_conflicts": [c.__dict__ for c in self.units_conflicts],
+            # Dataset-level, deliberately separate from the row lists above:
+            # "your data never covers the high-AoA regime" is not a row defect.
+            "training_suitability": [s.__dict__ for s in self.suitability],
+            "suppressions": list(self.suppressions),
+            "known_impossible": KNOWN_IMPOSSIBLE,
         }
 
 
@@ -127,15 +167,42 @@ def validate(
     conditions = conditions or {}
     data = data.reset_index(drop=True)
     n_rows = len(data)
+    # Audit trail. The spec is explicit: "Every suppression must carry its
+    # reason into the report. A validator that hides what it chose not to
+    # run cannot be audited." Anything this engine declines to analyse --
+    # a column dropped for unresolvable units, a layer skipped for want of
+    # rows -- records WHY here, so a reader can tell "clean" apart from
+    # "never actually looked at".
+    suppressions: list[str] = []
 
     # ── Layer 0 ──────────────────────────────────────────────────────────
     numeric_cols = [c for c in data.columns if pd.api.types.is_numeric_dtype(data[c])
                      or pd.to_numeric(data[c], errors="coerce").notna().mean() > 0.8]
+    non_numeric = [c for c in data.columns if c not in numeric_cols]
+    if non_numeric:
+        suppressions.append(
+            f"Layer 1-3/5 skipped for {len(non_numeric)} non-numeric column(s) "
+            f"({', '.join(map(str, non_numeric[:6]))}"
+            f"{', ...' if len(non_numeric) > 6 else ''}): IDs, flags and categoricals "
+            f"carry no dimensions. Structural checks still apply.")
     units = resolve_units(numeric_cols, llm_resolver=llm_resolver)
+    unresolved = [c for c in numeric_cols if not units.columns[c].usable]
+    if unresolved:
+        suppressions.append(
+            f"Layer 1-3 skipped for {len(unresolved)} column(s) with unresolved or "
+            f"low-confidence units ({', '.join(unresolved[:6])}"
+            f"{', ...' if len(unresolved) > 6 else ''}): dimensional analysis needs a "
+            f"trusted dimension. These are still judged by Layer 5 (response surface).")
     si_data = _apply_si_conversion(data, units)
 
     # ── Layer 1 ──────────────────────────────────────────────────────────
     groups = find_pi_groups(si_data, units, max_columns=max_columns)
+    usable_n = len(units.usable_columns())
+    if usable_n > max_columns:
+        suppressions.append(
+            f"Layer 1 considered the {max_columns} highest-value of {usable_n} usable "
+            f"columns (ranked by variance x units confidence): subset enumeration is "
+            f"combinatorial and the spec caps it to hold the <10s budget at 80 columns.")
 
     # ── Layer 7 (assertions + synthetic anchor of last resort) ─────────────
     condition_assertions, synthetic_anchors = check_declared_conditions(si_data, conditions)
@@ -180,6 +247,15 @@ def validate(
     # ── Layer 8 ──────────────────────────────────────────────────────────
     structural_findings = check_structural(si_data)
 
+    # ── Training suitability: physically valid, harmful to learn from ─────
+    # Mostly DATASET-level, not row-level -- a coverage gap is not a property
+    # of any single row, so these do not become row exclusions.
+    suitability = assess_training_suitability(si_data, list(units.usable_columns()))
+    if len(si_data) < 20:
+        suppressions.append(
+            "Training-suitability analysis skipped: coverage, imbalance and "
+            "leakage statistics are not meaningful below 20 rows.")
+
     # ── Units-conflict verification: "the LLM proposes, linear algebra
     # disposes". If an accepted anchor/law implies a dimension the resolver
     # didn't assign (or assigned with low confidence), record the conflict
@@ -197,6 +273,7 @@ def validate(
         surface_findings=surface_findings, semantic_violations=semantic_violations,
         structural_findings=structural_findings, condition_assertions=condition_assertions,
         units_conflicts=units_conflicts, row_findings=row_findings,
+        suitability=suitability, suppressions=suppressions,
     )
 
 

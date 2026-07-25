@@ -23,13 +23,22 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
 from .dimensions import BASE_DIMENSIONS
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-TIMEOUT_SECONDS = 12
+TIMEOUT_SECONDS = 8
+# Hard ceiling on the WHOLE fallback chain, not per attempt. Without this the
+# per-attempt timeout multiplies by the number of (key, model) pairs: measured
+# 74s on a live request where every model failed on an unresolvable column,
+# because 6 attempts x 12s each all ran to completion. Layer 0 is an optional
+# enrichment -- unresolved columns are a normal, handled state -- so it must
+# never dominate request latency. Whatever the chain has produced when the
+# budget runs out is what gets used.
+TOTAL_BUDGET_SECONDS = 20
 _DIM_KEYS = sorted(BASE_DIMENSIONS.keys())
 
 _SYSTEM_PROMPT = f"""You are classifying engineering-simulation column names by physical dimension.
@@ -67,7 +76,8 @@ def _build_key_model_chain() -> list[tuple[str, str]]:
     return chain
 
 
-def _call_model(columns: list[str], model: str, key: str) -> dict | None:
+def _call_model(columns: list[str], model: str, key: str,
+                 timeout: float = TIMEOUT_SECONDS) -> dict | None:
     body = json.dumps({
         "model": model,
         "max_tokens": min(2000, 60 * len(columns) + 200),
@@ -84,7 +94,7 @@ def _call_model(columns: list[str], model: str, key: str) -> dict | None:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError):
         return None
@@ -117,8 +127,12 @@ def llm_resolve_columns(columns: list[str]) -> dict[str, dict]:
     chain = _build_key_model_chain()
     if not chain:
         return {}
+    deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
     for key, model in chain:
-        result = _call_model(columns, model, key)
+        remaining = deadline - time.monotonic()
+        if remaining <= 1.0:
+            break  # out of budget; unresolved columns fall through to Layer 5
+        result = _call_model(columns, model, key, timeout=min(TIMEOUT_SECONDS, remaining))
         if result is None:
             continue
         # Only keep entries with a dimension key we actually know about.

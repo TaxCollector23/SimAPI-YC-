@@ -47,7 +47,7 @@ from core.ai_orchestrator import AI_ENABLED as ORCHESTRATOR_ENABLED
 from core.ai_validator import AI_ENABLED
 from core.ai_validator import MODEL as AI_MODEL
 from core.dimensional import validate as dimensional_validate
-from core.dimensional.engine import openrouter_llm_resolver
+from core.dimensional.engine import KNOWN_IMPOSSIBLE, openrouter_llm_resolver
 from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
@@ -717,6 +717,18 @@ async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_ide
              "rel_dev": round(a.rel_dev, 4), "columns": list(a.columns), "row_ids": a.row_ids}
             for a in report.condition_assertions
         ],
+        # Dataset-level, deliberately NOT folded into the row lists above:
+        # "your data never covers the high-AoA regime you deploy in" is not a
+        # defect of any row, and reporting it as one would be misleading.
+        "training_suitability": [
+            {"kind": s.kind, "detail": s.detail, "columns": list(s.columns),
+             "row_ids": s.row_ids, "severity": s.severity}
+            for s in report.suitability
+        ],
+        # Every suppression carries its reason: a validator that hides what it
+        # chose not to run cannot be audited.
+        "suppressions": list(report.suppressions),
+        "known_impossible": KNOWN_IMPOSSIBLE,
         "columns_renamed": ingest_meta.get("columns_renamed", {}),
     })
 
