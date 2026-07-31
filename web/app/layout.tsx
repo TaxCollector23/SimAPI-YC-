@@ -4,7 +4,6 @@ import "./globals.css";
 import { site } from "@/lib/site";
 import { Nav } from "@/components/nav";
 import { Footer } from "@/components/footer";
-import { AuthProvider } from "@/lib/auth";
 
 const sans = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", display: "swap" });
@@ -67,11 +66,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
         />
-        <AuthProvider>
-          <Nav />
-          <main>{children}</main>
-          <Footer />
-        </AuthProvider>
+        <Nav />
+        <main>{children}</main>
+        <Footer />
       </body>
     </html>
   );

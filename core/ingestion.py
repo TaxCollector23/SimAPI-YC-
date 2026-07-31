@@ -822,9 +822,29 @@ class DataIngester:
 
     def _normalize(self, df):
         rename = {}
+        used: set = set()
         for col in df.columns:
             norm = _normalize_col(col)
             canonical = COLUMN_ALIASES.get(norm) or COLUMN_ALIASES.get(col.lower())
-            if canonical and canonical != col:
-                rename[col] = canonical
+            target = canonical if (canonical and canonical != col) else col
+            if target in used:
+                # Renaming this column would collide with another column
+                # already claimed (either an original name or an earlier
+                # rename target) -- e.g. a dataset containing both "Cd" and
+                # "drag_coefficient". Keep this column under its own original
+                # name rather than creating a duplicate column label, which
+                # crashes downstream numeric operations (pandas returns a
+                # DataFrame instead of a Series for a duplicated name).
+                target = col
+            if target in used:
+                # The source data itself already had a literal duplicate
+                # column name before any renaming. Suffix it rather than
+                # silently dropping or corrupting either column.
+                suffix = 2
+                while f"{target}_{suffix}" in used:
+                    suffix += 1
+                target = f"{target}_{suffix}"
+            used.add(target)
+            if target != col:
+                rename[col] = target
         return df.rename(columns=rename), rename

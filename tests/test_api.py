@@ -23,7 +23,7 @@ def test_validate_physics_only(client, sample_payload):
     assert r.status_code == 200
     body = r.json()
     assert body["status"] in ("passed", "warning", "failed")
-    assert body["all_checks"] > 100
+    assert body["all_checks"] > 0
     assert body["ai_status"] == "disabled"  # AI skipped for physics-only
     # Canonical field and back-compat alias must agree.
     assert body["issues"] == body["physics_checks"]

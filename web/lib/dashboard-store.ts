@@ -1,7 +1,8 @@
 /**
- * Per-user dashboard state: API keys.
+ * Local dashboard state: API keys.
  *
- * API keys are shown once at creation and stored only as a SHA-256 hash plus a
+ * No account system -- this is just a per-browser convenience store. API
+ * keys are shown once at creation and stored only as a SHA-256 hash plus a
  * short display prefix — the raw key is never persisted. Validation activity
  * lives in lib/run-history.ts (the source the actual /v1/validate calls write
  * to) — Overview/Analytics/Logs/Request Inspector all read from there.
@@ -17,7 +18,7 @@ export interface ApiKeyRecord {
   lastUsed: number | null;
 }
 
-const keysKey = (uid: string) => `simapi.keys.${uid}`;
+const KEYS_KEY = "simapi.keys.local";
 
 function read<T>(key: string): T[] {
   try {
@@ -31,12 +32,12 @@ function write<T>(key: string, value: T[]) {
 }
 
 // ── API keys ────────────────────────────────────────────────────────────────
-export function listKeys(uid: string): ApiKeyRecord[] {
-  return read<ApiKeyRecord>(keysKey(uid)).sort((a, b) => b.createdAt - a.createdAt);
+export function listKeys(): ApiKeyRecord[] {
+  return read<ApiKeyRecord>(KEYS_KEY).sort((a, b) => b.createdAt - a.createdAt);
 }
 
 /** Create a key. Returns the RAW key exactly once; only its hash is stored. */
-export async function createKey(uid: string, name: string): Promise<{ raw: string; record: ApiKeyRecord }> {
+export async function createKey(name: string): Promise<{ raw: string; record: ApiKeyRecord }> {
   const raw = generateApiKey();
   const record: ApiKeyRecord = {
     id: crypto.randomUUID().slice(0, 8),
@@ -46,23 +47,23 @@ export async function createKey(uid: string, name: string): Promise<{ raw: strin
     createdAt: Date.now(),
     lastUsed: null,
   };
-  const keys = read<ApiKeyRecord>(keysKey(uid));
-  write(keysKey(uid), [...keys, record]);
+  const keys = read<ApiKeyRecord>(KEYS_KEY);
+  write(KEYS_KEY, [...keys, record]);
   return { raw, record };
 }
 
-export function revokeKey(uid: string, id: string) {
-  write(keysKey(uid), read<ApiKeyRecord>(keysKey(uid)).filter((k) => k.id !== id));
+export function revokeKey(id: string) {
+  write(KEYS_KEY, read<ApiKeyRecord>(KEYS_KEY).filter((k) => k.id !== id));
 }
 
 /** Mark the most recently created key as used — called after a real API request. */
-export function touchKey(uid: string) {
-  const keys = read<ApiKeyRecord>(keysKey(uid)).sort((a, b) => b.createdAt - a.createdAt);
+export function touchKey() {
+  const keys = read<ApiKeyRecord>(KEYS_KEY).sort((a, b) => b.createdAt - a.createdAt);
   if (keys.length === 0) return;
-  const all = read<ApiKeyRecord>(keysKey(uid));
+  const all = read<ApiKeyRecord>(KEYS_KEY);
   const idx = all.findIndex((k) => k.id === keys[0].id);
   if (idx >= 0) {
     all[idx].lastUsed = Date.now();
-    write(keysKey(uid), all);
+    write(KEYS_KEY, all);
   }
 }

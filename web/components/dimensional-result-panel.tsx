@@ -37,7 +37,7 @@ function RowFindingCard({ f }: { f: DimensionalRowFinding }) {
       <div className="flex items-center gap-3 px-3 py-2.5">
         {meta.icon}
         <span className="text-xs font-mono text-white/40 shrink-0">row {f.row_index}</span>
-        <span className="flex-1 text-xs text-white/75 leading-snug truncate">{f.reason}</span>
+        <span className="min-w-0 flex-1 text-xs text-white/75 leading-snug truncate">{f.reason}</span>
         <span className="text-[10px] shrink-0 rounded px-1.5 py-0.5 border border-current/20 font-mono opacity-70">
           {f.layer}
         </span>
@@ -60,6 +60,7 @@ function LawCard({ law }: { law: DimensionalLaw }) {
   const kindLabel: Record<string, string> = {
     anchored_constant: "Anchored constant", pi_constant: "Pi law (constant group)",
     bimodal_split: "Bimodal split", temporal_drift: "Temporal drift",
+    systematic_anchor_deviation: "Systematic deviation (all rows, lower confidence)",
   };
   return (
     <div className="rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2.5">
@@ -80,7 +81,15 @@ function LawCard({ law }: { law: DimensionalLaw }) {
   );
 }
 
-export function DimensionalResultPanel({ result }: { result: DimensionalResult }) {
+export function DimensionalResultPanel({
+  result, pendingOverrides = {}, onOverrideChange, onRerun, rerunning = false,
+}: {
+  result: DimensionalResult;
+  pendingOverrides?: Record<string, string>;
+  onOverrideChange?: (column: string, dimensionKey: string) => void;
+  onRerun?: () => void;
+  rerunning?: boolean;
+}) {
   const [rowFilter, setRowFilter] = useState<"all" | DimensionalRowFinding["output_class"]>("all");
   const [showAllRows, setShowAllRows] = useState(false);
   const [showLaws, setShowLaws] = useState(true);
@@ -183,16 +192,55 @@ export function DimensionalResultPanel({ result }: { result: DimensionalResult }
 
       {/* Units resolved */}
       <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
-        <span className="text-xs uppercase tracking-widest text-white/35 mb-3 block">Units resolved (Layer 0)</span>
-        <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
-          {Object.entries(result.units_resolved).map(([col, u]) => (
-            <div key={col} className="rounded-lg border border-white/[0.06] bg-black/20 px-2.5 py-1.5">
-              <p className="text-[11px] font-mono text-white/60 truncate">{col}</p>
-              <p className="text-[10px] text-white/30">
-                {u.unit_label} · {(u.confidence * 100).toFixed(0)}% · {u.source}
-              </p>
-            </div>
-          ))}
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-xs uppercase tracking-widest text-white/35">Units resolved (Layer 0)</span>
+          {Object.keys(pendingOverrides).length > 0 && (
+            <button
+              onClick={onRerun}
+              disabled={rerunning}
+              className="rounded-lg bg-accent-blue/20 px-3 py-1 text-[11px] font-medium text-accent-blue hover:bg-accent-blue/30 disabled:opacity-50"
+            >
+              {rerunning ? "Re-running…" : `Re-run with ${Object.keys(pendingOverrides).length} correction${Object.keys(pendingOverrides).length > 1 ? "s" : ""}`}
+            </button>
+          )}
+        </div>
+        <p className="mb-3 text-[11px] text-white/30">
+          If a column was mapped to the wrong physical quantity (e.g. &ldquo;v&rdquo; guessed as velocity when
+          it&rsquo;s actually volume), correct it below — every downstream check re-runs with your correction.
+        </p>
+        <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+          {Object.entries(result.units_resolved).map(([col, u]) => {
+            const current = pendingOverrides[col] ?? u.mapped_to ?? "";
+            const isOverridden = u.source === "user_override" || col in pendingOverrides;
+            return (
+              <div key={col} className={cn(
+                "rounded-lg border px-2.5 py-1.5",
+                isOverridden ? "border-accent-blue/30 bg-accent-blue/5" : "border-white/[0.06] bg-black/20",
+              )}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="min-w-0 flex-1 truncate text-[11px] font-mono text-white/60">{col}</p>
+                  <p className="shrink-0 text-[10px] text-white/30">{(u.confidence * 100).toFixed(0)}%</p>
+                </div>
+                <select
+                  value={current}
+                  onChange={e => onOverrideChange?.(col, e.target.value)}
+                  disabled={!onOverrideChange}
+                  className={cn(
+                    "mt-1 w-full rounded border bg-black/30 px-1.5 py-1 text-[10px] outline-none",
+                    isOverridden ? "border-accent-blue/40 text-accent-blue" : "border-white/[0.08] text-white/50",
+                  )}
+                >
+                  {!u.mapped_to && <option value="">unresolved — pick one</option>}
+                  {result.available_dimension_keys.map(k => (
+                    <option key={k} value={k}>{k}</option>
+                  ))}
+                </select>
+                <p className="mt-0.5 text-[9px] text-white/25">
+                  {isOverridden ? "user-corrected" : u.source} · {u.unit_label}
+                </p>
+              </div>
+            );
+          })}
         </div>
         {result.units_conflicts.length > 0 && (
           <div className="mt-3 rounded-lg border border-amber-400/20 bg-amber-400/5 px-3 py-2 text-xs text-amber-400/80">

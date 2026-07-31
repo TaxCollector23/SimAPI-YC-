@@ -2,10 +2,11 @@
 /**
  * SimAPI CLI.
  *
- * Zero runtime dependencies (Node 18+ built-ins only). Professional startup
- * banner, browser-based login, and a full command surface:
- *   login · logout · whoami · init · validate · watch · usage ·
- *   api-key {show,rotate,delete} · config [set] · version · help
+ * Zero runtime dependencies (Node 18+ built-ins only). The hosted API is
+ * open by default -- no account or sign-in required. An API key is only
+ * relevant if you're running your own deployment with SIMAPI_API_KEYS set.
+ *   init · validate · watch · usage ·
+ *   api-key {show,set,generate,delete} · config [set] · doctor · version · help
  */
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { watch as fsWatch, existsSync } from "node:fs";
@@ -129,41 +130,6 @@ async function prompt(question) {
 
 // ── Commands ────────────────────────────────────────────────────────────────────
 const commands = {
-  async login() {
-    banner();
-    const url = `${WEB_BASE}/auth?cli=true`;
-    stdout.write(`  Opening your browser to sign in…\n  ${c.cyan(url)}\n\n`);
-    openBrowser(url);
-    stdout.write(c.dim("  Sign in, copy your API key, then paste it below.\n\n"));
-    const key = await prompt("  Paste your SimAPI API key: ");
-    if (!key) return fail("No key entered.");
-    stdout.write("\n  Verifying…\n");
-    const { ok, json } = await api("/auth/verify", { method: "POST", body: { api_key: key } });
-    if (!ok) return fail(`Verification failed: ${json?.error || "invalid key"}`);
-    const cfg = await readConfig();
-    await writeConfig({ ...cfg, apiKey: key, plan: json.plan || "developer", email: json.email || null, verifiedAt: Date.now() });
-    stdout.write(`\n  ${c.green("✓")} Authentication successful.\n  ${c.green("✓")} API key saved securely. ${c.dim(`(${CONFIG_PATH})`)}\n\n`);
-    stdout.write(`  You can now run: ${c.cyan("simapi validate simulation.json")}\n\n`);
-  },
-
-  async logout() {
-    const cfg = await readConfig();
-    delete cfg.apiKey;
-    delete cfg.plan;
-    delete cfg.email;
-    await writeConfig(cfg);
-    ok("Logged out. Local credentials removed.");
-  },
-
-  async whoami() {
-    const cfg = await readConfig();
-    const key = env.SIMAPI_API_KEY || cfg.apiKey;
-    if (!key) return info(`Not logged in. Run ${c.cyan("simapi login")}.`);
-    stdout.write(`\n  ${c.bold("Account")}   ${cfg.email || c.dim("(browser session)")}\n`);
-    stdout.write(`  ${c.bold("Plan")}      ${cfg.plan || "developer"}\n`);
-    stdout.write(`  ${c.bold("API key")}   ${c.cyan(mask(key))}\n\n`);
-  },
-
   async init() {
     const file = "simapi.json";
     if (existsSync(file)) return fail(`${file} already exists.`);
@@ -182,7 +148,6 @@ const commands = {
     const file = args._[0];
     if (!file) return fail(`Usage: ${c.cyan("simapi validate <file>")}`);
     const key = await resolveKey();
-    if (!key) return fail(`Not logged in. Run ${c.cyan("simapi login")} or set SIMAPI_API_KEY.`);
     await runValidation(file, key, args);
   },
 
@@ -190,7 +155,6 @@ const commands = {
     const file = args._[0];
     if (!file) return fail(`Usage: ${c.cyan("simapi watch <file>")}`);
     const key = await resolveKey();
-    if (!key) return fail(`Not logged in. Run ${c.cyan("simapi login")} first.`);
     if (!existsSync(file)) return fail(`File not found: ${file}`);
     stdout.write(`\n  ${c.cyan("watching")} ${file} — re-validates on change. ${c.dim("Ctrl-C to stop.")}\n`);
     await runValidation(file, key, args);
@@ -231,16 +195,22 @@ const commands = {
     const sub = args._[0];
     const key = await resolveKey();
     if (sub === "show") {
-      if (!key) return info("No API key configured. Run simapi login.");
+      if (!key) return info("No API key configured. The hosted API doesn't require one.");
       return info(`Active key: ${c.cyan(mask(key))}`);
     }
-    if (sub === "rotate") {
-      if (!key) return fail("Nothing to rotate — run simapi login first.");
-      const { ok: good, json } = await api("/auth/rotate", { method: "POST", body: { api_key: key } });
-      if (!good) return fail(`Rotate failed: ${json?.error || "server error"}`);
+    if (sub === "generate") {
+      const { ok: good, json } = await api("/v1/keys/generate", { method: "POST", body: { label: args._[1] || "CLI" } });
+      if (!good) return fail(`Key generation failed: ${json?.error || "server error"}`);
       const cfg = await readConfig();
       await writeConfig({ ...cfg, apiKey: json.api_key });
-      return ok(`New key issued: ${c.cyan(mask(json.api_key))} ${c.dim("(previous key invalidated)")}`);
+      return ok(`New key issued and saved: ${c.cyan(mask(json.api_key))}`);
+    }
+    if (sub === "set") {
+      const value = args._[1];
+      if (!value) return fail(`Usage: ${c.cyan("simapi api-key set <key>")}`);
+      const cfg = await readConfig();
+      await writeConfig({ ...cfg, apiKey: value });
+      return ok(`API key saved: ${c.cyan(mask(value))}`);
     }
     if (sub === "delete") {
       const cfg = await readConfig();
@@ -248,7 +218,7 @@ const commands = {
       await writeConfig(cfg);
       return ok("API key deleted from this machine.");
     }
-    return fail(`Usage: ${c.cyan("simapi api-key <show|rotate|delete>")}`);
+    return fail(`Usage: ${c.cyan("simapi api-key <show|generate|set|delete>")}`);
   },
 
   async config(args) {
@@ -266,7 +236,7 @@ const commands = {
     if (shown.apiKey) shown.apiKey = mask(shown.apiKey);
     stdout.write(`\n  ${c.bold("Configuration")} ${c.dim(`(${CONFIG_PATH})`)}\n`);
     const keys = Object.keys(shown);
-    if (keys.length === 0) stdout.write(c.dim("  (empty — run simapi login)\n"));
+    if (keys.length === 0) stdout.write(c.dim("  (empty — nothing configured yet)\n"));
     for (const k of keys) row(k, String(shown[k]));
     stdout.write("\n");
   },
@@ -308,10 +278,7 @@ const commands = {
 
     const key = await resolveKey();
     if (key) ok(`API key configured (${mask(key)})`);
-    else {
-      stdout.write(`  ${c.amber("⚠")} No API key configured\n    ${c.dim("fix: simapi login")}\n`);
-      problems++;
-    }
+    else stdout.write(`  ${c.dim("·")} No API key configured — not required for the hosted API. ${c.dim("(simapi api-key generate)")}\n`);
 
     try {
       const t = Date.now();
@@ -555,19 +522,16 @@ function renderReport(r, file, simType) {
 
 // ── Help ──────────────────────────────────────────────────────────────────────
 const HELP = {
-  login: { usage: "simapi login", desc: "Authenticate via the browser and save your API key.", ex: ["simapi login"] },
-  logout: { usage: "simapi logout", desc: "Remove locally stored credentials." },
-  whoami: { usage: "simapi whoami", desc: "Show the authenticated account, plan, and masked API key." },
   init: { usage: "simapi init", desc: "Create a simapi.json config in the current project." },
   validate: { usage: "simapi validate <file>", desc: "Validate a .json or .txt simulation file and print the report. Plain-text/log files are converted to JSON with AI.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--no-ai", "skip the AI second pass"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate simulations.txt --type aerodynamics", "simapi validate run.json --fail-on warning"] },
   domains: { usage: "simapi domains", desc: "List the supported simulation types." },
-  doctor: { usage: "simapi doctor [--fix]", desc: "Diagnose config, credentials, connectivity, and project setup." },
+  doctor: { usage: "simapi doctor [--fix]", desc: "Diagnose config, connectivity, and project setup." },
   explain: { usage: "simapi explain", desc: "Explain the issues from the most recent validation run in detail." },
   repair: { usage: "simapi repair <file> [--apply]", desc: "Preview or apply automatic structural repairs to a data file.", ex: ["simapi repair simulation.json", "simapi repair simulation.json --apply"] },
   open: { usage: "simapi open", desc: "Open the SimAPI dashboard in your browser." },
   watch: { usage: "simapi watch <file>", desc: "Re-run validation automatically whenever the file changes.", ex: ["simapi watch simulation.json"] },
   usage: { usage: "simapi usage", desc: "Show requests today/this month, remaining quota, and average time." },
-  "api-key": { usage: "simapi api-key <show|rotate|delete>", desc: "Manage your API key.", ex: ["simapi api-key show", "simapi api-key rotate", "simapi api-key delete"] },
+  "api-key": { usage: "simapi api-key <show|generate|set|delete>", desc: "The hosted API needs no key. Only relevant for your own deployment.", ex: ["simapi api-key generate", "simapi api-key set <key>", "simapi api-key show"] },
   config: { usage: "simapi config [set <key> <value>]", desc: "Show or update CLI configuration.", ex: ["simapi config", "simapi config set fail_on warning"] },
   version: { usage: "simapi version", desc: "Print the installed CLI version." },
   help: { usage: "simapi help", desc: "Show all commands." },
@@ -578,17 +542,14 @@ function printHelp() {
   stdout.write(`  ${c.bold("Usage")}\n    simapi ${c.dim("<command> [options]")}\n\n`);
   stdout.write(`  ${c.bold("Commands")}\n`);
   const items = [
-    ["login", "Authenticate and save your API key"],
-    ["logout", "Remove stored credentials"],
-    ["whoami", "Show account, plan, and masked key"],
     ["init", "Create a simapi.json config"],
     ["validate <file>", "Validate a .json or .txt simulation file"],
     ["watch <file>", "Re-validate on file change"],
     ["domains", "List supported simulation types"],
     ["usage", "Show API usage statistics"],
-    ["api-key <cmd>", "show · rotate · delete"],
+    ["api-key <cmd>", "show · generate · set · delete (optional -- no account needed)"],
     ["config [set]", "Show or update configuration"],
-    ["doctor [--fix]", "Diagnose config, auth, and connectivity"],
+    ["doctor [--fix]", "Diagnose config and connectivity"],
     ["explain", "Explain the last validation run in detail"],
     ["repair <file> [--apply]", "Preview or apply automatic repairs"],
     ["open", "Open the dashboard in your browser"],

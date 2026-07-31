@@ -5,14 +5,13 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Play, RefreshCw, Loader2, CheckCircle, XCircle,
   AlertTriangle, ChevronDown, ChevronUp, Key, Copy,
-  Check, Plus, Trash2, Info, Sparkles, Timer,
+  Check, Plus, Trash2, Info, Sparkles, Timer, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PreflightPanel } from "./preflight-panel";
 import { HistoryPanel } from "./history-panel";
 import { DimensionalResultPanel } from "./dimensional-result-panel";
 import { recordRun } from "@/lib/run-history";
-import { useAuth } from "@/lib/auth";
 import { touchKey } from "@/lib/dashboard-store";
 import {
   validate, runDemo, validateDimensional, pollAI, generateKey,
@@ -112,18 +111,114 @@ const SIM_TYPES: { value: string; label: string; conditions: { key: string; labe
       { yield_strength: 600e6, tensile_strength: 400e6, elastic_modulus: 200e9, poisson_ratio: 0.30, hardness: 195, fracture_toughness: 52e6, grain_size: 0.015, thermal_conductivity: 50, thermal_expansion: 12e-6 },
     ],
   },
-  { value: "acoustics",        label: "Acoustics",        conditions: [{ key: "frequency", label: "Center frequency", unit: "Hz",  default: 1000 }], example: [] },
-  { value: "electromagnetics", label: "Electromagnetics",  conditions: [{ key: "frequency", label: "Frequency",        unit: "Hz",  default: 1e9  }], example: [] },
-  { value: "geomechanics",     label: "Geomechanics",      conditions: [{ key: "depth",     label: "Depth below surface", unit: "m", default: 10 }], example: [] },
-  { value: "biomechanics",     label: "Biomechanics",      conditions: [{ key: "body_mass", label: "Subject mass",    unit: "kg",  default: 70   }], example: [] },
-  { value: "nuclear",          label: "Nuclear",           conditions: [{ key: "power",     label: "Reactor power",  unit: "MW",  default: 1000 }], example: [] },
-  { value: "plasma",           label: "Plasma Physics",    conditions: [{ key: "magnetic_field", label: "B field", unit: "T",    default: 5    }], example: [] },
-  { value: "chemical",         label: "Chemical Reactor",  conditions: [{ key: "temperature", label: "Reactor T",  unit: "K",    default: 350  }, { key: "pressure", label: "Pressure", unit: "Pa", default: 101325 }], example: [] },
-  { value: "hydrodynamics",    label: "Hydrodynamics",     conditions: [{ key: "water_depth", label: "Water depth", unit: "m",   default: 100  }], example: [] },
-  { value: "meteorology",      label: "Meteorology",       conditions: [{ key: "altitude",  label: "Altitude",      unit: "m",   default: 0    }], example: [] },
-  { value: "tribology",        label: "Tribology",         conditions: [{ key: "load",      label: "Normal load",   unit: "N",   default: 100  }, { key: "sliding_speed", label: "Sliding speed", unit: "m/s", default: 1 }], example: [] },
-  { value: "aeroelasticity",   label: "Aeroelasticity",    conditions: [{ key: "velocity",  label: "Flight speed",  unit: "m/s", default: 100  }], example: [] },
-  { value: "cryogenics",       label: "Cryogenics",        conditions: [{ key: "temperature", label: "Operating T", unit: "K",   default: 4.2  }], example: [] },
+  {
+    value: "acoustics", label: "Acoustics",
+    conditions: [{ key: "frequency", label: "Center frequency", unit: "Hz", default: 1000 }],
+    example: [
+      { frequency: 1000, wavelength: 0.343, sound_speed: 343, sound_pressure: 2.0, intensity_level: 94 },
+      { frequency: 2000, wavelength: 0.1715, sound_speed: 343, sound_pressure: 1.8, intensity_level: 93 },
+      { frequency: 500, wavelength: 0.686, sound_speed: 343, sound_pressure: 2.2, intensity_level: 95 },
+    ],
+  },
+  {
+    value: "electromagnetics", label: "Electromagnetics",
+    conditions: [{ key: "frequency", label: "Frequency", unit: "Hz", default: 1e9 }],
+    example: [
+      { frequency: 1e9, wavelength: 0.2998, electric_field: 10, magnetic_field: 3.34e-8, power: 5 },
+      { frequency: 2.4e9, wavelength: 0.12492, electric_field: 12, magnetic_field: 4.0e-8, power: 6 },
+      { frequency: 5.8e9, wavelength: 0.05169, electric_field: 15, magnetic_field: 5.0e-8, power: 8 },
+    ],
+  },
+  {
+    value: "geomechanics", label: "Geomechanics",
+    conditions: [{ key: "depth", label: "Depth below surface", unit: "m", default: 10 }],
+    example: [
+      { depth: 100, density: 2500, vertical_stress: 2452000, pore_pressure: 980665, friction_angle: 32 },
+      { depth: 150, density: 2500, vertical_stress: 3678000, pore_pressure: 1470998, friction_angle: 32 },
+      { depth: 50, density: 2500, vertical_stress: 1226000, pore_pressure: 490333, friction_angle: 33 },
+    ],
+  },
+  {
+    value: "biomechanics", label: "Biomechanics",
+    conditions: [{ key: "body_mass", label: "Subject mass", unit: "kg", default: 70 }],
+    example: [
+      { body_mass: 70, ground_reaction_force: 686.47, joint_velocity: 2.0, joint_angle: 0.5, muscle_force: 450 },
+      { body_mass: 75, ground_reaction_force: 735.5, joint_velocity: 2.2, joint_angle: 0.55, muscle_force: 480 },
+      { body_mass: 65, ground_reaction_force: 637.4, joint_velocity: 1.8, joint_angle: 0.45, muscle_force: 410 },
+    ],
+  },
+  {
+    value: "nuclear", label: "Nuclear",
+    conditions: [{ key: "power", label: "Reactor power", unit: "MW", default: 1000 }],
+    example: [
+      { reactor_power: 3000e6, coolant_temperature: 600, coolant_pressure: 15.5e6, coolant_flow_rate: 20000, neutron_flux: 3e13 },
+      { reactor_power: 2950e6, coolant_temperature: 598, coolant_pressure: 15.4e6, coolant_flow_rate: 19800, neutron_flux: 2.95e13 },
+      { reactor_power: 3050e6, coolant_temperature: 602, coolant_pressure: 15.6e6, coolant_flow_rate: 20200, neutron_flux: 3.05e13 },
+    ],
+  },
+  {
+    value: "plasma", label: "Plasma Physics",
+    conditions: [{ key: "magnetic_field", label: "B field", unit: "T", default: 5 }],
+    example: [
+      { electron_density: 1e20, temperature: 1e7, plasma_pressure: 13806.49, magnetic_field: 5.0, beta: 0.05 },
+      { electron_density: 1.1e20, temperature: 1e7, plasma_pressure: 15187.14, magnetic_field: 5.0, beta: 0.055 },
+      { electron_density: 0.9e20, temperature: 1e7, plasma_pressure: 12425.84, magnetic_field: 5.0, beta: 0.045 },
+    ],
+  },
+  {
+    value: "chemical", label: "Chemical Reactor",
+    conditions: [{ key: "temperature", label: "Reactor T", unit: "K", default: 350 }, { key: "pressure", label: "Pressure", unit: "Pa", default: 101325 }],
+    example: [
+      { temperature: 350, concentration: 10, pressure: 29100.75, reaction_rate: 0.045, conversion: 0.82 },
+      { temperature: 355, concentration: 10, pressure: 29516.48, reaction_rate: 0.048, conversion: 0.84 },
+      { temperature: 345, concentration: 10, pressure: 28685.03, reaction_rate: 0.042, conversion: 0.80 },
+    ],
+  },
+  {
+    value: "hydrodynamics", label: "Hydrodynamics",
+    conditions: [{ key: "water_depth", label: "Water depth", unit: "m", default: 100 }],
+    example: [
+      { water_depth: 50, density: 998, pressure: 489271.9, flow_velocity: 1.5, froude_number: 0.21 },
+      { water_depth: 75, density: 998, pressure: 733907.9, flow_velocity: 1.3, froude_number: 0.15 },
+      { water_depth: 25, density: 998, pressure: 244635.9, flow_velocity: 1.8, froude_number: 0.36 },
+    ],
+  },
+  {
+    value: "meteorology", label: "Meteorology",
+    conditions: [{ key: "altitude", label: "Altitude", unit: "m", default: 0 }],
+    example: [
+      { altitude: 0, temperature: 288.15, pressure: 101325, humidity: 0.6, wind_speed: 5 },
+      { altitude: 1000, temperature: 281.65, pressure: 89876, humidity: 0.55, wind_speed: 8 },
+      { altitude: 2000, temperature: 275.15, pressure: 79501, humidity: 0.5, wind_speed: 12 },
+    ],
+  },
+  {
+    value: "tribology", label: "Tribology",
+    conditions: [{ key: "load", label: "Normal load", unit: "N", default: 100 }, { key: "sliding_speed", label: "Sliding speed", unit: "m/s", default: 1 }],
+    example: [
+      { load: 100, sliding_speed: 1.0, friction_coefficient: 0.3, friction_force: 30, wear_rate: 1.2e-6 },
+      { load: 150, sliding_speed: 1.2, friction_coefficient: 0.3, friction_force: 45, wear_rate: 1.5e-6 },
+      { load: 80, sliding_speed: 0.8, friction_coefficient: 0.3, friction_force: 24, wear_rate: 1.0e-6 },
+    ],
+  },
+  {
+    value: "aeroelasticity", label: "Aeroelasticity",
+    conditions: [{ key: "velocity", label: "Flight speed", unit: "m/s", default: 100 }],
+    example: [
+      { velocity: 100, density: 1.225, dynamic_pressure: 6125, wing_deflection: 0.08, natural_frequency: 12.5 },
+      { velocity: 120, density: 1.225, dynamic_pressure: 8820, wing_deflection: 0.11, natural_frequency: 12.3 },
+      { velocity: 80, density: 1.225, dynamic_pressure: 3920, wing_deflection: 0.05, natural_frequency: 12.6 },
+    ],
+  },
+  {
+    value: "cryogenics", label: "Cryogenics",
+    conditions: [{ key: "temperature", label: "Operating T", unit: "K", default: 4.2 }],
+    example: [
+      { temperature: 77, pressure: 101325, heat_load: 50, boil_off_rate: 0.02 },
+      { temperature: 80, pressure: 105000, heat_load: 55, boil_off_rate: 0.023 },
+      { temperature: 75, pressure: 98000, heat_load: 47, boil_off_rate: 0.018 },
+    ],
+  },
 ];
 
 function fmtN(n: number | null | undefined): string {
@@ -161,7 +256,7 @@ function IssueRow({ issue }: { issue: Issue & { human_name?: string } }) {
         <span className={cn("text-sm shrink-0", fail ? "text-red-400" : "text-amber-400")}>
           {fail ? "✗" : "⚠"}
         </span>
-        <span className="flex-1 text-xs text-white/75 font-medium leading-snug">{name}</span>
+        <span className="min-w-0 flex-1 text-xs text-white/75 font-medium leading-snug">{name}</span>
         <span className={cn("text-[10px] shrink-0 rounded px-1.5 py-0.5 border font-mono",
           fail ? "border-red-400/20 text-red-400/60" : "border-amber-400/20 text-amber-400/60")}>
           {issue.category}
@@ -204,7 +299,6 @@ function AiProgressBar({ budgetMs = 18000 }: { budgetMs?: number }) {
 }
 
 export function ValidationDashboard() {
-  const { user } = useAuth();
   const simConfig  = SIM_TYPES[0];
   const [selectedSim, setSelectedSim] = useState(simConfig);
   const [conditions, setConditions]   = useState<Record<string, number>>(
@@ -216,6 +310,18 @@ export function ValidationDashboard() {
   const [engineMode, setEngineMode] = useState<"legacy"|"dimensional">("legacy");
   const [result,    setResult]      = useState<ValidationResult | null>(null);
   const [dimResult, setDimResult]   = useState<DimensionalResult | null>(null);
+  const [unitOverrides, setUnitOverrides] = useState<Record<string, string>>({});
+  const [rerunning, setRerunning] = useState(false);
+  const [customConditions, setCustomConditions] = useState<{ key: string; label: string; unit: string }[]>([]);
+  const [newCondKey, setNewCondKey] = useState("");
+  const [sweepKey, setSweepKey] = useState<string | null>(null);
+  const [sweepMin, setSweepMin] = useState(0);
+  const [sweepMax, setSweepMax] = useState(10);
+  const [sweepSteps, setSweepSteps] = useState(5);
+  const [sweeping, setSweeping] = useState(false);
+  const [sweepResults, setSweepResults] = useState<
+    { value: number; status: string; trials_excluded: number; n_impossible: number; n_inconsistent: number }[] | null
+  >(null);
   const [error,     setError]       = useState<string | null>(null);
   const [serverUp,  setServerUp]    = useState<boolean | null>(null);
   const [showAll,   setShowAll]     = useState(false);
@@ -274,6 +380,7 @@ export function ValidationDashboard() {
   async function run(demo = false) {
     if (!serverUp) { setError("API server offline. Run: python launch.py"); return; }
     stopPoll(); setPhase("running"); setError(null); setResult(null); setDimResult(null); setShowAll(false);
+    setUnitOverrides({});
     try {
       if (engineMode === "dimensional") {
         let data: Record<string, unknown>[];
@@ -284,7 +391,7 @@ export function ValidationDashboard() {
           catch { throw new Error("Invalid JSON. Check your input above."); }
           if (!Array.isArray(data)) throw new Error("Input must be a JSON array: [{...}, {...}, ...]");
         }
-        const dres = await validateDimensional(data, conditions);
+        const dres = await validateDimensional(data, conditions, unitOverrides);
         setDimResult(dres); setPhase("done");
         return;
       }
@@ -309,11 +416,79 @@ export function ValidationDashboard() {
         issues: (res.issues ?? []).map((i) => ({ name: i.name, human_name: i.human_name ?? i.name, status: i.status })),
         raw: res,
       });
-      if (user && apiKey !== DEMO_KEY) touchKey(user.uid);
+      if (apiKey !== DEMO_KEY) touchKey();
       if (res.job_id) startPoll(res.job_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
+    }
+  }
+
+  function stageUnitOverride(column: string, dimensionKey: string) {
+    setUnitOverrides(prev => ({ ...prev, [column]: dimensionKey }));
+  }
+
+  function addCondition() {
+    const label = newCondKey.trim();
+    if (!label) return;
+    const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    if (!key || conditions[key] !== undefined) { setNewCondKey(""); return; }
+    setCustomConditions(prev => [...prev, { key, label, unit: "" }]);
+    setConditions(prev => ({ ...prev, [key]: 0 }));
+    setNewCondKey("");
+  }
+
+  function removeCondition(key: string) {
+    setCustomConditions(prev => prev.filter(c => c.key !== key));
+    setConditions(prev => { const next = { ...prev }; delete next[key]; return next; });
+    if (sweepKey === key) setSweepKey(null);
+  }
+
+  async function runSweep() {
+    if (!sweepKey) return;
+    setSweeping(true); setSweepResults(null); setError(null);
+    try {
+      let data: Record<string, unknown>[];
+      try { data = JSON.parse(rawInput); }
+      catch { throw new Error("Invalid JSON. Check your input above."); }
+      const n = Math.max(2, sweepSteps);
+      const points = Array.from({ length: n }, (_, i) => sweepMin + (sweepMax - sweepMin) * i / (n - 1));
+      const results: { value: number; status: string; trials_excluded: number; n_impossible: number; n_inconsistent: number }[] = [];
+      for (const value of points) {
+        const sweepConditions = { ...conditions, [sweepKey]: value };
+        if (engineMode === "dimensional") {
+          const dres = await validateDimensional(data, sweepConditions, unitOverrides);
+          results.push({
+            value, status: dres.training_ready ? "passed" : "failed",
+            trials_excluded: dres.n_impossible + dres.n_unsuitable_for_training,
+            n_impossible: dres.n_impossible, n_inconsistent: dres.n_inconsistent,
+          });
+        } else {
+          const res = await validate({ data, simulation_type: selectedSim.value, conditions: sweepConditions, run_ai: false }, apiKey);
+          results.push({ value, status: res.status, trials_excluded: res.trials_excluded, n_impossible: 0, n_inconsistent: 0 });
+        }
+      }
+      setSweepResults(results);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSweeping(false);
+    }
+  }
+
+  async function rerunWithCorrections() {
+    if (Object.keys(unitOverrides).length === 0) return;
+    setRerunning(true); setError(null);
+    try {
+      let data: Record<string, unknown>[];
+      try { data = JSON.parse(rawInput); }
+      catch { throw new Error("Invalid JSON. Check your input above."); }
+      const dres = await validateDimensional(data, conditions, unitOverrides);
+      setDimResult(dres);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRerunning(false);
     }
   }
 
@@ -351,7 +526,7 @@ export function ValidationDashboard() {
             </span>
           ) : result && "engine" in result && (
             <span className="rounded-full border border-accent-cyan/30 bg-accent-cyan/5 px-2.5 py-1.5 text-[10px] text-accent-cyan">
-              {String((result as Record<string, unknown>).engine) === "python-1700-checks" ? "Full engine (1700+ checks)" : "Lite engine (20 checks)"}
+              {String((result as Record<string, unknown>).engine) === "python-dimensional" ? "Standard report (dimensional engine)" : "Lite engine (20 checks)"}
             </span>
           )}
         </div>
@@ -376,15 +551,15 @@ export function ValidationDashboard() {
       <div className="grid gap-6 lg:grid-cols-[400px_1fr]">
 
         {/* ── LEFT: Controls ── */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
 
           {/* Engine selector */}
           <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
             <label className="text-xs uppercase tracking-widest text-white/35 block mb-2">Validation Engine</label>
             <div className="flex gap-1 rounded-xl border border-white/[0.06] bg-black/20 p-1">
               {([
-                ["legacy", "Full engine (1700+ checks)"],
-                ["dimensional", "Dimensional analysis (new)"],
+                ["legacy", "Standard report"],
+                ["dimensional", "Detailed layers (raw)"],
               ] as const).map(([id, label]) => (
                 <button key={id} onClick={() => { setEngineMode(id); setPhase("idle"); setResult(null); setDimResult(null); }}
                   className={cn("flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
@@ -395,8 +570,8 @@ export function ValidationDashboard() {
             </div>
             <p className="mt-2 text-[10px] text-white/25 leading-relaxed">
               {engineMode === "dimensional"
-                ? "~25 rules: units resolution, Pi-group discovery, anchored physical constants, and a response-surface residual layer — replaces per-column checks with dimensional analysis."
-                : "The deterministic, hand-written check engine with the published 99%+ precision benchmark, plus an AI second pass."}
+                ? "~25 rules: units resolution, Pi-group discovery, anchored physical constants, and a response-surface residual layer — replaces per-column checks with dimensional analysis. Shows every layer's raw findings."
+                : "The same dimensional-analysis engine, summarized into the CLI/SDK-compatible report shape (status, issues, exclusions), plus an AI second pass."}
             </p>
           </div>
 
@@ -412,30 +587,106 @@ export function ValidationDashboard() {
             </select>
           </div>
 
-          {/* Dynamic conditions */}
-          {selectedSim.conditions.length > 0 && (
-            <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
-              <label className="text-xs uppercase tracking-widest text-white/35 block mb-3">
-                Simulation Conditions
-              </label>
-              <div className="space-y-2.5">
-                {selectedSim.conditions.map(c => (
-                  <div key={c.key}>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs text-white/50">{c.label}</label>
+          {/* Dynamic conditions -- always shown now: even domains with no
+              predefined conditions can have custom ones added. */}
+          <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-4">
+            <label className="text-xs uppercase tracking-widest text-white/35 block mb-3">
+              Simulation Conditions
+            </label>
+            <div className="space-y-2.5">
+              {[...selectedSim.conditions, ...customConditions].map(c => (
+                <div key={c.key}>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="min-w-0 flex-1 truncate text-xs text-white/50">{c.label}</label>
+                    <div className="flex shrink-0 items-center gap-2">
                       {c.unit && <span className="text-[10px] text-white/25 font-mono">{c.unit}</span>}
+                      <button
+                        onClick={() => setSweepKey(k => k === c.key ? null : c.key)}
+                        className={cn("rounded px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide",
+                          sweepKey === c.key ? "bg-accent-blue/25 text-accent-blue" : "bg-white/[0.06] text-white/35 hover:text-white/60")}
+                        title="Sweep this condition across a range"
+                      >
+                        sweep
+                      </button>
+                      <button onClick={() => removeCondition(c.key)} className="text-white/25 hover:text-red-400" title="Remove condition">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
+                  </div>
+                  {sweepKey === c.key ? (
+                    <div className="grid grid-cols-3 gap-1.5">
+                      <input type="number" value={sweepMin} onChange={e => setSweepMin(parseFloat(e.target.value) || 0)}
+                        placeholder="min" className="w-full bg-black/30 border border-accent-blue/30 rounded-lg px-2 py-2 text-xs text-white/70 outline-none" />
+                      <input type="number" value={sweepMax} onChange={e => setSweepMax(parseFloat(e.target.value) || 0)}
+                        placeholder="max" className="w-full bg-black/30 border border-accent-blue/30 rounded-lg px-2 py-2 text-xs text-white/70 outline-none" />
+                      <input type="number" min={2} value={sweepSteps} onChange={e => setSweepSteps(parseInt(e.target.value) || 2)}
+                        placeholder="steps" className="w-full bg-black/30 border border-accent-blue/30 rounded-lg px-2 py-2 text-xs text-white/70 outline-none" />
+                    </div>
+                  ) : (
                     <input
                       type="number"
-                      value={conditions[c.key] ?? c.default}
-                      onChange={e => setConditions(prev => ({ ...prev, [c.key]: parseFloat(e.target.value) || c.default }))}
+                      value={conditions[c.key] ?? 0}
+                      onChange={e => setConditions(prev => ({ ...prev, [c.key]: parseFloat(e.target.value) || 0 }))}
                       className="w-full bg-black/30 border border-white/[0.08] rounded-lg px-3 py-2 text-sm text-white/70 outline-none focus:border-accent-blue/40 transition-colors"
                     />
-                  </div>
-                ))}
-              </div>
+                  )}
+                </div>
+              ))}
             </div>
-          )}
+
+            {/* Add a new condition */}
+            <div className="mt-3 flex gap-1.5">
+              <input
+                type="text" value={newCondKey} onChange={e => setNewCondKey(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") addCondition(); }}
+                placeholder="Add a condition (e.g. ambient_pressure)"
+                className="w-full bg-black/20 border border-white/[0.06] rounded-lg px-3 py-1.5 text-xs text-white/60 outline-none focus:border-accent-blue/40"
+              />
+              <button onClick={addCondition} className="shrink-0 rounded-lg bg-white/[0.06] px-3 py-1.5 text-xs text-white/50 hover:bg-white/[0.1] hover:text-white/80">
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            {sweepKey && (
+              <button
+                onClick={runSweep}
+                disabled={sweeping}
+                className="mt-3 w-full rounded-lg bg-accent-blue/20 px-3 py-2 text-xs font-medium text-accent-blue hover:bg-accent-blue/30 disabled:opacity-50"
+              >
+                {sweeping ? "Running sweep…" : `Run sweep: ${sweepSteps} points from ${sweepMin} to ${sweepMax}`}
+              </button>
+            )}
+
+            {sweepResults && (
+              <div className="mt-3 overflow-hidden rounded-lg border border-white/[0.08]">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="border-b border-white/[0.08] bg-white/[0.02] text-white/40">
+                      <th className="p-1.5 text-left font-medium">{sweepKey}</th>
+                      <th className="p-1.5 text-left font-medium">Status</th>
+                      <th className="p-1.5 text-left font-medium">Excluded</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sweepResults.map((r, i) => (
+                      <tr key={i} className="border-b border-white/[0.04] last:border-0">
+                        <td className="p-1.5 font-mono text-white/60">{r.value.toFixed(3)}</td>
+                        <td className={cn("p-1.5 font-medium",
+                          r.status === "passed" ? "text-pass" : r.status === "warning" ? "text-amber-400" : "text-red-400")}>
+                          {r.status}
+                        </td>
+                        <td className="p-1.5 text-white/50">{r.trials_excluded}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="border-t border-white/[0.08] bg-black/20 p-1.5 text-[10px] text-white/25">
+                  Each row re-ran the same dataset with {sweepKey} set to that value — a sweep shows how sensitive
+                  the validation is to that condition, not just a single spot-check.
+                </p>
+              </div>
+            )}
+          </div>
 
           {/* API key */}
           {engineMode === "legacy" && (
@@ -451,7 +702,7 @@ export function ValidationDashboard() {
               </button>
             </div>
             <div className="flex items-center gap-2">
-              <code className="flex-1 truncate rounded-lg bg-black/30 border border-white/[0.06] px-3 py-2 font-mono text-xs text-white/55">
+              <code className="min-w-0 flex-1 truncate rounded-lg bg-black/30 border border-white/[0.06] px-3 py-2 font-mono text-xs text-white/55">
                 {apiKey}
               </code>
               <button onClick={() => { navigator.clipboard.writeText(apiKey); setCopied(true); setTimeout(()=>setCopied(false),1800); }}
@@ -512,7 +763,7 @@ export function ValidationDashboard() {
         </div>
 
         {/* ── RIGHT: Results ── */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
 
           {/* Idle */}
           {phase === "idle" && (
@@ -524,7 +775,7 @@ export function ValidationDashboard() {
               <p className="text-xs text-white/20 mt-1.5">
                 {engineMode === "dimensional"
                   ? "Units resolution · Pi-group discovery · anchored constants · results in seconds"
-                  : "1700+ physics checks · AI reasoning · results in seconds"}
+                  : "Dimensional-analysis engine · AI reasoning · results in seconds"}
               </p>
             </div>
           )}
@@ -556,7 +807,13 @@ export function ValidationDashboard() {
           <AnimatePresence>
             {phase === "done" && engineMode === "dimensional" && dimResult && (
               <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
-                <DimensionalResultPanel result={dimResult} />
+                <DimensionalResultPanel
+                  result={dimResult}
+                  pendingOverrides={unitOverrides}
+                  onOverrideChange={stageUnitOverride}
+                  onRerun={rerunWithCorrections}
+                  rerunning={rerunning}
+                />
               </motion.div>
             )}
             {phase === "done" && engineMode === "legacy" && result && (
@@ -572,6 +829,10 @@ export function ValidationDashboard() {
                       <span className="capitalize">{result.confidence} confidence</span>
                     </div>
                   </div>
+
+                  {result.plain_summary && (
+                    <p className="mb-5 text-sm leading-relaxed text-white/70">{result.plain_summary}</p>
+                  )}
 
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {[
@@ -603,6 +864,35 @@ export function ValidationDashboard() {
                     </p>
                   </div>
                 </div>
+
+                {/* Concrete fixes -- plain language, specific to this dataset */}
+                {result.concrete_fixes && result.concrete_fixes.length > 0 && (
+                  <div className="rounded-2xl border border-accent-blue/20 bg-accent-blue/[0.04] p-5">
+                    <p className="mb-3 text-xs uppercase tracking-widest text-accent-blue/70">What to do about it</p>
+                    <ul className="space-y-2">
+                      {result.concrete_fixes.map((fix, i) => (
+                        <li key={i} className="flex gap-2 text-sm leading-relaxed text-white/70">
+                          <span className="mt-0.5 shrink-0 text-accent-blue">→</span>
+                          <span>{fix}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Statistics, in plain English */}
+                {result.statistics_plain && result.statistics_plain.length > 0 && (
+                  <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">
+                    <p className="mb-3 text-xs uppercase tracking-widest text-white/30">
+                      What your data looks like (no stats background needed)
+                    </p>
+                    <ul className="space-y-1.5">
+                      {result.statistics_plain.map((line, i) => (
+                        <li key={i} className="text-xs leading-relaxed text-white/55">{line}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
 
                 {/* Check bar */}
                 <div className="rounded-2xl border border-white/[0.08] bg-ink-900/60 p-5">

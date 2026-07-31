@@ -74,6 +74,8 @@ export interface ValidationResult {
   job_id: string;
   status: "passed" | "warning" | "failed";
   confidence: "high" | "medium" | "low";
+  plain_summary?: string;
+  concrete_fixes?: string[];
   trials_submitted: number;
   trials_valid: number;
   trials_excluded: number;
@@ -88,6 +90,7 @@ export interface ValidationResult {
   issues: Issue[];
   exclusions: Exclusion[];
   statistics: Record<string, Stat>;
+  statistics_plain?: string[];
   checks_by_category: Record<string, { passed: number; warning: number; failed: number }>;
   columns_renamed: Record<string, string>;
   ai: AIResult | null;
@@ -152,9 +155,10 @@ export interface DimensionalRowFinding {
 }
 export interface DimensionalUnitColumn {
   confidence: number;
-  source: "dictionary" | "llm" | "unresolved";
+  source: "dictionary" | "llm" | "unresolved" | "user_override";
   usable: boolean;
   unit_label: string;
+  mapped_to: string | null;
 }
 export interface DimensionalUnitsConflict {
   column: string;
@@ -195,18 +199,20 @@ export interface DimensionalResult {
   suppressions: string[];
   known_impossible: string;
   columns_renamed: Record<string, string>;
+  available_dimension_keys: string[];
   processing_ms?: number;
 }
 
 export async function validateDimensional(
   data: Record<string, unknown>[],
   conditions: Record<string, number> = {},
+  unitOverrides?: Record<string, string>,
 ): Promise<DimensionalResult> {
   const t0 = performance.now();
   const r = await fetch(`${API_BASE}/v1/validate/dimensional`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data, conditions }),
+    body: JSON.stringify({ data, conditions, unit_overrides: unitOverrides }),
   });
   const json = await r.json();
   if (!r.ok) throw new Error(json?.error?.message ?? r.statusText);

@@ -81,6 +81,7 @@ BASE_DIMENSIONS: dict[str, Dim] = {
     "entropy": dim(m=1, l=2, t=-2, theta=-1),
     "heat_flux": dim(m=1, t=-3),
     "voltage": dim(m=1, l=2, t=-3, i=-1),
+    "electric_field": dim(m=1, l=1, t=-3, i=-1),  # V/m = voltage / length
     "resistance": dim(m=1, l=2, t=-3, i=-2),
     "capacitance": dim(m=-1, l=-2, t=4, i=2),
     "inductance": dim(m=1, l=2, t=-2, i=-2),
@@ -89,6 +90,7 @@ BASE_DIMENSIONS: dict[str, Dim] = {
     "permittivity": dim(m=-1, l=-3, t=4, i=2),
     "permeability": dim(m=1, l=1, t=-2, i=-2),
     "molar_mass": dim(m=1, n=-1),
+    "concentration": dim(l=-3, n=1),  # mol/m^3
     "stefan_boltzmann": dim(m=1, t=-3, theta=-4),
     "gravitational_constant": dim(l=3, m=-1, t=-2),
     "planck": dim(m=1, l=2, t=-1),
@@ -195,3 +197,26 @@ SPLIT_FACTORS: dict[float, str] = {
     101325.0: "×101325 = atm/Pa",
     1e5: "×1e5 = bar/Pa",
 }
+
+# Reverse lookup: dimension tuple -> canonical name, for displaying what a
+# column was mapped to in human-readable form (e.g. "velocity" instead of
+# the raw (0,1,-1,0,0,0,0) exponent tuple). Several names can share the same
+# tuple (dimensionally identical, e.g. "torque" and "energy" are both
+# M L^2 T^-2) -- the FIRST name registered wins for display purposes.
+_DIMENSION_TO_NAME: dict[tuple, str] = {}
+for _name, _dim in BASE_DIMENSIONS.items():
+    _key = tuple(_dim)
+    if _key not in _DIMENSION_TO_NAME:
+        _DIMENSION_TO_NAME[_key] = _name
+
+
+def dimension_display_name(dim) -> str | None:
+    """Human-readable name for a resolved dimension tuple, or None if it
+    doesn't match any known named quantity (e.g. an unusual combination
+    discovered by Pi-basis enumeration rather than looked up directly)."""
+    if dim is None:
+        return None
+    return _DIMENSION_TO_NAME.get(tuple(dim))
+
+
+ALL_DIMENSION_KEYS: list[str] = sorted(BASE_DIMENSIONS.keys()) + ["dimensionless"]

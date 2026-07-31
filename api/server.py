@@ -15,8 +15,10 @@ public response schema remains backward compatible.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -47,7 +49,9 @@ from core.ai_orchestrator import AI_ENABLED as ORCHESTRATOR_ENABLED
 from core.ai_validator import AI_ENABLED
 from core.ai_validator import MODEL as AI_MODEL
 from core.dimensional import validate as dimensional_validate
+from core.dimensional.dimensions import ALL_DIMENSION_KEYS, dimension_display_name
 from core.dimensional.engine import KNOWN_IMPOSSIBLE, openrouter_llm_resolver
+from core.dimensional.rules import SEMANTIC_BOUNDS
 from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
@@ -60,8 +64,9 @@ app = FastAPI(
     version=API_VERSION,
     description=(
         "The CI/CD layer for engineering simulations. Dual-layer validation: "
-        "1700+ deterministic physics checks across 21 domains plus optional LLM "
-        "reasoning."
+        "dimensional-analysis validation engine: units resolution, discovered "
+        "physical laws, majority-corruption-proof anchored constants, and "
+        "semantic/structural rules, plus optional LLM reasoning."
     ),
     docs_url="/docs",
     redoc_url="/redoc",
@@ -120,6 +125,11 @@ class ValidateRequest(BaseModel):
     reference_dataset_id: str | None = Field(default=None, description="Previous clean validation job ID.")
     known_issues: str | None = Field(default=None, description="Known data issues to ignore.")
     ml_model_type: str | None = Field(default=None, description="tree|neural_network|linear|other")
+    unit_overrides: dict[str, str] | None = Field(
+        default=None,
+        description="Correct a wrong units mapping, e.g. {'v': 'volume'} if the engine guessed "
+        "velocity. Re-run with this set after inspecting the units-resolved list in a prior response.",
+    )
 
 
 class RepairRequest(BaseModel):
@@ -300,6 +310,373 @@ def _serialize(report, df: pd.DataFrame) -> dict[str, Any]:
     })
 
 
+def _dimensional_stats(df: pd.DataFrame) -> dict[str, Any]:
+    """Descriptive statistics per numeric column, in the same shape the
+    legacy check-based engine's ``report.statistics`` produced."""
+    stats: dict[str, Any] = {}
+    for col in df.columns:
+        s = pd.to_numeric(df[col], errors="coerce").dropna()
+        if len(s) < 2:
+            continue
+        std = float(s.std())
+        mean = float(s.mean())
+        stats[col] = {
+            "mean": mean, "std": std, "median": float(s.median()),
+            "p5": float(s.quantile(0.05)), "p95": float(s.quantile(0.95)),
+            "min": float(s.min()), "max": float(s.max()), "n": int(len(s)),
+            "skewness": float(s.skew()) if len(s) > 2 else 0.0,
+            "cv": float(std / mean) if mean else 0.0,
+        }
+    return stats
+
+
+def _plain_language_summary(
+    status: str, n_rows: int, trials_excluded: int, n_impossible: int, n_unsuitable: int,
+    n_inconsistent: int, issues: list[dict], laws_confirmed: list[dict],
+) -> str:
+    """A 2-4 sentence, jargon-free explanation of what happened -- for
+    someone who doesn't know what a Buckingham Pi group is. Built from the
+    actual findings, not a generic template: names real column counts,
+    real percentages, real confirmed laws."""
+    parts: list[str] = []
+    pct_excluded = round(100 * trials_excluded / n_rows, 1) if n_rows else 0.0
+
+    if status == "passed":
+        parts.append(f"All {n_rows:,} rows passed. No physical inconsistencies were found.")
+        if laws_confirmed:
+            best = laws_confirmed[0]
+            parts.append(
+                f"The data is consistent with real physics -- for example, the columns "
+                f"{', '.join(best['columns'])} correctly satisfy a known physical relationship."
+            )
+        parts.append("This dataset looks safe to use for training or analysis.")
+    else:
+        if n_impossible:
+            parts.append(
+                f"{n_impossible} of {n_rows:,} rows ({round(100*n_impossible/n_rows,1)}%) contain values "
+                f"that are mathematically impossible given the laws of physics -- not just unusual, "
+                f"but definitively wrong (e.g. they contradict a known physical constant)."
+            )
+        if n_unsuitable:
+            parts.append(
+                f"{n_unsuitable} row(s) are physically valid but shouldn't be used for training "
+                f"(duplicates or redundant data that would bias a model without adding information)."
+            )
+        if n_inconsistent:
+            parts.append(
+                f"{n_inconsistent} row(s) look statistically unusual compared to the rest of your data. "
+                f"These aren't proven wrong, but are worth a human double-checking before you trust them."
+            )
+        if trials_excluded:
+            parts.append(f"Recommended: exclude the {trials_excluded} flagged row(s) ({pct_excluded}% of the data) before training.")
+        else:
+            parts.append("Nothing needs to be auto-excluded, but review the warnings below before training.")
+    return " ".join(parts)
+
+
+def _concrete_fixes(issues: list[dict], n_rows: int) -> list[str]:
+    """Specific, actionable next steps derived from the actual issues found
+    -- not generic advice. Pulls the counterfactual-repair factor when one
+    was computed (e.g. 'multiplying by 1000 would fix this'), which is
+    proof, not a guess: the code actually re-checked the law after applying
+    that factor."""
+    fixes: list[str] = []
+    seen_categories: set[str] = set()
+    for issue in issues:
+        cat = issue.get("category")
+        detail = issue.get("detail", "")
+        if cat in ("anchored_constant", "pi_constant", "systematic_anchor_deviation") and cat not in seen_categories:
+            seen_categories.add(cat)
+            fixes.append(
+                f"Check the columns in \"{issue.get('description', '')}\" for a unit or scale error -- "
+                f"{detail.split('(')[0].strip()}"
+            )
+        elif cat == "semantic_bounds" and "semantic_bounds" not in seen_categories:
+            seen_categories.add("semantic_bounds")
+            fixes.append(
+                f"\"{issue.get('description', '')}\" violates a hard physical limit (e.g. a fraction "
+                f"outside [0,1]) -- this is a data-entry or pipeline bug, not noise. Trace it to its source."
+            )
+        elif cat == "structural" and "structural" not in seen_categories:
+            seen_categories.add("structural")
+            fixes.append(f"Fix data hygiene: {detail}")
+        elif cat == "declared_conditions" and "declared_conditions" not in seen_categories:
+            seen_categories.add("declared_conditions")
+            fixes.append(
+                f"Your declared test conditions don't match what the data implies ({detail.split('(')[0].strip()}) "
+                f"-- double-check the conditions you entered, or the data may be from a different run."
+            )
+        elif cat == "units" and "units" not in seen_categories:
+            seen_categories.add("units")
+            fixes.append(f"{detail} -- verify this column's units are what you think they are.")
+    if not fixes:
+        fixes.append("No specific fixes needed -- the dataset passed every check.")
+    return fixes
+
+
+def _stats_plain_language(stats: dict[str, Any]) -> list[str]:
+    """One plain-English sentence per column -- range, average, and a
+    variability note -- instead of raw mean/std/skew/cv numbers."""
+    lines: list[str] = []
+    for col, s in stats.items():
+        cv = s.get("cv", 0)
+        if cv < 0.02:
+            variability = "barely varies across rows (nearly constant)"
+        elif cv < 0.15:
+            variability = "varies a normal amount"
+        elif cv < 0.5:
+            variability = "varies quite a bit"
+        else:
+            variability = "varies enormously (spans multiple orders of magnitude, or has outliers)"
+        lines.append(
+            f"{col}: ranges from {s['min']:.4g} to {s['max']:.4g}, averaging {s['mean']:.4g} "
+            f"across {s['n']} rows -- {variability}."
+        )
+    return lines
+
+
+def _serialize_dimensional(report, df: pd.DataFrame, job_id: str, processing_ms: float) -> dict[str, Any]:
+    """Map a `core.dimensional.ValidationReport` onto the public response
+    schema previously produced by the check-based `PhysicsValidator`
+    (`_serialize`, above). This is what makes the dimensional-analysis
+    engine a drop-in replacement: the CLI (sdk-node) and the web dashboard
+    both consume this exact shape and neither needs to change.
+
+    Class -> field mapping:
+      * impossible              -> always excluded (never suppressible; "re-run these trials")
+      * unsuitable_for_training -> excluded from the training-ready set (physically valid,
+                                    harmful to learn from), but NOT a re-run recommendation
+      * inconsistent            -> surfaced as an `issue` (human review), row stays included
+
+    Training-suitability findings (design-space gaps, extrapolation risk, ...)
+    are deliberately NOT folded into `issues`/`status`/`warnings`: the spec is
+    explicit that these are dataset-level informational notes, not row or
+    dataset defects -- "your data never covers the high-AoA regime" is worth
+    reporting, but it should not make a physically clean dataset show up as
+    `status: "warning"`. They're reported separately as `training_suitability`.
+
+    Confirmed (non-violated) laws, semantic-bound checks, structural checks
+    and condition assertions all count toward `passed` -- a validator that
+    only ever reports what's wrong shows "0 passed" on a perfectly clean
+    dataset, which reads as "did nothing" rather than "verified N things".
+    """
+    impossible = sorted(report.impossible_rows)
+    inconsistent = sorted(report.inconsistent_rows)
+    unsuitable = sorted(report.unsuitable_rows)
+    excluded_rows = sorted(set(impossible) | set(unsuitable))
+
+    findings_by_row = {f.row_id: f for f in report.row_findings}
+    exclusions: list[dict[str, Any]] = []
+    for rid in excluded_rows:
+        f = findings_by_row.get(rid)
+        severity = "critical" if rid in report.impossible_rows else "warning"
+        exclusions.append({
+            "trial_index": rid,
+            "reason": f.reason if f else "excluded",
+            "severity": severity,
+        })
+
+    issues: list[dict[str, Any]] = []
+    laws_confirmed: list[dict[str, Any]] = []
+
+    laws_passed = 0
+    for law in report.laws:
+        if not law.violated_rows:
+            laws_passed += 1
+            laws_confirmed.append({
+                "kind": law.kind, "label": law.label, "columns": list(law.columns),
+                "expected_value": law.expected_value, "coverage": round(law.coverage, 3),
+            })
+            continue
+        status = "failed" if law.kind == "anchored_constant" else "warning"
+        human_name_by_kind = {
+            "anchored_constant": f"Violates a known physical constant ({law.label.split('=')[-1].strip()})",
+            "pi_constant": "Breaks a physical law discovered in this dataset",
+            "bimodal_split": "Data splits into two inconsistent unit conventions",
+            "temporal_drift": "Value drifts progressively over time",
+            "systematic_anchor_deviation": f"Entire dataset is offset from a known physical constant "
+                                           f"({law.label.split('=')[-1].strip()})",
+        }
+        issues.append({
+            "name": f"{law.kind}:{law.label}",
+            "human_name": human_name_by_kind.get(law.kind, law.label),
+            "status": status,
+            "description": law.label,
+            "detail": f"{law.note} ({len(law.violated_rows)} row(s) affected, "
+                      f"coverage {law.coverage:.0%}).",
+            "value": law.expected_value,
+            "category": law.kind,
+        })
+
+    for sv in report.semantic_violations:
+        issues.append({
+            "name": f"semantic_bounds:{sv.column}",
+            "human_name": f"\"{sv.column}\" is outside its physically valid range",
+            "status": "failed",
+            "description": f"{sv.column} {sv.rule}",
+            "detail": f"{len(sv.row_ids)} row(s) violate a definitional bound on {sv.column}.",
+            "value": sv.values[0] if sv.values else None,
+            "category": "semantic_bounds",
+        })
+    # Every column matched against a semantic-bound pattern, whether or not
+    # it was violated, so a clean run shows those checks as passed rather
+    # than simply absent.
+    semantic_violated_cols = {sv.column for sv in report.semantic_violations}
+    semantic_checked_cols = set()
+    for col in df.columns:
+        for pattern, *_rest in SEMANTIC_BOUNDS:
+            if re.search(pattern, str(col), re.IGNORECASE):
+                semantic_checked_cols.add(col)
+                break
+    semantic_passed = len(semantic_checked_cols - semantic_violated_cols)
+
+    structural_human_names = {
+        "non_finite": "Contains NaN or infinite values",
+        "exact_duplicate": "Contains exact duplicate rows",
+        "near_duplicate": "Contains near-duplicate rows (disguised with tiny noise)",
+    }
+    for sf in report.structural_findings:
+        issues.append({
+            "name": f"structural:{sf.kind}",
+            "human_name": structural_human_names.get(sf.kind, sf.kind.replace("_", " ").capitalize()),
+            "status": "failed" if sf.kind == "non_finite" else "warning",
+            "description": sf.kind.replace("_", " "),
+            "detail": f"{sf.detail} ({len(sf.row_ids)} row(s)).",
+            "value": None,
+            "category": "structural",
+        })
+    # Structural is always exactly 2 dataset-wide checks (non-finite scan,
+    # exact-duplicate scan); whichever didn't produce a finding passed.
+    structural_kinds_found = {sf.kind for sf in report.structural_findings}
+    structural_checked = 2
+    structural_passed = structural_checked - len(structural_kinds_found & {"non_finite", "exact_duplicate"})
+
+    for uc in report.units_conflicts:
+        issues.append({
+            "name": f"units_conflict:{uc.column}",
+            "human_name": f"Units conflict on \"{uc.column}\"",
+            "status": "warning",
+            "description": f"Units conflict on {uc.column}",
+            "detail": uc.note,
+            "value": None,
+            "category": "units",
+        })
+
+    condition_passed = 0
+    for ca in report.condition_assertions:
+        if ca.rel_dev > 0.02:  # meaningfully off, not just floating-point noise
+            issues.append({
+                "name": f"declared_conditions:{ca.label}",
+                "human_name": f"Declared \"{ca.label}\" doesn't match what the data implies",
+                "status": "warning" if ca.rel_dev < 0.10 else "failed",
+                "description": f"Declared {ca.label} disagrees with what the data implies",
+                "detail": f"declared={ca.declared:.4g}, implied={ca.implied:.4g} "
+                          f"({ca.rel_dev:.1%} relative deviation).",
+                "value": ca.implied,
+                "category": "declared_conditions",
+            })
+        else:
+            condition_passed += 1
+
+    training_suitability = [
+        {"kind": st.kind, "detail": st.detail, "columns": list(st.columns),
+         "row_ids": st.row_ids, "severity": st.severity}
+        for st in report.suitability
+    ]
+
+    failed_count = sum(1 for i in issues if i["status"] == "failed")
+    warning_count = sum(1 for i in issues if i["status"] == "warning")
+    passed_count = laws_passed + semantic_passed + structural_passed + condition_passed
+    all_checks = passed_count + failed_count + warning_count
+    all_checks = max(all_checks, 1)
+
+    checks_by_category: dict[str, dict[str, int]] = {}
+    for i in issues:
+        c = checks_by_category.setdefault(i["category"], {"passed": 0, "warning": 0, "failed": 0})
+        c[i["status"]] += 1
+    if laws_passed:
+        checks_by_category.setdefault("laws", {"passed": 0, "warning": 0, "failed": 0})["passed"] += laws_passed
+    if semantic_passed:
+        checks_by_category.setdefault("semantic_bounds", {"passed": 0, "warning": 0, "failed": 0})["passed"] += semantic_passed
+    if structural_passed:
+        checks_by_category.setdefault("structural", {"passed": 0, "warning": 0, "failed": 0})["passed"] += structural_passed
+    if condition_passed:
+        checks_by_category.setdefault("declared_conditions", {"passed": 0, "warning": 0, "failed": 0})["passed"] += condition_passed
+
+    n_rows = report.n_rows
+    trials_excluded = len(excluded_rows)
+    trials_valid = n_rows - trials_excluded
+    # Status is driven by real findings only -- impossible rows, inconsistent
+    # rows, unsuitable-for-training rows, and issue-level failed/warning
+    # counts. Training-suitability notes never move status: a hull-edge or
+    # sparse-sampling note is true of nearly any finite dataset and is not a
+    # correctness defect.
+    if impossible or failed_count:
+        status = "failed"
+    elif inconsistent or unsuitable or warning_count:
+        status = "warning"
+    else:
+        status = "passed"
+
+    usable_cols = [u for u in report.units.columns.values() if u.usable]
+    avg_conf = (sum(u.confidence for u in usable_cols) / len(usable_cols)) if usable_cols else 0.5
+    confidence = "high" if avg_conf >= 0.75 else "medium" if avg_conf >= 0.5 else "low"
+
+    renamed = df.attrs.get("simapi_renamed", {})
+    plain_summary = _plain_language_summary(
+        status, n_rows, trials_excluded, len(impossible), len(unsuitable), len(inconsistent),
+        issues, laws_confirmed)
+    concrete_fixes = _concrete_fixes(issues, n_rows)
+    stats = _dimensional_stats(df)
+
+    return _json_safe({
+        "job_id": job_id,
+        "status": status,
+        "confidence": confidence,
+        "plain_summary": plain_summary,
+        "concrete_fixes": concrete_fixes,
+        "trials_submitted": n_rows,
+        "trials_valid": trials_valid,
+        "trials_excluded": trials_excluded,
+        "exclusion_rate": round(trials_excluded / n_rows, 4) if n_rows else 0.0,
+        "training_ready": len(report.impossible_rows) == 0,
+        "processing_ms": processing_ms,
+        "all_checks": all_checks,
+        "unique_checks": all_checks,
+        "passed": passed_count,
+        "warnings": warning_count,
+        "failed": failed_count,
+        "issues": issues,
+        "physics_checks": issues,
+        "exclusions": exclusions,
+        "statistics": stats,
+        "statistics_plain": _stats_plain_language(stats),
+        "checks_by_category": checks_by_category,
+        "laws_confirmed": laws_confirmed,
+        "training_suitability": training_suitability,
+        "provenance": {
+            "engine": "dimensional-analysis",
+            "engine_version": "1.0",
+            "n_laws_discovered": len(report.laws),
+            "n_laws_confirmed": laws_passed,
+            "n_anchored_constants": sum(1 for law in report.laws if law.kind == "anchored_constant"),
+            "n_pi_groups": len(report.pi_groups),
+            "units_resolved": {c: {"confidence": round(u.confidence, 2), "source": u.source,
+                                    "mapped_to": dimension_display_name(u.dimension)}
+                               for c, u in report.units.columns.items()},
+            "available_dimension_keys": ALL_DIMENSION_KEYS,
+            "suppressions": list(report.suppressions),
+            "inconsistent_rows": inconsistent,
+            "unsuitable_for_training_rows": unsuitable,
+            "known_impossible": KNOWN_IMPOSSIBLE,
+        },
+        "columns_renamed": renamed,
+        "ai": None,
+        "ai_status": "pending",
+        "ai_exclusions": [],
+    })
+
+
 def _prune_jobs() -> None:
     """Evict expired or overflow jobs to bound memory (called under lock)."""
     now = time.time()
@@ -462,8 +839,42 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
     df.attrs["simapi_renamed"] = ingest_meta.get("columns_renamed", {})
 
     jid = req.job_id or uuid.uuid4().hex[:8]
-    physics = validator.validate(df, req.simulation_type, req.conditions, jid)
-    result = _serialize(physics, df)
+
+    # ── Primary engine: dimensional analysis (core/dimensional/) ───────────
+    # Replaces the old hand-written-check engine (PhysicsValidator, ~470-885
+    # per-column checks + suppression rules that never converged) as the
+    # source of truth for status/exclusions/issues. Both the CLI (sdk-node)
+    # and the web dashboard talk to this same /v1/validate response shape,
+    # so routing this engine here is what makes it apply to both surfaces.
+    #
+    # Offloaded to a thread: this is CPU-bound (numpy/pandas), and running
+    # it synchronously in the event loop blocks ALL request handling --
+    # including unrelated /v1/health calls -- for the full duration of every
+    # validate call, fully serializing concurrent traffic on a single
+    # worker. numpy releases the GIL during most of its C-level work, so
+    # this yields real concurrency even from one process, not just
+    # non-blocking I/O interleaving.
+    _t0 = time.perf_counter()
+    dim_report = await asyncio.to_thread(
+        dimensional_validate, df, conditions=req.conditions, llm_resolver=openrouter_llm_resolver,
+        unit_overrides=req.unit_overrides)
+    _dim_ms = round((time.perf_counter() - _t0) * 1000, 1)
+    result = _serialize_dimensional(dim_report, df, jid, _dim_ms)
+
+    # Legacy check-based engine kept available, non-authoritative: its
+    # findings are exposed under `legacy_physics` for comparison/migration
+    # only. It no longer drives status, exclusions, or training_ready.
+    try:
+        physics = await asyncio.to_thread(validator.validate, df, req.simulation_type, req.conditions, jid)
+        legacy = _serialize(physics, df)
+        result["legacy_physics"] = {
+            "status": legacy["status"],
+            "trials_excluded": legacy["trials_excluded"],
+            "all_checks": legacy["all_checks"],
+            "issues": legacy["issues"][:20],
+        }
+    except Exception:
+        pass
 
     # ── APIE v3.1: five-layer engine + causal diagnosis + cross-run memory ──
     if APIE_AVAILABLE and _apie_engine is not None:
@@ -582,7 +993,7 @@ async def health() -> dict[str, Any]:
         "status": "ok",
         "version": API_VERSION,
         "environment": settings.environment,
-        "physics_checks": "1700+",
+        "engine": "dimensional-analysis",
         "domains": 21,
         "ai_enabled": AI_ENABLED,
         "ai_model": AI_MODEL,
@@ -658,14 +1069,18 @@ async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_ide
     a Pi-space response-surface residual layer, semantic bounds, and
     declared-conditions assertions. See core/dimensional/engine.py.
 
-    This runs alongside -- not in place of -- /v1/validate (the deterministic
-    check-based engine with the published 99%+ precision benchmark). Both are
-    live; this endpoint is the newer, narrower-rule-count architecture for
-    callers who want to try it directly.
+    This exposes the SAME dimensional-analysis engine that now powers
+    /v1/validate, but returns the raw per-layer report (discovered laws,
+    units resolution, condition assertions, training-suitability, etc.)
+    instead of summarizing it into the CLI/SDK-compatible shape. Use this
+    when you want the full detail; use /v1/validate for the standard,
+    backward-compatible report.
     """
     df, ingest_meta = ingester.ingest(req.data, format_hint="json")
     conditions_dict = dict(req.conditions or {})
-    report = dimensional_validate(df, conditions=conditions_dict, llm_resolver=openrouter_llm_resolver)
+    report = await asyncio.to_thread(
+        dimensional_validate, df, conditions=conditions_dict, llm_resolver=openrouter_llm_resolver,
+        unit_overrides=req.unit_overrides)
 
     def _row_finding_dict(f):
         return {
@@ -708,9 +1123,11 @@ async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_ide
             c: {
                 "confidence": round(u.confidence, 2), "source": u.source,
                 "usable": u.usable, "unit_label": u.unit_label,
+                "mapped_to": dimension_display_name(u.dimension),
             }
             for c, u in report.units.columns.items()
         },
+        "available_dimension_keys": ALL_DIMENSION_KEYS,
         "units_conflicts": [c.__dict__ for c in report.units_conflicts],
         "condition_assertions": [
             {"label": a.label, "declared": a.declared, "implied": a.implied,
@@ -908,16 +1325,25 @@ async def demo(_: str = Depends(caller_identity)):
         # Exact physics relationships
         mach = v_var / 343.0
         reynolds = (rho * v_var * L) / mu  # Exact Reynolds number
+        temperature = float(288.15 + np.random.normal(0, 2.0))
+        density = float(rho + np.random.normal(0, 0.01))
+        # Pressure is DERIVED from the ideal-gas law (P = rho*R_air*T), not
+        # generated as an independent noise source -- three independently
+        # noisy quantities that "happen to look like" P=rhoRT is exactly
+        # the self-inconsistency the dimensional engine's R_air anchor is
+        # designed to (correctly) flag. A real sensor's P, rho and T are
+        # physically coupled; this dataset should be too.
+        pressure = float(density * 287.05 * temperature + np.random.normal(0, 15))
         data.append({
             "drag_coefficient": float(cd),
             "lift_coefficient": float(cl),
             "reynolds_number": float(reynolds),  # Exact relationship
-            "pressure": float(101325 + np.random.normal(0, 150)),
+            "pressure": pressure,
             "velocity": float(v_var),
             "mach_number": float(mach),  # Exact relationship
             "angle_of_attack": float(4.0 + np.random.normal(0, 1.0)),
-            "temperature": float(288.15 + np.random.normal(0, 2.0)),
-            "density": float(rho + np.random.normal(0, 0.01)),
+            "temperature": temperature,
+            "density": density,
             "viscosity": float(mu + np.random.normal(0, 1e-7)),
             "skin_friction_coefficient": float(0.004 + np.random.normal(0, 0.0003)),
             "turbulence_intensity": float(0.03 + np.random.normal(0, 0.004)),

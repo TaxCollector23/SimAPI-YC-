@@ -167,7 +167,9 @@ FAILURE_MODES: list[FailureMode] = [
         pipeline_stage="solver_coupling",
         detection_signals=["joint_skew_outlier", "temporal_coherence", "physical_bounds"],
         recommended_investigation=[
-            "Check if both fields blow up by the SAME factor: Cd×5, Cl×5 → ratio invariant passes",
+            "Check if the two correlated fields blow up by the SAME factor "
+            "(e.g. a coefficient and a related derived quantity both x5) -- if so, "
+            "a simple ratio-invariant check would miss it, since the relationship is preserved",
             "This is a coupled instability: check the turbulence-viscosity production term",
             "Reduce coupling strength or add relaxation to the source term",
             "The APIE joint_skew_outlier check specifically catches this pattern",
@@ -281,7 +283,9 @@ FAILURE_MODES: list[FailureMode] = [
             "Plot the residuals from the physical model: are they random or structured?",
             "Check sensor sampling frequency vs. physical timescales: undersampling creates aliasing",
             "Review grounding and shielding: EMI spikes produce exactly this signature",
-            "The 80% detection rate for this type is a physical limit: small perturbations overlap with real variation",
+            "Small perturbations naturally overlap with real variation in the data -- "
+            "this failure mode is inherently harder to detect with high recall than a "
+            "structural or dimensional violation, by its nature, not by a tooling gap",
         ],
         typical_model_impact="Adds noise floor to target variable; model uncertainty increases; prediction confidence intervals widen",
         impact_severity="low",

@@ -159,13 +159,37 @@ def validate(
     conditions: dict | None = None,
     llm_resolver: Callable[[list[str]], dict[str, dict]] | None = None,
     max_columns: int = 15,
+    unit_overrides: dict[str, str] | None = None,
 ) -> ValidationReport:
     """`llm_resolver`, if provided, classifies columns the dictionary
     resolver couldn't (see core.dimensional.engine.openrouter_llm_resolver
     for the real OpenRouter-backed implementation). Defaults to None --
-    dictionary-only, deterministic, no network dependency."""
+    dictionary-only, deterministic, no network dependency.
+
+    `unit_overrides`, if provided, is ``{col: dimension_key}`` -- lets a
+    caller correct a wrong dictionary/LLM mapping (e.g. "v" resolved as
+    velocity but is actually volume) and re-run with the fix applied."""
     conditions = conditions or {}
     data = data.reset_index(drop=True)
+    if data.columns.duplicated().any():
+        # Defensive, not just ingestion's job: a DataFrame with duplicate
+        # column names crashes pandas numeric operations throughout this
+        # engine (`data[col]` returns a DataFrame, not a Series, for a
+        # duplicated label). core.ingestion.DataIngester already avoids
+        # creating these, but this engine is called directly too (tests,
+        # notebooks, future integrations), so it protects itself rather
+        # than trusting every caller to have deduplicated first.
+        seen: dict[str, int] = {}
+        new_cols = []
+        for c in data.columns:
+            if c in seen:
+                seen[c] += 1
+                new_cols.append(f"{c}_dup{seen[c]}")
+            else:
+                seen[c] = 0
+                new_cols.append(c)
+        data = data.copy()
+        data.columns = new_cols
     n_rows = len(data)
     # Audit trail. The spec is explicit: "Every suppression must carry its
     # reason into the report. A validator that hides what it chose not to
@@ -185,7 +209,7 @@ def validate(
             f"({', '.join(map(str, non_numeric[:6]))}"
             f"{', ...' if len(non_numeric) > 6 else ''}): IDs, flags and categoricals "
             f"carry no dimensions. Structural checks still apply.")
-    units = resolve_units(numeric_cols, llm_resolver=llm_resolver)
+    units = resolve_units(numeric_cols, llm_resolver=llm_resolver, unit_overrides=unit_overrides)
     unresolved = [c for c in numeric_cols if not units.columns[c].usable]
     if unresolved:
         suppressions.append(
@@ -239,7 +263,8 @@ def validate(
         laws = laws + drift_findings
 
     # ── Layer 5 ──────────────────────────────────────────────────────────
-    surface_findings = find_surface_anomalies(si_data, units)
+    anchor_columns = {c for a in anchors for c in a.columns}
+    surface_findings = find_surface_anomalies(si_data, units, anchor_columns=anchor_columns)
 
     # ── Layer 6 ──────────────────────────────────────────────────────────
     semantic_violations = check_semantic_bounds(data)
@@ -357,7 +382,7 @@ def _arbitrate(
             for rid in sf.row_ids:
                 findings.append(RowFinding(row_id=rid, output_class="impossible",
                                             reason=sf.detail, layer="structural", weight=1.0))
-        elif sf.kind == "exact_duplicate":
+        elif sf.kind in ("exact_duplicate", "near_duplicate"):
             # Physically valid, harmful to learn from -- unsuitable for
             # training, not "impossible" (the row isn't physically wrong).
             for rid in sf.row_ids:
@@ -366,8 +391,15 @@ def _arbitrate(
 
     for law in laws:
         out_class = "impossible" if law.kind == "anchored_constant" else "inconsistent"
+        # A systematic deviation applies to ~every row by construction
+        # (coverage=1.0) -- counterfactual repair is a per-row "what
+        # surgical fix explains this outlier" analysis, which is both
+        # wasteful and the wrong question when the answer is "the whole
+        # dataset needs the same rescaling", not a per-row diagnosis.
+        skip_counterfactual = law.kind == "systematic_anchor_deviation"
         for rid, factor in law.violated_rows.items():
-            cf = _counterfactual_repair(law.columns, rid, factor, si_data, law.kind)
+            cf = None if skip_counterfactual else _counterfactual_repair(
+                law.columns, rid, factor, si_data, law.kind)
             findings.append(RowFinding(
                 row_id=rid, output_class=out_class,
                 reason=f"{law.label} violated ({factor:.4g}x expected); {law.note}",

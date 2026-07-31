@@ -59,7 +59,8 @@ _PATTERNS: list[tuple[str, str, float]] = [
     # Dimensionless coefficients -- extremely common in CFD/FEA exports.
     (r"^(cd|cl|cp|cm|c[fdlmnpst]_?\w*|cx|cy|cz)$", "dimensionless", 0.95),
     (r"coeff?icient|_coef|_ratio|^ratio$|_factor|^factor$|_fraction|"
-     r"^fraction$|efficiency|^eta$|utilization|porosity|void_fraction",
+     r"^fraction$|efficiency|^eta$|utilization|porosity|void_fraction|"
+     r"^conversion$|conversion_rate|_conversion",
      "dimensionless", 0.85),
     (r"^(mach|ma|m_inf)$", "dimensionless", 0.95),
     (r"mach_?number", "dimensionless", 0.95),
@@ -94,6 +95,8 @@ _PATTERNS: list[tuple[str, str, float]] = [
     (r"^(enthalpy|energy)(_\w+)?$", "energy", 0.75),
     (r"^power(_\w+)?$", "power", 0.8),
     (r"^heat_?flux$|^q_?wall$|^tau_?wall$", "heat_flux", 0.8),
+    (r"heat_?(load|duty|input|output|generation|dissipation)", "power", 0.6),
+    (r"(yield|tensile|compressive|shear|ultimate|flexural)_?strength", "pressure", 0.7),
     (r"^entropy(_\w+)?$", "entropy", 0.8),
     (r"^spec(ific)?_?heat(_\w+)?$|^c_?p$|^c_?v$", "specific_heat", 0.7),
     (r"^thermal_conductivity(_\w+)?$", "thermal_conductivity", 0.6),
@@ -139,10 +142,58 @@ _UNIT_SUFFIX_RE = re.compile(
 _SUFFIX_ALIASES = {"feet": "ft", "in": "inch", "kts": "knot"}
 
 
+# Single-token fallback: the primary _PATTERNS above are precise and
+# ordered (e.g. angular velocity must be checked before generic velocity),
+# but nearly all of them anchor the keyword at the START of the name
+# (^velocity(_\w+)?$), so they cannot match the extremely common
+# "descriptive-prefix + quantity" naming style real engineers actually use:
+# launch_velocity, flight_time_s, max_height_m, peak_pressure, inlet_temp.
+# This is a genuine, high-impact gap (found via adversarial testing: an
+# entire test domain had 0% of its columns resolve at all, because every
+# column used this naming style) -- not a hypothetical one.
+#
+# Rather than rewrite every existing anchored pattern (risking regressions
+# in already-tested behavior), this is a separate, lower-confidence
+# fallback: split the name into underscore/camelCase tokens and check each
+# token against this keyword->dimension map. Only used when the primary
+# ordered patterns find nothing, so it never overrides a precise match.
+_TOKEN_DIMENSION_MAP: dict[str, tuple[str, float]] = {
+    "velocity": ("velocity", 0.65), "speed": ("velocity", 0.65),
+    "acceleration": ("acceleration", 0.65), "accel": ("acceleration", 0.65),
+    "pressure": ("pressure", 0.65), "temperature": ("temperature", 0.6), "temp": ("temperature", 0.55),
+    "density": ("density", 0.65), "viscosity": ("dynamic_viscosity", 0.6),
+    "force": ("force", 0.55), "thrust": ("force", 0.55), "drag": ("force", 0.5), "lift": ("force", 0.5),
+    "torque": ("torque", 0.6), "moment": ("torque", 0.5),
+    "stress": ("pressure", 0.6), "strain": ("dimensionless", 0.6),
+    "modulus": ("pressure", 0.55), "humidity": ("dimensionless", 0.55),
+    "mass": ("mass", 0.6), "momentum": ("momentum", 0.6),
+    "area": ("area", 0.6), "volume": ("volume", 0.55),
+    "length": ("length", 0.5), "height": ("length", 0.55), "width": ("length", 0.55),
+    "depth": ("length", 0.55), "distance": ("length", 0.55), "displacement": ("length", 0.5),
+    "range": ("length", 0.5), "radius": ("length", 0.55), "diameter": ("length", 0.55),
+    "chord": ("length", 0.55), "span": ("length", 0.55), "altitude": ("length", 0.6), "elevation": ("length", 0.55),
+    "time": ("time", 0.6), "duration": ("time", 0.55), "period": ("time", 0.55),
+    "energy": ("energy", 0.55), "enthalpy": ("energy", 0.55), "power": ("power", 0.6),
+    "frequency": ("frequency", 0.6), "freq": ("frequency", 0.55),
+    "angle": ("angle", 0.55), "voltage": ("voltage", 0.6), "current": ("current", 0.45),
+    "resistance": ("resistance", 0.6), "capacitance": ("capacitance", 0.6), "inductance": ("inductance", 0.6),
+    "charge": ("charge", 0.5), "entropy": ("entropy", 0.55),
+    "wavelength": ("length", 0.65), "magnetic": ("magnetic_field", 0.5), "electric": ("electric_field", 0.45),
+    "concentration": ("concentration", 0.6),
+}
+
+
 def _match_dictionary(col: str) -> tuple[str, float] | None:
     for pattern, dim_key, conf in _PATTERNS:
         if re.search(pattern, col, re.IGNORECASE):
             return dim_key, conf
+    # Fallback: token search for "descriptive_prefix_keyword" names the
+    # anchored patterns above can't reach.
+    tokens = re.split(r"[_\s]+|(?<=[a-z0-9])(?=[A-Z])", col)
+    for tok in tokens:
+        hit = _TOKEN_DIMENSION_MAP.get(tok.lower())
+        if hit:
+            return hit
     return None
 
 
@@ -157,6 +208,7 @@ def _detect_unit_suffix(col: str) -> str | None:
 def resolve_units(
     columns: list[str],
     llm_resolver: Callable[[list[str]], dict[str, dict]] | None = None,
+    unit_overrides: dict[str, str] | None = None,
 ) -> UnitsResolution:
     """Resolve every column to an SI dimension + confidence.
 
@@ -165,6 +217,13 @@ def resolve_units(
     ``{col: {"dimension_key": str, "confidence": float, "unit": str|None}}``.
     Its output is not trusted blindly -- Layer 2/3 verification can still
     override it with a units_conflict finding.
+
+    `unit_overrides`, if provided, is ``{col: dimension_key}`` -- a human
+    correction (e.g. "you mapped 'v' to velocity, but it's volume"). Applied
+    last, after dictionary and LLM resolution, so it always wins, at maximal
+    confidence (1.0) and source="user_override". Every downstream layer
+    (laws, anchors, response surface) sees the corrected mapping, not the
+    original guess.
     """
     result = UnitsResolution()
     unresolved: list[str] = []
@@ -214,6 +273,20 @@ def resolve_units(
             result.columns[col] = ColumnUnits(
                 column=col, dimension=dimension, confidence=conf, source="llm",
                 unit_label=unit or "SI", si_scale=scale, si_offset=offset,
+            )
+
+    if unit_overrides:
+        for col, dim_key in unit_overrides.items():
+            if col not in columns:
+                continue
+            dimension = BASE_DIMENSIONS.get(dim_key)
+            if dimension is None and dim_key != "dimensionless":
+                continue  # unknown dimension key -- ignore rather than silently corrupt
+            result.columns[col] = ColumnUnits(
+                column=col, dimension=dimension if dim_key != "dimensionless" else DIMENSIONLESS,
+                confidence=1.0, source="user_override", unit_label="SI",
+                si_scale=1.0, si_offset=0.0,
+                notes=f"user-corrected from {result.columns[col].source if col in result.columns else 'unresolved'}",
             )
 
     return result

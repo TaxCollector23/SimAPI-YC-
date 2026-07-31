@@ -1,0 +1,62 @@
+{
+  "engine": "dimensional-analysis",
+  "seeds": [
+    42,
+    123,
+    456,
+    789,
+    1337
+  ],
+  "n_train": 9333,
+  "n_test": 4000,
+  "corruption_rate_pct": 30.2,
+  "validation_ms_mean": 6825.2,
+  "validation_ms_std": 587.3,
+  "models": {
+    "gbt": {
+      "mape_improvement_mean": -1.18,
+      "mape_improvement_std": 1.67,
+      "mape_corrupted_mean": 0.4216,
+      "mape_simapi_mean": 0.4265,
+      "mape_naive_mean": 0.4382,
+      "mape_clean_mean": 0.3943,
+      "naive_improvement_mean": -3.98,
+      "simapi_vs_naive_mean": 2.67
+    },
+    "mlp": {
+      "mape_improvement_mean": -16.72,
+      "mape_improvement_std": 14.93,
+      "mape_corrupted_mean": 3.9435,
+      "mape_simapi_mean": 4.5757,
+      "mape_naive_mean": 1.1255,
+      "mape_clean_mean": 0.6812,
+      "naive_improvement_mean": 71.29,
+      "simapi_vs_naive_mean": -319.0
+    }
+  },
+  "auto_excluded": {
+    "precision": 1.0,
+    "recall": 0.179,
+    "per_category_recall_pct": {
+      "solver_divergence": 1.9,
+      "unit_conversion": 99.3,
+      "sensor_drift": 3.7,
+      "copy_paste": 75.2,
+      "cross_variable": 2.4,
+      "measurement_noise": 3.9
+    }
+  },
+  "total_detected": {
+    "precision": 0.9995,
+    "recall": 0.9582,
+    "per_category_recall_pct": {
+      "solver_divergence": 98.7,
+      "unit_conversion": 100.0,
+      "sensor_drift": 100.0,
+      "copy_paste": 97.5,
+      "cross_variable": 99.9,
+      "measurement_noise": 73.4
+    }
+  },
+  "elapsed_s": 128.9
+}

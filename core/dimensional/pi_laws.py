@@ -61,6 +61,12 @@ def _row_index(data: pd.DataFrame, positions: np.ndarray) -> list[int]:
     return [int(data.index[p]) for p in positions]
 
 
+SYSTEMATIC_DEVIATION_MAX_CV = 0.03  # how tight the data's own scatter must be to call it "uniform"
+SYSTEMATIC_DEVIATION_MIN_DEV = 0.03  # how far from the true constant before it's worth a note
+SYSTEMATIC_DEVIATION_MAX_DEV = 0.50  # beyond this it's not "a nearby but wrong value", just
+                                     # coincidental dimensional overlap between unrelated quantities
+
+
 def layer3_anchored_constants(
     data: pd.DataFrame, units: UnitsResolution, columns: list[str],
 ) -> list[LawFinding]:
@@ -68,13 +74,27 @@ def layer3_anchored_constants(
     match it, and accept if >=ANCHOR_MIN_COVERAGE of rows sit on the value
     -- the median is NOT trusted, because past ~50% corruption the median
     IS the corruption. A constant does not move with the data; where one
-    applies, it defines truth regardless of what the majority looks like."""
+    applies, it defines truth regardless of what the majority looks like.
+
+    Also returns 'systematic_anchor_deviation' findings for the case the
+    coverage requirement structurally cannot catch: a uniform bias across
+    effectively ALL rows leaves zero rows within tolerance of the true
+    constant, so the >=10%-coverage requirement is never met and the anchor
+    never activates at all (found via adversarial testing -- a 5% uniform
+    pressure bias across 100% of rows produced zero findings without this).
+    Computed from the SAME per-subset `vals` array as the coverage check,
+    not a second combinatorial search -- this was originally a duplicate
+    full pass and cost 2x the runtime for no reason.
+    """
     findings: list[LawFinding] = []
     seen: set[str] = set()
 
     for size in (2, 3, 4):
         for subset in itertools.combinations(columns, size):
             D: Matrix = [[units.columns[c].dimension[axis] for c in subset] for axis in range(7)]
+            best_deviation: LawFinding | None = None  # closest-matching constant for this subset,
+                                                        # when no constant achieves real anchor coverage
+            subset_has_real_anchor = False
             for const in CONSTANTS:
                 target = list(const.dimension)
                 sol = solve_particular(D, target)
@@ -95,11 +115,37 @@ def layer3_anchored_constants(
                 finding = _evaluate_anchor(data, exponents, const)
                 if finding is None:
                     continue
-                key = finding.label + f"~{const.name}"
-                if key in seen:
-                    continue
-                seen.add(key)
-                findings.append(finding)
+                if finding.kind == "anchored_constant":
+                    subset_has_real_anchor = True
+                    key = finding.label + f"~{const.name}~{finding.kind}"
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    findings.append(finding)
+                else:
+                    if len(exponents) < 3:
+                        continue  # 2-column ratios are too prone to spurious near-misses
+                                  # against unrelated same-dimension constants (e.g. sqrt(P/rho)
+                                  # sits close to the speed of sound purely because it's missing
+                                  # a sqrt(gamma) factor -- a real physics detail, not corruption)
+                    # Several constants can share the same dimension (e.g.
+                    # R_air, c_p_air, c_v_air are all "specific heat"-shaped)
+                    # -- only the single closest match is informative; the
+                    # others are coincidental dimensional overlap, not a
+                    # meaningful "your data implies X" statement.
+                    rel = abs(finding.observed_median - finding.expected_value) / abs(finding.expected_value)
+                    if best_deviation is None or rel < abs(
+                        best_deviation.observed_median - best_deviation.expected_value
+                    ) / abs(best_deviation.expected_value):
+                        best_deviation = finding
+            # If ANY constant genuinely anchored this subset, the subset IS
+            # explained -- a different, dimensionally-coincidental constant
+            # "also" not matching is noise, not a finding.
+            if best_deviation is not None and not subset_has_real_anchor:
+                key = best_deviation.label + f"~systematic_anchor_deviation~{tuple(sorted(subset))}"
+                if key not in seen:
+                    seen.add(key)
+                    findings.append(best_deviation)
     return findings
 
 
@@ -123,30 +169,62 @@ def _evaluate_anchor(data: pd.DataFrame, exponents: dict[str, Fraction],
     if not np.all(np.isfinite(vals)):
         return None
 
+    label = "·".join(c if e == 1 else f"{c}^{e}" for c, e in exponents.items())
     rel_dev = np.abs(vals - const.value) / abs(const.value)
     on_anchor = rel_dev <= ANCHOR_RELATIVE_TOLERANCE
     coverage = float(on_anchor.mean())
-    if coverage < ANCHOR_MIN_COVERAGE:
-        return None
 
-    label = "·".join(c if e == 1 else f"{c}^{e}" for c, e in exponents.items())
-    violated = {}
-    positions = np.where(~on_anchor)[0]
-    for p in positions:
-        factor = float(vals[p] / const.value)
-        violated[int(sub.index[p])] = factor
+    if coverage >= ANCHOR_MIN_COVERAGE:
+        violated = {}
+        positions = np.where(~on_anchor)[0]
+        for p in positions:
+            factor = float(vals[p] / const.value)
+            violated[int(sub.index[p])] = factor
+        return LawFinding(
+            kind="anchored_constant",
+            label=f"{label} = {const.name} ({const.value:g})",
+            columns=tuple(cols),
+            expected_value=const.value,
+            observed_median=float(np.median(vals)),
+            scale=abs(const.value) * ANCHOR_RELATIVE_TOLERANCE,
+            violated_rows=violated,
+            coverage=coverage,
+            weight=1.0,  # a physical constant anchor is maximal-confidence evidence
+            note=f"{coverage*100:.0f}% of rows sit on {const.name}={const.value:g} {const.description}",
+        )
+
+    # No row sits close enough to the true constant for the anchor to
+    # activate -- but if the data is nonetheless TIGHTLY self-consistent
+    # (not noisy) at a value meaningfully different from the constant, that
+    # uniformity is itself worth surfacing. Lower confidence than a true
+    # anchor violation: this could be a legitimate domain difference
+    # (different gas/material/condition), not necessarily an error.
+    median = float(np.median(vals))
+    mad = float(np.median(np.abs(vals - median)))
+    cv = (mad * 1.4826) / abs(median) if median != 0 else float("inf")
+    if cv > SYSTEMATIC_DEVIATION_MAX_CV:
+        return None  # not tightly self-consistent -- ordinary scatter/noise, nothing to say
+    global_rel_dev = abs(median - const.value) / abs(const.value)
+    if global_rel_dev < SYSTEMATIC_DEVIATION_MIN_DEV:
+        return None  # within normal measurement tolerance of the true constant
+    if global_rel_dev > SYSTEMATIC_DEVIATION_MAX_DEV:
+        return None  # not "a nearby but wrong value" -- just coincidental dimensional overlap
 
     return LawFinding(
-        kind="anchored_constant",
+        kind="systematic_anchor_deviation",
         label=f"{label} = {const.name} ({const.value:g})",
         columns=tuple(cols),
         expected_value=const.value,
-        observed_median=float(np.median(vals)),
-        scale=abs(const.value) * ANCHOR_RELATIVE_TOLERANCE,
-        violated_rows=violated,
-        coverage=coverage,
-        weight=1.0,  # a physical constant anchor is maximal-confidence evidence
-        note=f"{coverage*100:.0f}% of rows sit on {const.name}={const.value:g} {const.description}",
+        observed_median=median,
+        scale=abs(median) * SYSTEMATIC_DEVIATION_MAX_CV,
+        violated_rows={int(i): float(v / const.value) for i, v in zip(sub.index, vals)},
+        coverage=1.0,
+        weight=0.4,  # lower confidence than a true anchor: could be a legitimate difference
+        note=(f"~100% of rows are tightly self-consistent (CV={cv:.4f}) at "
+              f"{median:.6g}, {global_rel_dev*100:.1f}% away from {const.name}={const.value:g} "
+              f"{const.description}. No row sits close enough to the true constant for the anchor "
+              f"to activate -- this may be a genuine domain difference (different gas/material/"
+              f"condition) or a systematic calibration/unit error."),
     )
 
 

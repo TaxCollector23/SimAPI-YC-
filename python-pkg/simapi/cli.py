@@ -230,8 +230,33 @@ def _resolve_domain(args: dict, file: str) -> str:
 
 # ── Core engine runner ────────────────────────────────────────────────────────
 
-def _run_apie(data: list, domain: str, conditions: dict, config_key: str | None = None):
-    """Run the full local APIE engine. Returns (apie_result, cross_run_result)."""
+def _run_dimensional(df, conditions: dict, unit_overrides: dict | None = None):
+    """Run the dimensional-analysis engine (core/dimensional/) -- the same
+    engine that authoritatively drives /v1/validate server-side. Returns the
+    raw ValidationReport, or None if the module isn't importable (e.g. CLI
+    installed standalone without the project's core/ package)."""
+    try:
+        from core.dimensional import validate as dimensional_validate
+    except ImportError:
+        return None
+    try:
+        return dimensional_validate(df, conditions=conditions or {}, unit_overrides=unit_overrides)
+    except Exception:
+        return None
+
+
+def _run_apie(data: list, domain: str, conditions: dict, config_key: str | None = None,
+               unit_overrides: dict | None = None):
+    """Run the full local engine stack. Returns (result, cross_run, df).
+
+    `result.excluded_indices` / `result.flagged_for_review` -- the fields
+    that actually drive exit codes, --export, and --sarif -- are set from
+    the dimensional-analysis engine (impossible+unsuitable rows = excluded;
+    inconsistent rows = flagged for review), matching the authority that
+    engine has server-side over /v1/validate. APIE's row-by-row narrative
+    (`row_scores`, `diagnosis`, `manifold`) is preserved as supplementary
+    detail in the report -- richer per-row color, not the decision-maker.
+    """
     import sys
     # Add project root to path
     cli_dir = Path(__file__).resolve().parent
@@ -248,6 +273,33 @@ def _run_apie(data: list, domain: str, conditions: dict, config_key: str | None 
     df = pd.DataFrame(data)
     result = apie.validate(df, domain=domain, conditions=conditions or {})
 
+    dim_report = _run_dimensional(df, conditions, unit_overrides=unit_overrides)
+    result.dimensional = dim_report
+    if dim_report is not None:
+        impossible = dim_report.impossible_rows
+        unsuitable = dim_report.unsuitable_rows
+        inconsistent = dim_report.inconsistent_rows
+        findings_by_row = {f.row_id: f for f in dim_report.row_findings}
+
+        result.excluded_indices = set(impossible) | set(unsuitable)
+
+        flags = []
+        for rid in sorted(inconsistent):
+            f = findings_by_row.get(rid)
+            # Downstream report code formats this as `{max_sigma:.1f}`; the
+            # dimensional engine reports arbitration weight (0-1), not a
+            # sigma, so scale it into a comparable, always-numeric display value.
+            pseudo_sigma = round((f.weight if f else 0.5) * 10, 2)
+            flags.append({
+                "row_index": rid,
+                "max_sigma": pseudo_sigma,
+                "checks": [f.layer] if f else [],
+                "corruption_type": (f.layer if f else "unknown"),
+                "severity": "warning",
+                "diagnosis": (f.reason[:200] if f else "flagged by dimensional-analysis engine"),
+            })
+        result.flagged_for_review = flags
+
     cross_run = None
     if config_key:
         try:
@@ -263,6 +315,7 @@ def _run_apie(data: list, domain: str, conditions: dict, config_key: str | None 
             pass
 
     return result, cross_run, df
+
 
 
 # ── Report builder ────────────────────────────────────────────────────────────
@@ -308,6 +361,80 @@ def _build_report_text(
 
     # Terminal format (most detailed)
     return _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, status, dx, mfd, n, n_auto, n_review, n_clean, cr_pct)
+
+
+def _plain_language_lines(dim, n: int, n_auto: int, n_review: int, n_clean: int, cr_pct: float) -> list[str]:
+    """2-4 jargon-free sentences explaining what happened -- CLI counterpart
+    to api/server.py's _plain_language_summary, reimplemented natively so
+    the standalone CLI package doesn't need FastAPI as a dependency."""
+    lines: list[str] = []
+    if n_auto == 0 and n_review == 0:
+        lines.append(f"All {n:,} rows passed. No physical inconsistencies were found.")
+        if dim is not None:
+            confirmed = [law for law in dim.laws if not law.violated_rows]
+            if confirmed:
+                best = confirmed[0]
+                lines.append(
+                    f"The data is consistent with real physics -- for example, the columns "
+                    f"{', '.join(best.columns)} correctly satisfy a known physical relationship."
+                )
+        lines.append("This dataset looks safe to use for training or analysis.")
+        return lines
+
+    if n_auto:
+        lines.append(
+            f"{n_auto} of {n:,} rows ({cr_pct:.1f}%) contain values that are mathematically impossible "
+            f"given the laws of physics -- not just unusual, but definitively wrong (e.g. they "
+            f"contradict a known physical constant)."
+        )
+    if n_review:
+        lines.append(
+            f"{n_review} row(s) look statistically unusual compared to the rest of your data. "
+            f"These aren't proven wrong, but are worth a human double-checking before you trust them."
+        )
+    if n_auto:
+        lines.append(f"Recommended: exclude the {n_auto} flagged row(s) before training ({n_clean:,} clean rows remain).")
+    else:
+        lines.append("Nothing needs to be auto-excluded, but review the flagged rows below before training.")
+    return lines
+
+
+def _concrete_fixes_cli(dim) -> list[str]:
+    """Specific, actionable next steps derived from the actual findings --
+    CLI counterpart to api/server.py's _concrete_fixes."""
+    if dim is None:
+        return []
+    fixes: list[str] = []
+    seen: set = set()
+    for law in dim.laws:
+        if not law.violated_rows:
+            continue
+        key = law.kind
+        if key in seen:
+            continue
+        seen.add(key)
+        fixes.append(f"Check {', '.join(law.columns)} for a unit or scale error -- {law.note}")
+    for sv in dim.semantic_violations:
+        if "semantic" in seen:
+            continue
+        seen.add("semantic")
+        fixes.append(
+            f"\"{sv.column}\" violates a hard physical limit ({sv.rule}) -- this is a data-entry "
+            f"or pipeline bug, not noise. Trace it to its source."
+        )
+    for sf in dim.structural_findings:
+        if "structural" in seen:
+            continue
+        seen.add("structural")
+        fixes.append(f"Fix data hygiene: {sf.detail}")
+    for ca in dim.condition_assertions:
+        if ca.rel_dev > 0.02 and "conditions" not in seen:
+            seen.add("conditions")
+            fixes.append(
+                f"Your declared conditions don't match what the data implies ({ca.label}) -- "
+                f"double-check what you entered, or the data may be from a different run."
+            )
+    return fixes
 
 
 def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, status, dx, mfd, n, n_auto, n_review, n_clean, cr_pct):
@@ -359,9 +486,75 @@ def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, stat
     if result.domain_profile:
         row("Domain profile", result.domain_profile)
 
+    # ── Plain-language summary (for someone who doesn't know Buckingham Pi) ─
+    dim_for_summary = getattr(result, "dimensional", None)
+    section("SUMMARY (PLAIN LANGUAGE)")
+    for line in _plain_language_lines(dim_for_summary, n, n_auto, n_review, n_clean, cr_pct):
+        add(f"  {line}")
+    fixes = _concrete_fixes_cli(dim_for_summary)
+    if fixes:
+        add(f"\n  {C['bold']('What to do about it:')}")
+        for fix in fixes:
+            add(f"  {C['cyan']('→')} {fix}")
+
+    # ── Dimensional-analysis engine (authoritative for exclusions/flags) ────
+    dim = getattr(result, "dimensional", None)
+    if dim is not None:
+        section("DIMENSIONAL-ANALYSIS ENGINE")
+        add(f"  {C['dim']('Layers:')} units resolution -> Pi-group discovery -> anchored constants "
+            f"-> bimodal split -> response surface -> semantic/structural bounds -> declared conditions")
+
+        # Units mapping table -- what each column was resolved to, and how
+        # to correct a wrong guess (the CLI equivalent of the playground's
+        # correction dropdown).
+        try:
+            from core.dimensional.dimensions import dimension_display_name
+            cols = sorted(dim.units.columns.items(), key=lambda kv: (-kv[1].confidence, kv[0]))
+            wrong_looking = [c for c, u in cols if u.confidence < 0.6 and u.usable]
+            add(f"\n  {C['bold']('Units mapped (Layer 0):')}")
+            for col, u in cols[:12]:
+                name = dimension_display_name(u.dimension) or "unresolved"
+                src = "user-corrected" if u.source == "user_override" else u.source
+                marker = C["green"]("✓") if u.usable else C["dim"]("·")
+                add(f"    {marker} {col:<22} -> {name:<16} ({u.confidence*100:.0f}%, {src})")
+            if len(cols) > 12:
+                add(C["dim"](f"    … and {len(cols)-12} more (see --json for the full list)"))
+            if wrong_looking:
+                add(f"\n  {C['dim']('If any of these look wrong, correct and re-run:')}")
+                add(f"  {C['cyan'](f'simapi validate {Path(file).name} --unit-override {wrong_looking[0]}=<correct_dimension>')}")
+        except Exception:
+            pass
+
+        confirmed = [law for law in dim.laws if not law.violated_rows]
+        violated = [law for law in dim.laws if law.violated_rows]
+        if confirmed:
+            add(f"  {C['green']('✓')} {len(confirmed)} law(s) confirmed:")
+            for law in confirmed[:5]:
+                add(f"      {law.label}"
+                    + (f" = {law.expected_value:.6g}" if law.expected_value is not None else "")
+                    + f"  (coverage {law.coverage:.0%})")
+            if len(confirmed) > 5:
+                add(C["dim"](f"      … and {len(confirmed)-5} more"))
+        if violated:
+            add(f"  {C['amber']('⚠') if not any(l.kind=='anchored_constant' for l in violated) else C['red']('✗')} "
+                f"{len(violated)} law(s) violated:")
+            for law in violated[:5]:
+                add(f"      {law.label} — {len(law.violated_rows)} row(s), {law.note}")
+            if len(violated) > 5:
+                add(C["dim"](f"      … and {len(violated)-5} more"))
+        if dim.semantic_violations:
+            add(f"  {C['red']('✗')} {len(dim.semantic_violations)} semantic-bound violation(s) "
+                f"(definitional impossibilities, e.g. a fraction outside [0,1])")
+        if dim.units_conflicts:
+            add(f"  {C['amber']('⚠')} {len(dim.units_conflicts)} units conflict(s) "
+                f"(low-confidence label but participates in a verified law)")
+        if not confirmed and not violated and not dim.semantic_violations:
+            add(f"  {C['dim']('No dimensionless laws or anchored constants discovered in these columns —')}")
+            add(C["dim"]("  see 'suppressions' in --json output for why (e.g. unresolved units)."))
+
     # ── Discovered invariants ───────────────────────────────────────────────
     if result.discovered_invariants:
-        section("DISCOVERED PHYSICAL INVARIANTS")
+        section("DISCOVERED PHYSICAL INVARIANTS (APIE, supplementary)")
         for pair, val in list(result.discovered_invariants.items())[:6]:
             add(f"  {C['cyan']('·')} {pair} = {val:.6g}")
         if len(result.discovered_invariants) > 6:
@@ -422,7 +615,18 @@ def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, stat
             for interp in mfd.component_interpretation[:4]:
                 add(f"  {C['cyan']('·')} {interp}")
         if mfd.auto_remove:
+            overlap = len(mfd.auto_remove & result.excluded_indices)
             add(f"\n  {C['amber']('⚠')} {len(mfd.auto_remove)} rows are 10×+ off the physics manifold")
+            if result.excluded_indices:
+                if overlap == len(mfd.auto_remove):
+                    add(f"  {C['dim'](f'All {overlap} of these are already in the {len(result.excluded_indices)} auto-removed above')}"
+                        f"  {C['dim']('(independent confirmation via a different method).')}")
+                elif overlap > 0:
+                    add(f"  {C['dim'](f'{overlap} overlap with the auto-removed rows above; ')}"
+                        f"{C['dim'](f'{len(mfd.auto_remove) - overlap} are additional rows this method flags on its own.')}")
+                else:
+                    add(f"  {C['dim']('These are a DIFFERENT set of rows from the auto-removed count above --')}")
+                    add(f"  {C['dim']('an independent statistical view, not yet reconciled with it.')}")
             add(f"  {C['dim']('These violate the multivariate structure of the simulation data')}")
             add(f"  {C['dim']('even when individual column values look normal.')}")
 
@@ -446,18 +650,26 @@ def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, stat
 
     # ── Causal diagnosis ────────────────────────────────────────────────────
     if dx and dx.matched_failure_modes:
-        section("CAUSAL DIAGNOSIS")
+        section("CAUSAL DIAGNOSIS (heuristic pattern-match)")
+        dim_has_verified_finding = dim is not None and any(
+            law.violated_rows for law in dim.laws if law.kind == "anchored_constant")
+        if dim_has_verified_finding:
+            add(f"  {C['dim']('Note: the DIMENSIONAL-ANALYSIS ENGINE section above already identified a')}")
+            add(f"  {C['dim']('verified cause (a physical-constant violation). Treat this section as')}")
+            add(f"  {C['dim']('supplementary context, not a competing or more authoritative diagnosis.')}")
+            add()
         top = dx.matched_failure_modes[0]
-        add(f"  {C['bold']('Primary finding:')} {C['amber'](top['failure_mode'])}")
-        add(f"  {C['dim']('Confidence:')} {dx.confidence*100:.0f}%  "
+        add(f"  {C['bold']('Best-matching failure-mode category:')} {C['amber'](top['failure_mode'])}")
+        add(f"  {C['dim']('Match confidence:')} {dx.confidence*100:.0f}%  "
             f"{C['dim']('Pipeline stage:')} {dx.pipeline_stage.replace('_',' ')}")
 
         if top.get("evidence"):
-            add(f"\n  {C['bold']('Evidence supporting this diagnosis:')}")
+            add(f"\n  {C['bold']('Statistical evidence for this category match:')}")
             for ev in top["evidence"]:
                 add(f"  {C['cyan']('·')} {ev}")
 
-        add(f"\n  {C['bold']('Most likely causal chain:')}")
+        add(f"\n  {C['bold']('Illustrative causal chain for this failure-mode category')} "
+            f"{C['dim']('(a typical example, not necessarily specific to your columns):')}")
         for i, step in enumerate(dx.causal_chain[:5], 1):
             add(f"  {C['dim'](str(i)+'.')} {step}")
 
@@ -467,7 +679,13 @@ def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, stat
 
         if dx.counterfactual_impact and "undetected" in dx.counterfactual_impact.lower()[:50]:
             add(f"\n  {C['bold']('If this had gone undetected:')}")
-            add(f"  {C['red'](dx.counterfactual_impact[:300])}")
+            impact_text = dx.counterfactual_impact
+            if len(impact_text) > 500:
+                # Truncate at the last sentence boundary within the limit,
+                # never mid-word/mid-sentence -- and mark it as truncated.
+                cutoff = impact_text.rfind(". ", 0, 500)
+                impact_text = (impact_text[:cutoff + 1] if cutoff > 0 else impact_text[:500]) + " […]"
+            add(f"  {C['red'](impact_text)}")
 
         if len(dx.matched_failure_modes) > 1:
             add(f"\n  {C['dim']('Other possible explanations:')}")
@@ -506,22 +724,27 @@ def _build_terminal_report(result, cross_run, df, file, domain, elapsed_ms, stat
         add()
         add(f"  {C['dim']('Tip: Run')} simapi history {C['dim']('to track this run in your cross-run baseline.')}")
     else:
+        step = 0
         if n_auto > 0 and dx:
-            add(f"  {C['bold']('1. Investigate the root cause')}")
+            step += 1
+            add(f"  {C['bold'](f'{step}. Investigate the root cause')}")
             add(f"     {C['dim']('Diagnosed as:')} {dx.pipeline_stage.replace('_',' ')}")
             if dx.investigation_steps:
                 add(f"     {C['cyan']('→')} {dx.investigation_steps[0]}")
 
-        add(f"\n  {C['bold']('2. Get the clean dataset')}")
+        step += 1
+        add(f"\n  {C['bold'](f'{step}. Get the clean dataset')}")
         add(f"     {C['dim']('Run with')} --export clean.csv {C['dim'](f'to save the {n_clean:,} clean rows.')}")
         add(f"     Clean rows: {n_clean:,} / {n:,} ({100-cr_pct:.1f}%)")
 
         if n_review > 0:
-            add(f"\n  {C['bold']('3. Review flagged rows')}")
+            step += 1
+            add(f"\n  {C['bold'](f'{step}. Review flagged rows')}")
             add(f"     {n_review} rows need engineer inspection before training.")
             add(f"     {C['dim']('Run')} simapi validate --report report.md {C['dim']('for full details.')}")
 
-        add(f"\n  {C['bold']('4. Fix the source data')}") 
+        step += 1
+        add(f"\n  {C['bold'](f'{step}. Fix the source data')}")
         add(f"     {C['dim']('After fixing your simulation pipeline, re-run:')}")
         _fname = Path(file).name if file else "<file>"
         add(f"     {C['cyan']('simapi validate ' + _fname + ' --domain ' + domain)}")
@@ -628,7 +851,8 @@ def _build_markdown_report(result, cross_run, df, file, domain, elapsed_ms, stat
         ]
         for flag in result.flagged_for_review[:30]:
             checks = ", ".join(f"`{c}`" for c in flag["checks"][:2])
-            diag = (flag.get("diagnosis") or "")[:80].replace("|", "\\|")
+            diag_raw = flag.get("diagnosis") or ""
+            diag = (diag_raw[:80] + "…" if len(diag_raw) > 80 else diag_raw).replace("|", "\\|")
             rv = flag.get("reconstructed_values") or {}
             recon = "; ".join(f"{k}→{v:.4g}" for k, v in list(rv.items())[:2])
             lines.append(f"| {flag['row_index']} | {flag['max_sigma']:.1f}σ | {checks} | {diag} | {recon} |")
@@ -638,22 +862,38 @@ def _build_markdown_report(result, cross_run, df, file, domain, elapsed_ms, stat
 
     # Causal diagnosis
     if dx and dx.matched_failure_modes:
+        dim = getattr(result, "dimensional", None)
+        dim_has_verified_finding = dim is not None and any(
+            law.violated_rows for law in dim.laws if law.kind == "anchored_constant")
         top = dx.matched_failure_modes[0]
         lines += [
-            "## Causal Diagnosis",
+            "## Causal Diagnosis (heuristic pattern-match)",
             "",
-            f"**Primary finding:** {top['failure_mode']}  ",
-            f"**Confidence:** {dx.confidence*100:.0f}%  ",
+        ]
+        if dim_has_verified_finding:
+            lines += [
+                "> **Note:** the Dimensional-Analysis Engine section above already identified a "
+                "verified cause (a physical-constant violation). Treat this section as "
+                "supplementary context, not a competing or more authoritative diagnosis.",
+                "",
+            ]
+        lines += [
+            f"**Best-matching failure-mode category:** {top['failure_mode']}  ",
+            f"**Match confidence:** {dx.confidence*100:.0f}%  ",
             f"**Pipeline stage:** {dx.pipeline_stage.replace('_', ' ')}  ",
             "",
         ]
         if top.get("evidence"):
-            lines += ["**Evidence:**", ""]
+            lines += ["**Statistical evidence for this category match:**", ""]
             for ev in top["evidence"]:
                 lines.append(f"- {ev}")
             lines.append("")
 
-        lines += ["**Causal chain:**", ""]
+        lines += [
+            "**Illustrative causal chain for this failure-mode category** "
+            "*(a typical example, not necessarily specific to your columns):*",
+            "",
+        ]
         for i, step in enumerate(dx.causal_chain, 1):
             lines.append(f"{i}. {step}")
         lines.append("")
@@ -699,6 +939,25 @@ def _build_markdown_report(result, cross_run, df, file, domain, elapsed_ms, stat
             lines += ["**Physical dimensions:**", ""]
             for interp in mfd.component_interpretation:
                 lines.append(f"- {interp}")
+            lines.append("")
+        if mfd.auto_remove:
+            overlap = len(mfd.auto_remove & result.excluded_indices)
+            lines.append(f"⚠️ **{len(mfd.auto_remove)} rows** are 10×+ off the physics manifold "
+                         f"(they violate the multivariate structure of the simulation data even "
+                         f"when individual column values look normal).")
+            if result.excluded_indices:
+                if overlap == len(mfd.auto_remove):
+                    lines.append(f"All {overlap} of these are already counted in the "
+                                 f"{len(result.excluded_indices)} auto-removed rows above "
+                                 f"(independent confirmation via a different method).")
+                elif overlap > 0:
+                    lines.append(f"{overlap} overlap with the auto-removed rows above; "
+                                 f"{len(mfd.auto_remove) - overlap} are additional rows this "
+                                 f"method flags on its own.")
+                else:
+                    lines.append("These are a **different** set of rows from the auto-removed "
+                                 "count above — an independent statistical view, not yet "
+                                 "reconciled with it.")
             lines.append("")
 
     # Next steps
@@ -791,7 +1050,35 @@ def _build_json_report(result, cross_run, df, file, domain, elapsed_ms, status):
             "components": result.manifold.component_interpretation if result.manifold else [],
         } if result.manifold else None,
         "checks_run": [c["check"] for c in result.test_plan.checks] if result.test_plan else [],
+        "dimensional": _dimensional_json(getattr(result, "dimensional", None)),
     }, indent=2)
+
+
+def _dimensional_json(dim) -> dict | None:
+    """JSON-safe summary of the dimensional-analysis engine's findings, for
+    --json/--sarif consumers and the pre-commit/CI integrations."""
+    if dim is None:
+        return None
+    return {
+        "n_laws_discovered": len(dim.laws),
+        "n_laws_confirmed": sum(1 for law in dim.laws if not law.violated_rows),
+        "laws_confirmed": [
+            {"kind": law.kind, "label": law.label, "columns": list(law.columns),
+             "expected_value": law.expected_value, "coverage": round(law.coverage, 3)}
+            for law in dim.laws if not law.violated_rows
+        ],
+        "laws_violated": [
+            {"kind": law.kind, "label": law.label, "n_violations": len(law.violated_rows),
+             "note": law.note}
+            for law in dim.laws if law.violated_rows
+        ],
+        "n_semantic_violations": len(dim.semantic_violations),
+        "n_units_conflicts": len(dim.units_conflicts),
+        "impossible_rows": sorted(dim.impossible_rows),
+        "inconsistent_rows": sorted(dim.inconsistent_rows),
+        "unsuitable_for_training_rows": sorted(dim.unsuitable_rows),
+        "suppressions": list(dim.suppressions),
+    }
 
 
 def _build_sarif_report(result, file: str, domain: str) -> str:
@@ -888,14 +1175,56 @@ def cmd_validate(args):
     print(f"  {C['dim']('Loaded')} {len(data):,} rows")
 
     domain = _resolve_domain(args, file)
-    conditions = {}
+    conditions = dict(args.get("conditions") or {})
+    unit_overrides = args.get("unit_overrides") or None
     config_key = args.get("config_key") or os.environ.get("SIMAPI_CONFIG_KEY") or f"{domain}:{Path(file).stem}"
+
+    # ── Sweep mode: re-run across a range of one condition instead of a
+    # single validation, to see how sensitive the result is to that value.
+    sweep = args.get("sweep")
+    if sweep:
+        sweep_key, sweep_min, sweep_max, sweep_steps = sweep
+        sweep_steps = max(2, sweep_steps)
+        print(f"  {C['dim']('Sweeping')} {sweep_key} from {sweep_min} to {sweep_max} ({sweep_steps} points)…")
+        rows = []
+        for i in range(sweep_steps):
+            value = sweep_min + (sweep_max - sweep_min) * i / (sweep_steps - 1)
+            sweep_conditions = {**conditions, sweep_key: value}
+            try:
+                r, _, _ = _run_apie(data, domain, sweep_conditions, None, unit_overrides=unit_overrides)
+                dim = getattr(r, "dimensional", None)
+                if dim is not None:
+                    bad_conditions = [ca for ca in dim.condition_assertions if ca.rel_dev > 0.02]
+                    if dim.impossible_rows:
+                        status = "impossible"
+                    elif dim.inconsistent_rows or bad_conditions:
+                        status = "inconsistent"
+                    else:
+                        status = "clean"
+                    excluded = len(dim.impossible_rows) + len(dim.unsuitable_rows)
+                else:
+                    status = "impossible" if r.excluded_indices else "clean"
+                    excluded = len(r.excluded_indices)
+            except Exception as e:
+                status, excluded = f"error: {e}", 0
+            rows.append((value, status, excluded))
+        add = lambda s="": print(s)  # noqa: E731
+        add()
+        add(f"  {sweep_key:<20} {'status':<14} excluded")
+        add(f"  {'-'*20} {'-'*14} --------")
+        for value, status, excluded in rows:
+            color = C["green"] if status == "clean" else (C["red"] if status == "impossible" else C["amber"])
+            add(f"  {value:<20.4g} {color(status):<14} {excluded}")
+        add()
+        add(C["dim"](f"  Each row re-ran the same {len(data):,}-row dataset with {sweep_key} set to that value -- "
+                     f"a sweep shows sensitivity to that condition, not just one spot-check."))
+        return
 
     # Run engine
     print(f"  {C['dim']('Running APIE engine')} [{domain}]…")
     t0 = time.time()
     try:
-        result, cross_run, df = _run_apie(data, domain, conditions, config_key)
+        result, cross_run, df = _run_apie(data, domain, conditions, config_key, unit_overrides=unit_overrides)
     except ImportError as e:
         _fail(f"Engine not available: {e}\n"
               f"  Make sure you're running from the SimAPI project directory.")
@@ -1299,6 +1628,21 @@ def cmd_doctor(args):
         print(f"    {C['dim']('Run from the SimAPI project root directory')}")
         problems += 1
 
+    # Dimensional-analysis engine (primary engine as of this build)
+    try:
+        from core.dimensional import validate as _dim_validate  # noqa: F401
+        from core.dimensional.units_cache import stats as _units_cache_stats
+        _ok("Dimensional-analysis engine (core/dimensional/)")
+        cache_info = _units_cache_stats()
+        n_learned = cache_info["n_learned_columns"]
+        if n_learned:
+            _ok(f"LLM units cache: {n_learned} column(s) learned ({cache_info['path']})")
+        else:
+            print(f"  {C['dim']('·')} LLM units cache: empty — no unusual columns resolved yet")
+    except ImportError as e:
+        print(f"  {C['red']('✗')} Dimensional-analysis engine not found: {e}")
+        problems += 1
+
     # Config
     if CONFIG_DIR.exists():
         _ok(f"Config directory ({CONFIG_DIR})")
@@ -1330,6 +1674,7 @@ def _parse(argv: list[str]) -> dict:
         "_": [], "domain": None, "json": False, "quiet": False,
         "fail_on": None, "report": None, "export": None, "sarif": None,
         "config_key": None, "last": 20, "force": False, "apply": False,
+        "unit_overrides": {}, "sweep": None, "conditions": {},
     }
     i = 0
     while i < len(argv):
@@ -1358,6 +1703,30 @@ def _parse(argv: list[str]) -> dict:
             i += 1
             try: args["last"] = int(argv[i])
             except: pass
+        elif a == "--unit-override" and i+1 < len(argv):
+            # --unit-override v=volume  (repeatable)
+            i += 1
+            if "=" in argv[i]:
+                col, dim = argv[i].split("=", 1)
+                args["unit_overrides"][col.strip()] = dim.strip()
+        elif a == "--condition" and i+1 < len(argv):
+            # --condition altitude=5000  (repeatable) -- a declared condition value
+            i += 1
+            if "=" in argv[i]:
+                key, val = argv[i].split("=", 1)
+                try: args["conditions"][key.strip()] = float(val.strip())
+                except ValueError: pass
+        elif a == "--sweep" and i+1 < len(argv):
+            # --sweep altitude=0:11000:6  (condition=min:max:steps)
+            i += 1
+            if "=" in argv[i]:
+                key, rng = argv[i].split("=", 1)
+                parts = rng.split(":")
+                if len(parts) == 3:
+                    try:
+                        args["sweep"] = (key.strip(), float(parts[0]), float(parts[1]), int(parts[2]))
+                    except ValueError:
+                        pass
         elif not a.startswith("--"):
             args["_"].append(a)
         i += 1

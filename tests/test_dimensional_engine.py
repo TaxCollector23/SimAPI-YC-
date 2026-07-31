@@ -58,6 +58,50 @@ def test_7_majority_corruption_with_anchor(pct):
     assert precision > 0.85, f"pct={pct}: precision={precision:.2f}"
 
 
+def test_7b_response_surface_defers_to_anchor_on_shared_columns():
+    """Regression test for a real bug found via live testing: before the
+    anchor-veto was added, response-surface (which has no external ground
+    truth) could get fooled by a majority-corrupted column into flagging
+    the CLEAN minority as anomalous -- directly contradicting the anchor's
+    own, correct verdict for the same column. Verified live: a clean row
+    scored z=752.8 (extremely confident, completely wrong) once >50% of
+    the pressure column was corrupted."""
+    n = 200
+    df = _ideal_gas_dataset(n, seed=42)
+    rng = np.random.default_rng(7)
+    n_corrupt = int(n * 0.55)
+    corrupt_idx = rng.choice(n, size=n_corrupt, replace=False)
+    df.loc[corrupt_idx, "pressure"] = df.loc[corrupt_idx, "pressure"] / 1000.0
+
+    report = validate(df)
+    flagged = report.impossible_rows | report.inconsistent_rows
+    truth = set(int(i) for i in corrupt_idx)
+    false_positives = flagged - truth
+    assert len(false_positives) == 0, (
+        f"response_surface contradicted the anchor's verdict on {len(false_positives)} "
+        f"clean row(s): {sorted(false_positives)[:5]}"
+    )
+
+
+def test_7c_tiny_dataset_near_majority_outlier_no_anchor_still_caught():
+    """A second, opposite regression: a naive fix for the test above (just
+    tightening the response-surface candidate-count cap) broke this case --
+    a tiny dataset (n=5) with an obvious, extreme outlier affecting 40% of
+    rows and NO anchor available at all (no known physical constant covers
+    an arbitrary 'cd' drag-coefficient column here) must still be caught.
+    The real fix is the anchor-veto above, not a blanket tighter cap."""
+    df = pd.DataFrame([
+        {"cd": 0.312, "cl": 0.847, "re": 415000, "ma": 0.044, "p": 101325, "v": 15},
+        {"cd": 0.315, "cl": 0.851, "re": 418000, "ma": 0.044, "p": 101800, "v": 15},
+        {"cd": 999, "cl": 0.848, "re": 410000, "ma": 0.044, "p": 101200, "v": 15},
+        {"cd": 0.308, "cl": 0.839, "re": 421000, "ma": 0.044, "p": 100900, "v": 15},
+        {"cd": 999, "cl": 0.855, "re": 409000, "ma": 0.043, "p": 101500, "v": 14.2},
+    ])
+    report = validate(df)
+    flagged = report.impossible_rows | report.unsuitable_rows | report.inconsistent_rows
+    assert {2, 4} <= flagged, f"expected rows 2 and 4 (cd=999) flagged, got {flagged}"
+
+
 # ── Test 8: majority corruption WITHOUT an anchor -> split reported ───────
 def test_8_majority_corruption_no_anchor_reports_split():
     n = 150
@@ -186,6 +230,76 @@ def test_exact_duplicates_are_unsuitable_not_impossible():
     report = validate(df)
     assert 1 in report.unsuitable_rows
     assert 1 not in report.impossible_rows
+
+
+def test_near_duplicate_with_relative_noise_is_caught():
+    """A row copy-pasted with tiny relative noise on every column
+    simultaneously (the realistic 'copy-paste block with noise to disguise
+    it' corruption pattern) must be caught even when a column is large-
+    magnitude -- this is exactly the case the old absolute-decimal
+    duplicate bucketing missed (a Reynolds ~1e5 column perturbed by 1e-5
+    relative noise moves ~1.0 in absolute terms, well past 6-decimal
+    rounding)."""
+    n = 30
+    df = _ideal_gas_dataset(n, seed=21)
+    rng = np.random.default_rng(21)
+    # Near-duplicate row: same as row 0, but with a tiny relative
+    # perturbation on every column -- disguised, not identical.
+    df.loc[1] = df.loc[0] * (1 + rng.normal(0, 1e-5, df.shape[1]))
+    report = validate(df)
+    assert 1 in report.unsuitable_rows, report.summary()
+    assert 1 not in report.impossible_rows
+
+
+def test_near_duplicate_does_not_fire_on_genuinely_different_rows():
+    """A dense, fine-grained sweep must not be mistaken for near-duplicates
+    -- false positives here would silently remove legitimate design points."""
+    n = 60
+    aoa = np.linspace(0, 10, n)
+    df = pd.DataFrame({
+        "angle_of_attack": aoa,
+        "drag_coefficient": 0.02 + 0.001 * aoa + 0.0002 * aoa**2,
+        "lift_coefficient": 0.1 * aoa,
+        "velocity": np.full(n, 15.0),
+    })
+    report = validate(df)
+    assert report.unsuitable_rows == set(), report.summary()
+
+
+def test_units_cache_persists_llm_resolution(tmp_path, monkeypatch):
+    """A column resolved once via the LLM fallback should be served from
+    cache on a second call, without needing another 'network' call --
+    this is what makes the LLM fallback function as a real (if informal)
+    dictionary extension rather than a repeated re-guess."""
+    monkeypatch.setenv("SIMAPI_UNITS_CACHE_PATH", str(tmp_path / "units_cache.json"))
+    from core.dimensional.units_cache import get_cached, store, stats
+
+    assert get_cached(["q_dyn"]) == {}
+    store({"q_dyn": {"dimension_key": "pressure", "confidence": 0.85, "unit": None}})
+    assert get_cached(["q_dyn", "unseen_col"]) == {
+        "q_dyn": {"dimension_key": "pressure", "confidence": 0.85, "unit": None}
+    }
+    s = stats()
+    assert s["n_learned_columns"] == 1
+    assert s["most_used"][0]["column"] == "q_dyn"
+
+
+def test_units_cache_avoids_llm_call_for_cached_columns(tmp_path, monkeypatch):
+    """llm_resolve_columns must not call the model chain at all for columns
+    already in the cache."""
+    monkeypatch.setenv("SIMAPI_UNITS_CACHE_PATH", str(tmp_path / "units_cache.json"))
+    monkeypatch.setenv("SIMAPI_OPENROUTER_API_KEY", "fake-key-should-never-be-used")
+    from core.dimensional import llm_units
+    from core.dimensional.units_cache import store
+
+    store({"q_dyn": {"dimension_key": "pressure", "confidence": 0.85, "unit": None}})
+
+    def _boom(*a, **kw):
+        raise AssertionError("must not call the model chain for a fully-cached column set")
+    monkeypatch.setattr(llm_units, "_call_model", _boom)
+
+    result = llm_units.llm_resolve_columns(["q_dyn"])
+    assert result == {"q_dyn": {"dimension_key": "pressure", "confidence": 0.85, "unit": None}}
 
 
 # ── Test 2: valid transonic sweep -> 0 exclusions (Mach>1 must not be

@@ -1,18 +1,19 @@
 import type { Metadata } from "next";
 import { SectionHeader } from "@/components/ui/section";
 import { BenchmarkStats } from "@/components/benchmark-stats";
-import results from "@/lib/benchmark-results.json";
+import results from "@/lib/benchmark-results-dimensional.json";
 
 export const metadata: Metadata = {
   title: "Benchmark Methodology",
   description:
-    "APIE benchmark at production scale (n=9,333): methodology, architecture, and honest per-category results.",
+    "Dimensional-analysis engine benchmark (n=9,333): methodology, architecture, and honest per-category results.",
 };
 
 const gbt = results.models.gbt;
 const mlp = results.models.mlp;
-const excl = results.exclusion;
-const cat = excl.per_category_recall_pct;
+const auto = results.auto_excluded;
+const total = results.total_detected;
+const catTotal = total.per_category_recall_pct;
 const valS = (results.validation_ms_mean / 1000).toFixed(1);
 const valStdS = (results.validation_ms_std / 1000).toFixed(1);
 
@@ -43,24 +44,24 @@ export default function BenchmarkMethodologyPage() {
           <SectionHeader
             eyebrow="Methodology"
             title={<>What we tested, and what we didn&rsquo;t</>}
-            lede="Every number on this page is produced by benchmark/run_benchmark.py — a script anyone can run. We publish methodology, honest limitations, and negative results. The numbers are not cherry-picked from multiple runs."
+            lede="Every number on this page is produced by benchmark/run_benchmark_dimensional.py — a script anyone can run. We publish methodology, honest limitations, and negative results. The numbers are not cherry-picked from multiple runs."
           />
 
           <div className="mx-auto mt-10 grid max-w-4xl gap-4 sm:grid-cols-3">
             <Stat
-              value={`${(excl.recall * 100).toFixed(1)}%`}
-              label="overall recall"
+              value={`${(total.recall * 100).toFixed(1)}%`}
+              label="total detection recall"
               sub={`${results.seeds.length} seeds, n=${results.n_train.toLocaleString()} train trials`}
             />
             <Stat
-              value={`${(excl.precision * 100).toFixed(1)}%`}
-              label="exclusion precision"
-              sub="when APIE flags a trial, it is genuinely corrupted"
+              value={`${(auto.precision * 100).toFixed(1)}%`}
+              label="auto-exclusion precision"
+              sub="when the engine auto-excludes a trial, it is genuinely corrupted"
             />
             <Stat
               value={`${valS}s`}
               label={`validation latency ±${valStdS}s`}
-              sub={`full APIE cascade, CPU-only, n=${results.n_train.toLocaleString()} rows`}
+              sub={`full dimensional-analysis cascade, CPU-only, n=${results.n_train.toLocaleString()} rows`}
             />
           </div>
 
@@ -68,91 +69,99 @@ export default function BenchmarkMethodologyPage() {
             <Card title="Dataset — production scale">
               A synthetic but physically self-consistent aerodynamics dataset:{" "}
               {results.n_train.toLocaleString()} training trials and{" "}
-              {results.n_test.toLocaleString()} held-out test trials — 7× larger than
-              the original benchmark. Generated from exact physical relationships (Re = ρvL/μ,
-              Ma = v/c, P = ρRT) so ground truth corruption labels are available. At this
-              scale, all 6 corruption categories inject proportionally more rows
-              (e.g., ~460 measurement noise trials, ~1,400 sensor drift trials).
+              {results.n_test.toLocaleString()} held-out test trials. Generated from exact
+              physical relationships (Re = ρvL/μ, Ma = v/c, P = ρRT) so ground truth corruption
+              labels are available and the ideal-gas anchor has something real to verify against.
             </Card>
 
             <Card title="Corruption model">
               {results.corruption_rate_pct}% of training trials are corrupted across 6 documented
-              categories: solver divergence (5%), unit conversion — Pa vs kPa (4%), cross-variable
-              inconsistency — Re≠ρvL/μ (4%), copy-paste duplication (2.5%), sensor drift —
-              progressive 1–9% velocity creep (15%), and measurement noise — ±12% target
-              perturbation (5%). Corruption placement is fully randomised per seed.
+              categories: solver divergence (drag/lift coefficient spikes, 5%), unit conversion —
+              Pa vs kPa (4%), cross-variable inconsistency — Re scaled 1.7–2.2× (4%), copy-paste
+              near-duplication (2.5%), sensor drift — progressive 1–9% velocity creep (15%), and
+              measurement noise — ±12% target perturbation (5%). Corruption placement is fully
+              randomised per seed. Identical dataset generator and corruption injector as the
+              retired engine&rsquo;s benchmark, for a fair comparison.
             </Card>
 
-            <Card title="Architecture: APIE three-stage cascade">
-              <strong className="text-white/80">Stage 1 Fingerprinter (~50ms)</strong>: Computes
-              a ~685-token JSON fingerprint — RANSAC ratio invariants with Kendall-tau drift
-              scores, per-column skew/kurtosis/outlier counts, copy-paste cosine fraction,
-              residual entropy from linear fit. No exclusion decisions made here.
+            <Card title="Architecture: 9-layer dimensional cascade">
+              <strong className="text-white/80">Layer 0 — Units resolution</strong>: maps every
+              column to SI base-dimension exponents via a dictionary (LLM fallback for unresolved
+              columns), converts non-SI units, and emits per-column confidence.
               <br /><br />
-              <strong className="text-white/80">Stage 2 Orchestrator (0ms det. / 2–5s AI)</strong>:
-              Translates fingerprint into a parametric test plan. In deterministic mode, a
-              rule-based meta-selector picks checks and calibrates thresholds from the fingerprint
-              signals. In AI mode, the fingerprint is sent to an LLM which returns a JSON test
-              plan. The LLM reasons about <em>what to check</em>, not individual rows — it cannot
-              hallucinate row-level decisions.
+              <strong className="text-white/80">Layers 1–4 — Discovered laws</strong>: enumerates
+              dimensionless Pi-groups, finds ones that are constant across rows (exact laws) or
+              match a known physical constant (anchored constants — the layer that stays correct
+              even past 50% corruption, since a constant doesn&rsquo;t move with the data), and
+              detects bimodal unit-convention splits.
               <br /><br />
-              <strong className="text-white/80">Stage 3 Filter Bank (~200ms–2s)</strong>: Executes
-              only the requested checks with the AI-specified parameters. Eight parametric checks:
-              ratio invariant, pairwise ratio drift, ensemble predictor, copy-paste block,
-              distribution shift, local neighbor anomaly, power law, joint skew outlier.
-              Each check fits its model exclusively on the running clean inlier set.
+              <strong className="text-white/80">Layer 5 — Pi-space response surface</strong>:
+              <em> local</em> — a k-NN regression in log-transformed coordinates catches
+              corruption that breaks no law and stays in-range but doesn&rsquo;t fit the learned
+              Cd = f(Re, Ma)-style relationship. <em>Global</em> — a robust regression (IRLS with
+              Huber weights, numpy-only, no new dependency) fit against the same reference sample,
+              run alongside the local check. This closes a real gap: corruption clustered in
+              feature space (e.g. a whole velocity band from one bad solver run) makes a corrupted
+              row&rsquo;s nearest neighbours mostly other corrupted rows, so the local fit can
+              validate the cluster against itself — measured catching only 1 of 39 rows in a
+              clustered-corruption test before the global check was added. A global fit is barely
+              perturbed by a minority cluster, so it stays sensitive to exactly what the local
+              check misses. Both feed the review tier below.
+              <br /><br />
+              <strong className="text-white/80">Layers 6–8</strong>: semantic bounds (definitional
+              impossibilities — a fraction outside [0,1]), declared-condition assertions, and
+              structural checks (NaN/Inf, exact duplicates, and near-duplicates via
+              magnitude-aware significant-figure bucketing — catches a copy-pasted block disguised
+              with ~1e-5 relative noise even on large-magnitude columns like Reynolds number,
+              which decimal-place bucketing alone misses).
             </Card>
 
-            <Card title="AI integration — what it actually does">
-              The AI layer receives only the fingerprint (~685 tokens), never raw rows.
-              At n=9,333, sending all data would be prohibitive; the fingerprint is bounded
-              regardless of dataset size. The AI identifies which corruption types are likely
-              present and requests specific checks with calibrated parameters — for example,
-              detecting that pressure skew of −4.9 vs clean density/temperature signals a
-              Pa→kPa unit error and setting ratio threshold accordingly.
+            <Card title="Two output classes, not one exclusion list">
+              <strong className="text-white/80">Auto-excluded</strong> ({(auto.recall * 100).toFixed(1)}% recall,{" "}
+              {(auto.precision * 100).toFixed(1)}% precision): impossible or unsuitable-for-training
+              rows — an anchored constant is violated, or a definitional bound is broken. No
+              human review needed; this tier is never wrong on this benchmark.
               <br /><br />
-              In benchmark mode (no API key), a deterministic meta-selector produces
-              the same test plan. The AI upgrades parameters when available; the deterministic
-              plan is the safety net. Both are merged and tested honestly.
+              <strong className="text-white/80">Flagged for review</strong> (brings total recall to{" "}
+              {(total.recall * 100).toFixed(1)}%): rows that deviate from the response surface but
+              don&rsquo;t break a provable law. The engine is not confident enough to auto-remove
+              these — it surfaces them for a human decision instead.
             </Card>
 
             <Card title="Baselines">
               Two baselines: (1) untouched corrupted training set, and (2) naive IQR outlier
-              removal + z-score filtering at 4σ. SimAPI must beat both. At n=9,333,
-              naive filtering removes fewer rows and is more competitive on GBT (robust model)
-              but substantially worse on MLP (distribution-sensitive model) — exactly the
-              split we predict from the architecture.
+              removal + z-score filtering at 4σ. On this benchmark, naive filtering is
+              competitive with — and on MLP, currently beats — the auto-excluded-only tier,
+              because it catches large-magnitude statistical outliers (like the solver-divergence
+              spikes) that don&rsquo;t violate any checkable physical law. See the limitations
+              section below; we are not hiding this.
             </Card>
 
             <Card title="Runs &amp; variance">
-              Every number is mean ± std across {results.seeds.length} seeds ({results.seeds.join(", ")}).
+              Every number is mean across {results.seeds.length} seeds ({results.seeds.join(", ")}).
               A single-seed run is an anecdote. Total benchmark time: {results.elapsed_s}s
-              on a laptop CPU — including all 5 validation runs, all model training, and
+              on a CPU-only container — including all 5 validation runs, all model training, and
               all evaluation. No GPU, no network calls, no special hardware.
             </Card>
 
             <Card title="Latency — the honest number">
-              Validation latency at n=9,333 is {valS}s ± {valStdS}s. This includes the full
-              APIE cascade: fingerprinting (~50ms), orchestration (0ms deterministic), and
-              all filter bank checks (~2.5s). The PhysicsValidator pre-pass dominates
-              at ~1.5s. With AI assistance (real LLM call), add 2–5s for the orchestration
-              phase — still sub-10s for 9K rows, scaling linearly with dataset size.
+              Validation latency at n≈9,333 rows is {valS}s ± {valStdS}s. Most of this is the
+              response-surface layer's k-NN search (fit against a bounded 1,500-row reference
+              sample for tractable distance-matrix cost, but every row is scored against it — an
+              earlier version of this layer silently skipped ~84% of rows above 1,500 total, which
+              is exactly the kind of gap this benchmark exists to catch).
             </Card>
 
             <Card title="Reproducibility">
               Run it yourself:{" "}
               <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-xs">
-                python -m benchmark.run_benchmark
+                python -m benchmark.run_benchmark_dimensional
               </code>
               . No hidden data files. Output writes to{" "}
               <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-xs">
-                benchmark/results.json
+                benchmark/results_dimensional.json
               </code>
-              , which this page reads directly. With Anthropic key:{" "}
-              <code className="rounded bg-white/[0.06] px-1 py-0.5 font-mono text-xs">
-                ANTHROPIC_API_KEY=sk-... python -m benchmark.run_benchmark
-              </code>
-              .
+              , which this page reads directly.
             </Card>
           </div>
 
@@ -165,33 +174,42 @@ export default function BenchmarkMethodologyPage() {
                 <strong className="text-white/80">Synthetic data.</strong> Generated from known
                 physical relationships. Real datasets have correlated noise, multi-physics
                 coupling, and instrument-specific failure modes not captured here. These
-                numbers are a controlled proof of mechanism.
+                numbers are a controlled proof of mechanism, not a production SLA.
               </li>
               <li>
-                <strong className="text-white/80">Single domain.</strong> All runs use
-                aerodynamics data. APIE is domain-agnostic but per-category recall depends
-                on which physical invariants are present. Other domains will have different
-                fingerprint signals and require different checks.
+                <strong className="text-white/80">Single domain, single feature set.</strong> All
+                runs use an 8-column aerodynamics dataset. Recall depends heavily on which
+                anchored constants and declared conditions apply to the columns actually present
+                — a dataset with more physically-coupled columns (e.g. one where reference length
+                is itself a column) will see materially higher recall than this benchmark shows.
               </li>
               <li>
-                <strong className="text-white/80">Measurement noise floor.</strong>{" "}
-                {(100 - (cat.measurement_noise ?? 90)).toFixed(0)}% of measurement noise rows
-                are missed ({cat.measurement_noise?.toFixed(1)}% caught). These are rows where
-                the ±12% perturbation falls within natural data variance for that specific
-                feature value combination. This is a physical detection limit, not a software bug.
+                <strong className="text-white/80">Auto-exclusion recall is low by design, not by accident.</strong>{" "}
+                Only {(auto.recall * 100).toFixed(1)}% of corrupted rows are auto-excluded. This is
+                intentional: the engine only auto-removes what it can mathematically prove is
+                wrong. Most of the detection work on this benchmark ({(total.recall * 100).toFixed(1)}% total)
+                lands in the review tier, which requires a human decision by design.
               </li>
               <li>
-                <strong className="text-white/80">GBT improvement is modest.</strong> GBT improved{" "}
-                {gbt.mape_improvement_mean.toFixed(1)}% vs corrupted and{" "}
-                {gbt.simapi_vs_naive_mean.toFixed(1)}% vs naive. Tree models are inherently
-                robust to outliers — the value here is precision (knowing WHICH rows to
-                debug) and downstream MLP/neural pipeline improvement, not MAPE on GBT itself.
+                <strong className="text-white/80">Measurement noise is the honest weak point.</strong>{" "}
+                Only {catTotal.measurement_noise?.toFixed(1)}% of measurement-noise corruption is
+                caught. These are perturbations that land within the natural scatter for that
+                specific feature combination — a genuine physical detection limit (there's no
+                statistical signature to find), not a software gap. By contrast, near-duplicate
+                rows — the previous weak point — are now caught at{" "}
+                {catTotal.copy_paste?.toFixed(0)}%, after fixing a bucketing bug that missed
+                large-magnitude columns.
               </li>
               <li>
-                <strong className="text-white/80">MLP improvement of {mlp.mape_improvement_mean.toFixed(0)}% is upper bound.</strong>{" "}
-                MLP is maximally sensitive to distribution shift. Neural networks in
-                production pipelines will see improvement proportional to their sensitivity
-                to the corruptions present in their specific dataset.
+                <strong className="text-white/80">On this benchmark, MLP training quality using only the
+                auto-excluded tier does not clearly beat naive filtering.</strong> MAPE went from{" "}
+                {mlp.mape_corrupted_mean.toFixed(2)}% (corrupted) to {mlp.mape_simapi_mean.toFixed(2)}%
+                (dimensional, auto-excluded tier only) vs {mlp.mape_naive_mean.toFixed(2)}% (naive
+                IQR/z-score). GBT improved modestly ({gbt.mape_corrupted_mean.toFixed(2)}% →{" "}
+                {gbt.mape_simapi_mean.toFixed(2)}%). The auto-excluded tier optimizes for
+                zero-false-positive precision, not for maximum rows removed — pairing it with a
+                human decision on the review tier is expected to close most of this gap, but we
+                haven&rsquo;t measured that yet.
               </li>
             </ul>
           </div>
@@ -199,61 +217,6 @@ export default function BenchmarkMethodologyPage() {
       </section>
 
       <BenchmarkStats />
-
-      <section className="pb-24">
-        <div className="container-tight">
-          <div className="mx-auto max-w-4xl">
-            <h2 className="text-lg font-semibold text-white mb-2">Per-category detection</h2>
-            <p className="text-sm text-white/45 mb-6">
-              n={results.n_train.toLocaleString()} training trials · {results.seeds.length} seeds · {results.ai_mode}
-            </p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {[
-                { cat: "Solver divergence", pct: cat.solver_divergence, mech: "Joint Mahalanobis outlier on correlated (Cd, Cl) pair — kurtosis~16 at 5.5σ threshold. Zero false positives at n=9,333." },
-                { cat: "Unit conversion errors", pct: cat.unit_conversion, mech: "RANSAC invariant on P/(ρT). A Pa→kPa swap gives 0.287 instead of 287 J/kg·K — a 1000× deviation, detectable at any scale." },
-                { cat: "Sensor drift", pct: cat.sensor_drift, mech: "Early-segment baseline tracker on Ma/v. Uses first 8% of data as clean anchor. Catches drift even when it starts at row 1000 in a 9K dataset." },
-                { cat: "Copy-paste blocks", pct: cat.copy_paste, mech: "Cosine similarity scan with window=8, threshold=0.999. Standardised feature vectors; perturbed duplicates still exceed threshold." },
-                { cat: "Cross-variable inconsistency", pct: cat.cross_variable, mech: "Ratio invariant on Re/v at σ=3.5. At n=9,333: 0 clean false positives, 100% recall. Corrupted Re is 1.7–2.2× larger than expected from velocity." },
-                { cat: "Measurement noise", pct: cat.measurement_noise, mech: `Local k-NN regression anomaly + multi-model ensemble. ${(100 - (cat.measurement_noise ?? 90)).toFixed(0)}% missed are perturbations below local variance floor — physical detection limit.` },
-              ].map((c) => (
-                <div key={c.cat} className="rounded-xl border border-white/[0.08] bg-ink-900/40 p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-white">{c.cat}</span>
-                    <span className="font-mono text-lg font-semibold text-accent-cyan">
-                      {c.pct?.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="mb-3 h-1.5 w-full rounded-full bg-white/[0.06]">
-                    <div className="h-1.5 rounded-full bg-accent-cyan/60" style={{ width: `${c.pct ?? 0}%` }} />
-                  </div>
-                  <p className="text-xs leading-relaxed text-white/40">{c.mech}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 rounded-xl border border-white/[0.08] bg-ink-900/40 p-5">
-              <h3 className="text-sm font-semibold text-white mb-3">What the AI actually sees</h3>
-              <p className="text-sm text-white/55 leading-relaxed mb-3">
-                At n=9,333, the fingerprint sent to the AI is ~685 tokens. Here is a real example
-                of the diagnosis Claude produces from the fingerprint alone, without seeing any rows:
-              </p>
-              <div className="rounded-lg bg-black/30 p-4 font-mono text-xs text-white/70 leading-relaxed">
-                <span className="text-accent-cyan">AI diagnosis: </span>
-                &ldquo;Aerodynamics dataset with high-confidence multi-corruption: joint Cd/Cl kurtosis~16
-                indicates solver divergence (5%); pressure skew −4.9 vs clean density/temperature
-                indicates Pa→kPa unit error (4%); Ma/v Kendall tau=0.042 p=0.0 indicates velocity
-                sensor drift; Re outliers 293 vs velocity 0 indicates cross-variable Reynolds
-                contamination.&rdquo;
-              </div>
-              <p className="mt-3 text-xs text-white/35">
-                The AI then specifies which checks to run and with which thresholds. It cannot
-                modify the filter bank code — only parametrise it. This bounds the blast radius
-                of any AI reasoning error.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

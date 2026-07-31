@@ -4,9 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   LayoutDashboard, KeyRound, Activity, FlaskConical, BookOpen, Settings as SettingsIcon,
-  Copy, Check, Trash2, Plus, LogOut, ExternalLink, Loader2, BarChart3, ScrollText, Radar,
+  Copy, Check, Trash2, Plus, ExternalLink, Loader2, BarChart3, ScrollText, Radar,
 } from "lucide-react";
-import { useAuth } from "@/lib/auth";
 import {
   listKeys, createKey, revokeKey,
   type ApiKeyRecord,
@@ -15,7 +14,6 @@ import {
   usageStats, listRuns as listRunHistory,
   type UsageStats, type RunRecord,
 } from "@/lib/run-history";
-import { AuthScreen } from "./auth-screen";
 import { ValidationDashboard } from "./validation-dashboard";
 import { AnalyticsPanel } from "./analytics-panel";
 import { LogsPanel } from "./logs-panel";
@@ -37,28 +35,12 @@ const NAV: { id: Section; label: string; icon: typeof LayoutDashboard }[] = [
 ];
 
 export function DashboardApp() {
-  const { user, loading } = useAuth();
   const [section, setSection] = useState<Section>("overview");
   const [inspectRunId, setInspectRunId] = useState<string | null>(null);
 
   function goInspect(id: string) {
     setInspectRunId(id);
     setSection("inspector");
-  }
-
-  if (loading) {
-    return (
-      <div className="flex min-h-[70vh] items-center justify-center pt-24">
-        <Loader2 className="h-6 w-6 animate-spin text-white/40" />
-      </div>
-    );
-  }
-  if (!user) {
-    return (
-      <div className="container-tight pb-24">
-        <AuthScreen />
-      </div>
-    );
   }
 
   return (
@@ -109,22 +91,20 @@ export function DashboardApp() {
 
 // ── Overview ──────────────────────────────────────────────────────────────────
 function Overview({ onNavigate }: { onNavigate: (s: Section) => void }) {
-  const { user } = useAuth();
   const [stats, setStats] = useState<UsageStats | null>(null);
   const [hasKey, setHasKey] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
     setStats(usageStats());
-    setHasKey(listKeys(user.uid).length > 0);
-  }, [user]);
+    setHasKey(listKeys().length > 0);
+  }, []);
 
-  if (!stats || !user) return null;
+  if (!stats) return null;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold text-white">Welcome back, {user.name.split(" ")[0]}</h1>
+        <h1 className="text-2xl font-semibold text-white">Overview</h1>
         <p className="mt-1 text-sm text-white/50">Here&apos;s your validation activity.</p>
       </div>
 
@@ -137,8 +117,8 @@ function Overview({ onNavigate }: { onNavigate: (s: Section) => void }) {
       {!hasKey && (
         <div className="flex flex-col items-start gap-3 rounded-2xl border border-accent-blue/30 bg-accent-blue/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-sm font-medium text-white">Generate your first API key</p>
-            <p className="text-xs text-white/50">You&apos;ll need a key to call the API from the SDK or CLI.</p>
+            <p className="text-sm font-medium text-white">Generate an API key (optional)</p>
+            <p className="text-xs text-white/50">The API is open by default — no key required. Generate one if you're running your own gated deployment.</p>
           </div>
           <button onClick={() => onNavigate("keys")} className="btn-accent shrink-0">
             <Plus className="h-4 w-4" /> Create API key
@@ -236,7 +216,6 @@ function StatusPill({ status }: { status: string }) {
 
 // ── API Keys ──────────────────────────────────────────────────────────────────
 function ApiKeys() {
-  const { user } = useAuth();
   const [keys, setKeys] = useState<ApiKeyRecord[]>([]);
   const [newName, setNewName] = useState("");
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -244,14 +223,13 @@ function ApiKeys() {
   const [creating, setCreating] = useState(false);
 
   const refresh = useCallback(() => {
-    if (user) setKeys(listKeys(user.uid));
-  }, [user]);
+    setKeys(listKeys());
+  }, []);
   useEffect(refresh, [refresh]);
 
   async function create() {
-    if (!user) return;
     setCreating(true);
-    const { raw } = await createKey(user.uid, newName);
+    const { raw } = await createKey(newName);
     setRevealed(raw);
     setNewName("");
     setCreating(false);
@@ -262,7 +240,7 @@ function ApiKeys() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-white">API Keys</h1>
-        <p className="mt-1 text-sm text-white/50">Keys authenticate your API, SDK, and CLI requests.</p>
+        <p className="mt-1 text-sm text-white/50">The API is open by default — no key required. Keys here are only useful if you're running your own gated deployment.</p>
       </div>
 
       {revealed && (
@@ -329,7 +307,7 @@ function ApiKeys() {
                   <td className="p-3 text-right">
                     <button
                       onClick={() => {
-                        if (user) { revokeKey(user.uid, k.id); refresh(); }
+                        revokeKey(k.id); refresh();
                       }}
                       className="rounded-lg p-2 text-white/30 hover:bg-white/5 hover:text-fail"
                       aria-label="Revoke key"
@@ -349,15 +327,13 @@ function ApiKeys() {
 
 // ── Usage ─────────────────────────────────────────────────────────────────────
 function Usage() {
-  const { user } = useAuth();
   const [runs, setRuns] = useState<RunRecord[]>([]);
   const [stats, setStats] = useState<UsageStats | null>(null);
 
   useEffect(() => {
-    if (!user) return;
     setRuns(listRunHistory());
     setStats(usageStats());
-  }, [user]);
+  }, []);
 
   if (!stats) return null;
   return (
@@ -384,22 +360,19 @@ function RunSimulation() {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function SettingsPanel() {
-  const { user, signOut } = useAuth();
-  if (!user) return null;
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-white">Settings</h1>
-        <p className="mt-1 text-sm text-white/50">Manage your account and session.</p>
+        <p className="mt-1 text-sm text-white/50">No account required — this dashboard runs entirely against your browser&apos;s local storage.</p>
       </div>
 
       <div className="card p-5">
-        <h2 className="mb-4 text-sm font-semibold text-white">Account</h2>
+        <h2 className="mb-4 text-sm font-semibold text-white">Local data</h2>
         <dl className="space-y-3 text-sm">
-          <Row label="Name" value={user.name} />
-          <Row label="Email" value={user.email} />
-          <Row label="User ID" value={<code className="font-mono text-xs text-white/50">{user.uid}</code>} />
-          <Row label="Auth backend" value="Local (browser)" />
+          <Row label="API keys stored" value={String(listKeys().length)} />
+          <Row label="Validation runs stored" value={String(listRunHistory().length)} />
+          <Row label="Storage" value="Browser localStorage (this device only)" />
         </dl>
       </div>
 
@@ -410,17 +383,14 @@ function SettingsPanel() {
           <button
             onClick={() => {
               if (confirm("Clear all local API keys and validation history?")) {
-                localStorage.removeItem(`simapi.keys.${user.uid}`);
-                localStorage.removeItem(`simapi.runs.${user.uid}`);
+                localStorage.removeItem("simapi.keys.local");
+                localStorage.removeItem("simapi.runs.local");
                 location.reload();
               }
             }}
             className="btn-ghost"
           >
             <Trash2 className="h-4 w-4" /> Clear local data
-          </button>
-          <button onClick={() => signOut()} className="btn-ghost">
-            <LogOut className="h-4 w-4" /> Sign out
           </button>
         </div>
       </div>

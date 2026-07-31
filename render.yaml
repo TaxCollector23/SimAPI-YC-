@@ -3,8 +3,10 @@ services:
     name: simapi-engine
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api.server:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn api.server:app --host 0.0.0.0 --port $PORT --workers ${SIMAPI_WORKERS:-2}
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
+      - key: SIMAPI_WORKERS
+        value: "2"
     plan: free

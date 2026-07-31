@@ -6,10 +6,10 @@ import { aiReview, type AiReview } from "@/lib/ai-review";
  * POST /api/v1/demo
  *
  * Runs the playground's one-click demo. When PYTHON_API_URL is configured,
- * proxies straight to the self-hosted backend's /v1/demo (the full 1700+
- * check engine, pristine 500-trial dataset designed to pass cleanly), then
- * runs the AI review locally with Vercel's own OpenRouter keys — same as
- * /api/v1/validate — rather than relying on the Python backend's own AI
+ * proxies straight to the self-hosted backend's /v1/demo (the dimensional-
+ * analysis engine, pristine 500-trial dataset designed to pass cleanly),
+ * then runs the AI review locally with Vercel's own OpenRouter keys — same
+ * as /api/v1/validate — rather than relying on the Python backend's own AI
  * status, which depends on keys being configured separately on Render.
  * Falls back to the local TypeScript lite engine only if that backend is
  * unreachable, so the demo always returns something.
@@ -127,7 +127,7 @@ export async function POST() {
 
   return NextResponse.json({
     ...result,
-    engine: engineSource === "python" ? "python-1700-checks" : "typescript-20-checks",
+    engine: engineSource === "python" ? "python-dimensional" : "typescript-20-checks",
     python_backend: engineSource === "python",
     ai: mapAi(review),
     ai_status: review.enabled ? (review.error ? "error" : "completed") : "disabled",

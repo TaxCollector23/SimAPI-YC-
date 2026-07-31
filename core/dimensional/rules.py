@@ -25,8 +25,12 @@ SEMANTIC_BOUNDS: list[tuple[str, float, float, bool, bool, str]] = [
     (r"\bcorrelation|corr_\w+\b", -1.0, 1.0, True, True, "|r| must be <=1"),
     (r"\bpoisson_ratio\b", -1.0, 0.5, False, True, "must lie in (-1, 0.5]"),
     (r"\bmach_?number|^ma$\b", 0.0, 60.0, True, True, "must be non-negative"),
-    (r"\btemperature\b(?!.*delta)", 0.0, 1e6, True, True, "absolute temperature must be > 0 K"),
-    (r"^t$", 0.0, 1e6, True, True, "absolute temperature must be > 0 K"),
+    (r"\btemperature\b(?!.*delta)", 0.0, 1e9, True, True,
+     "absolute temperature must be > 0 K and physically plausible (< 1e9 K, "
+     "beyond stellar-core / fusion-plasma temperatures)"),
+    (r"^t$", 0.0, 1e9, True, True,
+     "absolute temperature must be > 0 K and physically plausible (< 1e9 K, "
+     "beyond stellar-core / fusion-plasma temperatures)"),
     (r"\bmass\b", 0.0, float("inf"), False, True, "mass must be > 0"),
     (r"\bdensity\b", 0.0, float("inf"), False, True, "density must be > 0"),
     (r"\bhumidity|relative_humidity|rh\b", 0.0, 100.0, True, True, "RH must lie in [0,100]%"),
@@ -78,9 +82,62 @@ def check_semantic_bounds(data: pd.DataFrame) -> list[SemanticViolation]:
 
 @dataclass
 class StructuralFinding:
-    kind: str  # "non_finite" | "exact_duplicate"
+    kind: str  # "non_finite" | "exact_duplicate" | "near_duplicate"
     row_ids: list[int]
     detail: str
+
+
+def _sig_round(arr: np.ndarray, sig: int = 4) -> np.ndarray:
+    """Round each value to `sig` significant figures (magnitude-aware,
+    unlike decimal-place rounding). This is what makes duplicate bucketing
+    work correctly across columns of very different scale in the same
+    dataset -- a Reynolds-number column (~1e5) and a drag-coefficient
+    column (~0.3) need different absolute rounding to detect the same
+    *relative* closeness, and decimal rounding can't do that for both at once."""
+    out = np.zeros_like(arr)
+    nz = np.isfinite(arr) & (arr != 0)
+    magnitude = np.floor(np.log10(np.abs(arr[nz])))
+    factor = 10.0 ** (sig - 1 - magnitude)
+    out[nz] = np.round(arr[nz] * factor) / factor
+    return out
+
+
+def _find_duplicate_rows(
+    data: pd.DataFrame, numeric_cols: list[str], rel_tol: float, sig_figs: int,
+) -> list[int]:
+    """Shared bucket-then-verify duplicate finder. Buckets by significant-
+    figure rounding (see `_sig_round`) so the O(k^2) exact relative-equality
+    check inside each bucket only ever compares plausible candidates,
+    regardless of column magnitude -- keeps this tractable at real row
+    counts while still catching near-duplicates on large-magnitude columns."""
+    arr = data[numeric_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+    n = len(arr)
+    rounded = np.column_stack([_sig_round(arr[:, c], sig_figs) for c in range(arr.shape[1])])
+    buckets: dict[tuple, list[int]] = {}
+    for i in range(n):
+        key = tuple(rounded[i].tolist())
+        buckets.setdefault(key, []).append(i)
+    seen: set[int] = set()
+    dup_rows: list[int] = []
+    for idxs in buckets.values():
+        if len(idxs) < 2:
+            continue
+        for a_pos in range(len(idxs)):
+            i = idxs[a_pos]
+            if i in seen:
+                continue
+            for b_pos in range(a_pos + 1, len(idxs)):
+                j = idxs[b_pos]
+                if j in seen:
+                    continue
+                a, b = arr[i], arr[j]
+                denom = np.maximum(np.abs(a), np.abs(b))
+                denom[denom == 0] = 1.0
+                rel_diff = np.abs(a - b) / denom
+                if np.all(rel_diff < rel_tol):
+                    seen.add(j)
+                    dup_rows.append(j)
+    return dup_rows
 
 
 def check_structural(data: pd.DataFrame, rel_tol: float = 1e-9) -> list[StructuralFinding]:
@@ -112,40 +169,33 @@ def check_structural(data: pd.DataFrame, rel_tol: float = 1e-9) -> list[Structur
     # largest-magnitude column (e.g. Reynolds ~1e5), so unrelated rows in a
     # smooth sweep score > 0.999 -- documented as 30/32 false exclusions.
     if numeric_cols and len(data) > 1:
-        arr = data[numeric_cols].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-        n = len(arr)
-        # Bucket by a coarse rounded key first so the exact O(k^2) relative-
-        # equality check only ever runs within small candidate buckets, not
-        # across the whole dataset -- keeps this tractable at real row counts.
-        buckets: dict[tuple, list[int]] = {}
-        for i in range(n):
-            key = tuple(round(v, 6) if np.isfinite(v) else None for v in arr[i])
-            buckets.setdefault(key, []).append(i)
-        seen: set[int] = set()
-        dup_rows: list[int] = []
-        for idxs in buckets.values():
-            if len(idxs) < 2:
-                continue
-            for a_pos in range(len(idxs)):
-                i = idxs[a_pos]
-                if i in seen:
-                    continue
-                for b_pos in range(a_pos + 1, len(idxs)):
-                    j = idxs[b_pos]
-                    if j in seen:
-                        continue
-                    a, b = arr[i], arr[j]
-                    denom = np.maximum(np.abs(a), np.abs(b))
-                    denom[denom == 0] = 1.0
-                    rel_diff = np.abs(a - b) / denom
-                    if np.all(rel_diff < rel_tol):
-                        seen.add(j)
-                        dup_rows.append(j)
-        if dup_rows:
+        exact_dup_positions = set(_find_duplicate_rows(data, numeric_cols, rel_tol=rel_tol, sig_figs=9))
+        if exact_dup_positions:
             findings.append(StructuralFinding(
                 kind="exact_duplicate",
-                row_ids=[int(data.index[p]) for p in dup_rows],
-                detail=f"{len(dup_rows)} row(s) exactly duplicate an earlier row "
+                row_ids=[int(data.index[p]) for p in exact_dup_positions],
+                detail=f"{len(exact_dup_positions)} row(s) exactly duplicate an earlier row "
                        f"(per-column relative equality < {rel_tol:g})",
             ))
+
+        # Near-duplicates: a row that duplicates an earlier one with a tiny
+        # relative perturbation on every column simultaneously (e.g. a
+        # copy-pasted data block with noise added to disguise it). Requires
+        # >=3 numeric columns so this can't fire on low-dimensional
+        # coincidence -- an accidental match on 2 independent columns is
+        # plausible in a dense sweep; on 3+ simultaneously, at this
+        # tightness, it isn't. Rows already caught above as exact duplicates
+        # are excluded so each row is reported at most once.
+        near_tol = 1e-3
+        if len(numeric_cols) >= 3:
+            near_positions = [p for p in _find_duplicate_rows(data, numeric_cols, rel_tol=near_tol, sig_figs=4)
+                              if p not in exact_dup_positions]
+            if near_positions:
+                findings.append(StructuralFinding(
+                    kind="near_duplicate",
+                    row_ids=[int(data.index[p]) for p in near_positions],
+                    detail=f"{len(near_positions)} row(s) near-duplicate an earlier row across all "
+                           f"{len(numeric_cols)} numeric columns simultaneously "
+                           f"(per-column relative equality < {near_tol:g})",
+                ))
     return findings

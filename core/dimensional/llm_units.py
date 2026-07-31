@@ -119,20 +119,33 @@ def _call_model(columns: list[str], model: str, key: str,
 
 
 def llm_resolve_columns(columns: list[str]) -> dict[str, dict]:
-    """Classify `columns` via an LLM fallback chain. Returns {} (never
-    raises) if no key is configured or every model in the chain fails --
-    that's a normal, handled outcome, not an error."""
+    """Classify `columns` via a persistent cache, then an LLM fallback chain
+    for whatever the cache hasn't seen before. Returns {} (never raises) if
+    no key is configured or every model in the chain fails -- that's a
+    normal, handled outcome, not an error.
+
+    The cache is what makes this behave like a real dictionary extension:
+    the first time an unusual column name appears, it costs an LLM call and
+    gets remembered; every subsequent request with that exact column name
+    -- from any dataset, any user -- is a free, instant cache hit."""
     if not columns:
         return {}
+    from .units_cache import get_cached, store
+    cached = get_cached(columns)
+    remaining = [c for c in columns if c not in cached]
+    if not remaining:
+        return cached
+
     chain = _build_key_model_chain()
     if not chain:
-        return {}
+        return cached
+    fresh: dict = {}
     deadline = time.monotonic() + TOTAL_BUDGET_SECONDS
     for key, model in chain:
-        remaining = deadline - time.monotonic()
-        if remaining <= 1.0:
+        remaining_budget = deadline - time.monotonic()
+        if remaining_budget <= 1.0:
             break  # out of budget; unresolved columns fall through to Layer 5
-        result = _call_model(columns, model, key, timeout=min(TIMEOUT_SECONDS, remaining))
+        result = _call_model(remaining, model, key, timeout=min(TIMEOUT_SECONDS, remaining_budget))
         if result is None:
             continue
         # Only keep entries with a dimension key we actually know about.
@@ -141,5 +154,8 @@ def llm_resolve_columns(columns: list[str]) -> dict[str, dict]:
             if isinstance(info, dict) and info.get("dimension_key") in BASE_DIMENSIONS
         }
         if cleaned:
-            return cleaned
-    return {}
+            fresh = cleaned
+            break
+    if fresh:
+        store(fresh)
+    return {**cached, **fresh}
