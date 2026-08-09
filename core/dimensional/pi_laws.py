@@ -42,6 +42,12 @@ class LawFinding:
     coverage: float = 1.0           # fraction of rows the law/anchor applies to
     weight: float = 1.0             # arbitration weight: tighter law -> higher
     note: str = ""
+    # Column -> Fraction exponent for the group value this law tests. Populated
+    # for anchored_constant and pi_constant so downstream layers (e.g. temporal
+    # drift) can recompute the continuous per-row value without re-deriving
+    # the group from scratch. None for bimodal_split (the split itself is the
+    # finding; there is no single expected value to residualise against).
+    exponents: dict[str, Fraction] | None = None
 
 
 def _robust_scale(values: np.ndarray, median: float) -> float:
@@ -191,6 +197,7 @@ def _evaluate_anchor(data: pd.DataFrame, exponents: dict[str, Fraction],
             coverage=coverage,
             weight=1.0,  # a physical constant anchor is maximal-confidence evidence
             note=f"{coverage*100:.0f}% of rows sit on {const.name}={const.value:g} {const.description}",
+            exponents=dict(exponents),
         )
 
     # No row sits close enough to the true constant for the anchor to
@@ -225,6 +232,7 @@ def _evaluate_anchor(data: pd.DataFrame, exponents: dict[str, Fraction],
               f"{const.description}. No row sits close enough to the true constant for the anchor "
               f"to activate -- this may be a genuine domain difference (different gas/material/"
               f"condition) or a systematic calibration/unit error."),
+        exponents=dict(exponents),
     )
 
 
@@ -292,6 +300,7 @@ def layer2_constant_pi_groups(
             coverage=1.0,
             weight=_weight_for(rel_mad),
             note="exact (zero scatter)" if mad == 0 else f"rel_mad={rel_mad:.2e}",
+            exponents=dict(pg.exponents),
         ))
     return findings
 
@@ -388,6 +397,13 @@ def layer4_bimodal_split(data: pd.DataFrame, groups: list[PiGroup]) -> list[LawF
 # the distinguishing signal a plain violation count can't see.
 DRIFT_MIN_ROWS = 20
 DRIFT_CORR_THRESHOLD = 0.5
+# Materiality floor for a drift finding's end-of-run residual. Half the per-row
+# violation threshold: with continuous per-row residuals reconstructed from a
+# law's exponents, a sustained, time-correlated bias below the row-violation
+# bar is still a real gauge fault (and one the row-level layers cannot see on
+# their own). Below this floor the correlation may still be genuine but is
+# indistinguishable from ambient noise, so stay silent.
+DRIFT_TAIL_MATERIAL = ROW_VIOLATION_REL / 2
 
 
 def find_time_column(data: pd.DataFrame) -> str | None:
@@ -422,19 +438,36 @@ def detect_temporal_drift(data: pd.DataFrame, laws: list[LawFinding], time_col: 
         if len(valid) < DRIFT_MIN_ROWS:
             continue
 
-        # Reconstruct the law's value per row from its own violated-row
-        # bookkeeping isn't available generically here, so recompute from
-        # columns directly isn't possible without the exponents -- instead,
-        # use the already-computed per-row factor for violated rows and 1.0
-        # (on-law) for the rest, which is exactly the drift signal: does the
-        # "how far off" number grow with time?
-        factor = pd.Series(1.0, index=valid)
-        for rid, f in law.violated_rows.items():
-            if rid in factor.index:
-                factor.loc[rid] = f
-        residual = (factor - 1.0).to_numpy()
-        tv = t.loc[valid].to_numpy()
+        # Prefer a continuous per-row residual computed directly from the law's
+        # stored exponents -- a slow drift that never crosses the row-violation
+        # threshold produces zero violated_rows but a strong time-correlation in
+        # the raw residual, and the earlier factor-from-violations reconstruction
+        # was blind to it.
+        residual: np.ndarray | None = None
+        if law.exponents:
+            vals = np.ones(len(valid), dtype=float)
+            skip = False
+            for c, e_frac in law.exponents.items():
+                if c not in sub.columns:
+                    skip = True
+                    break
+                e = float(e_frac)
+                col_vals = sub.loc[valid, c].to_numpy(dtype=float)
+                if e != int(e) and (col_vals < 0).any():
+                    skip = True
+                    break
+                with np.errstate(all="ignore"):
+                    vals = vals * np.power(col_vals, e)
+            if not skip and np.all(np.isfinite(vals)) and law.expected_value != 0:
+                residual = vals / law.expected_value - 1.0
+        if residual is None:
+            factor = pd.Series(1.0, index=valid)
+            for rid, f in law.violated_rows.items():
+                if rid in factor.index:
+                    factor.loc[rid] = f
+            residual = (factor - 1.0).to_numpy()
 
+        tv = t.loc[valid].to_numpy()
         if np.std(residual) < 1e-12 or np.std(tv) < 1e-12:
             continue
         corr = float(np.corrcoef(tv, residual)[0, 1])
@@ -444,12 +477,28 @@ def detect_temporal_drift(data: pd.DataFrame, laws: list[LawFinding], time_col: 
         # not just a statistically-detectable but tiny time-correlation.
         order = np.argsort(tv)
         tail = residual[order][-max(5, len(order)//10):]
-        if np.median(np.abs(tail)) < ROW_VIOLATION_REL:
+        if np.median(np.abs(tail)) < DRIFT_TAIL_MATERIAL:
             continue
 
-        drifting_rows = [rid for rid, f in law.violated_rows.items() if rid in valid]
-        if not drifting_rows:
-            continue
+        # Attribute drift to rows whose continuous residual actually exceeds
+        # the row-violation threshold, in addition to any hard-violated rows
+        # from the base law -- with the continuous reconstruction this now
+        # picks up rows the base law itself did not flag. When the drift
+        # never crosses the per-row bar but the time-correlation and tail-
+        # materiality guards did fire, fall back to the tail decile of the
+        # time series (the rows that carry the drift's cumulative signature),
+        # so the finding still attaches to concrete rows for arbitration.
+        drift_rows: dict[int, float] = dict(law.violated_rows)
+        idx_list = list(valid)
+        for i, r in enumerate(residual):
+            if abs(r) >= ROW_VIOLATION_REL:
+                rid = int(idx_list[i])
+                drift_rows.setdefault(rid, float(1.0 + r))
+        if not drift_rows:
+            tail_positions = order[-max(5, len(order)//10):]
+            for i in tail_positions:
+                rid = int(idx_list[i])
+                drift_rows.setdefault(rid, float(1.0 + residual[i]))
         findings.append(LawFinding(
             kind="temporal_drift",
             label=f"{law.label} drifts with {time_col} (corr={corr:.2f})",
@@ -457,10 +506,11 @@ def detect_temporal_drift(data: pd.DataFrame, laws: list[LawFinding], time_col: 
             expected_value=law.expected_value,
             observed_median=law.observed_median,
             scale=law.scale,
-            violated_rows=dict(law.violated_rows),
+            violated_rows=drift_rows,
             coverage=law.coverage,
             weight=min(1.0, law.weight + 0.1),  # time-correlated is stronger evidence than isolated
             note=f"gauge/sensor drift: residual vs {time_col} correlation={corr:.2f} "
                  f"(law: {law.note})",
+            exponents=dict(law.exponents) if law.exponents else None,
         ))
     return findings

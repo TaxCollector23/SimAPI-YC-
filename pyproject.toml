@@ -20,6 +20,9 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/TaxCollector23/SimAPI-YC-"
 
+[project.scripts]
+simapi = "sdk.cli:main"
+
 [tool.ruff]
 line-length = 110
 target-version = "py310"

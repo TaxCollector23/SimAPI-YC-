@@ -377,6 +377,32 @@ def test_4_temporal_gauge_drift_caught():
         f"drift rows should concentrate late in the run: {sorted(drift_rows)[:10]}"
 
 
+# ── Test 4b: sub-threshold gauge drift is caught by continuous residual ───
+# The base law only flags rows with >=2% deviation as violations; a slow ramp
+# that never crosses that bar would previously produce zero residual variation
+# in the drift detector (residual = 1.0 everywhere) and go undetected. The
+# continuous per-row reconstruction from stored exponents should catch it.
+def test_4b_subthreshold_temporal_drift_caught():
+    n = 200
+    rng = np.random.default_rng(23)
+    time_s = np.arange(n, dtype=float)
+    T = 293.15 + rng.normal(0, 0.3, n)
+    rho = 1.225 + rng.normal(0, 0.002, n)
+    # Linear drift capped so no single row exceeds ~1.8% deviation on the anchor.
+    drift = np.linspace(0.0, 0.015, n) * rho
+    rho_drifted = rho + drift
+    P = rho * 287.05 * T
+    df = pd.DataFrame({"time_s": time_s, "temperature": T,
+                       "density": rho_drifted, "pressure": P})
+
+    report = validate(df)
+    drift_laws = [law for law in report.laws if law.kind == "temporal_drift"]
+    assert drift_laws, (
+        f"expected a temporal_drift finding on sub-threshold drift; "
+        f"laws={[l.kind for l in report.laws]}"
+    )
+
+
 # ── Test 6: 15 domains x 1 subtle corruption each -> >=12/15, 0 FP ────────
 def test_6_fifteen_domains_subtle_corruption():
     from core.dimensional.dimensions import CONSTANTS

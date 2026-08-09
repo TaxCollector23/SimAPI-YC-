@@ -151,6 +151,53 @@ const commands = {
     await runValidation(file, key, args);
   },
 
+  async dimensional(args) {
+    const file = args._[0];
+    if (!file) return fail(`Usage: ${c.cyan("simapi dimensional <file.csv|file.json>")}`);
+    if (!existsSync(file)) return fail(`File not found: ${file}`);
+    const key = await resolveKey();
+    if (!key) return fail(`Not logged in. Run ${c.cyan("simapi login")} or set SIMAPI_API_KEY.`);
+
+    let records;
+    try { records = await readRecords(file); }
+    catch (e) { return fail(`Could not read ${file}: ${e.message}`); }
+    if (!records.length) return fail(`${file} contains no rows.`);
+
+    const conditions = {};
+    for (const kv of (args.conditions || "").split(",")) {
+      if (!kv) continue;
+      const [k, v] = kv.split("=");
+      if (!k || v === undefined) continue;
+      const n = Number(v);
+      conditions[k.trim()] = Number.isNaN(n) ? v : n;
+    }
+
+    const t0 = Date.now();
+    let res;
+    try {
+      res = await api("/v1/validate/dimensional", {
+        method: "POST",
+        body: { data: records, conditions },
+        key,
+      });
+    } catch (e) {
+      return fail(`Request failed: ${e.message} ${c.dim(`(is ${API_BASE} reachable?)`)}`);
+    }
+    await trackUsage(Date.now() - t0);
+    if (!res.ok) {
+      const err = res.json?.error || {};
+      return fail(`[${err.code || res.status}] ${err.message || "dimensional validation error"}`);
+    }
+    const r = res.json;
+    await writeJson(LAST_RUN_PATH, { file, t: Date.now(), result: r, engine: "dimensional" });
+    if (args.json) return stdout.write(JSON.stringify(r, null, 2) + "\n");
+
+    renderDimensionalReport(r, file);
+    if (args["fail-on"] === "warning" && (r.n_impossible || r.n_inconsistent)) process.exitCode = 1;
+    if (args["fail-on"] === "failed" && r.n_impossible) process.exitCode = 1;
+    if (!args["fail-on"] && r.n_impossible) process.exitCode = 1;
+  },
+
   async watch(args) {
     const file = args._[0];
     if (!file) return fail(`Usage: ${c.cyan("simapi watch <file>")}`);
@@ -408,6 +455,57 @@ const commands = {
   },
 };
 
+// Minimal CSV → array-of-objects. Handles double-quoted fields (with escaped
+// "" inside), commas inside quotes, and CRLF. Not a full RFC 4180 parser, but
+// enough for the simulation-output CSVs the dimensional engine sees.
+function parseCsv(text) {
+  const rows = [];
+  let field = "";
+  let row = [];
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += ch;
+    } else {
+      if (ch === '"') inQuotes = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        row.push(field); field = "";
+        if (row.some((v) => v !== "")) rows.push(row);
+        row = [];
+      } else field += ch;
+    }
+  }
+  if (field !== "" || row.length) { row.push(field); if (row.some((v) => v !== "")) rows.push(row); }
+  if (!rows.length) return [];
+  const header = rows[0].map((h) => h.trim());
+  return rows.slice(1).map((r) => {
+    const obj = {};
+    for (let j = 0; j < header.length; j++) {
+      const raw = r[j] ?? "";
+      const num = raw === "" ? null : Number(raw);
+      obj[header[j]] = raw !== "" && !Number.isNaN(num) ? num : raw;
+    }
+    return obj;
+  });
+}
+
+async function readRecords(file) {
+  const raw = await readFile(file, "utf8");
+  const ext = file.toLowerCase().split(".").pop();
+  if (ext === "csv" || ext === "tsv") return parseCsv(raw);
+  const parsed = JSON.parse(raw);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && Array.isArray(parsed.data)) return parsed.data;
+  if (parsed && Array.isArray(parsed.trials)) return parsed.trials;
+  return [parsed];
+}
+
 async function loadPayload(file, key, args) {
   const raw = await readFile(file, "utf8");
   try {
@@ -520,10 +618,77 @@ function renderReport(r, file, simType) {
   stdout.write("\n");
 }
 
+function renderDimensionalReport(r, file) {
+  const imp = r.n_impossible ?? 0;
+  const inc = r.n_inconsistent ?? 0;
+  const uns = r.n_unsuitable_for_training ?? 0;
+  const status = imp ? "FAIL" : inc || uns ? "WARN" : "PASS";
+  const tone = imp ? c.red : (inc || uns) ? c.amber : c.green;
+  const mark = imp ? "✗" : (inc || uns) ? "⚠" : "✓";
+
+  const title = ` ${mark}  ${status}  ${c.dim("dimensional")}`;
+  const right = file;
+  const width = Math.max(52, title.length + right.length + 6);
+  stdout.write("\n  " + c.dim("╭" + "─".repeat(width) + "╮") + "\n");
+  const pad = width - title.length - right.length - 2;
+  stdout.write("  " + c.dim("│") + tone(c.bold(title)) + " ".repeat(Math.max(1, pad)) + c.dim(right) + " " + c.dim("│") + "\n");
+  stdout.write("  " + c.dim("╰" + "─".repeat(width) + "╯") + "\n\n");
+
+  row("Rows", String(r.n_rows ?? "—"));
+  row("Impossible", imp ? c.red(String(imp)) : "0");
+  row("Inconsistent", inc ? c.amber(String(inc)) : "0");
+  row("Unsuitable for training", uns ? c.amber(String(uns)) : "0");
+  row("Training ready", r.training_ready ? c.green("yes") : c.red("no"));
+  row("Laws discovered", String((r.laws_discovered || []).length));
+  row("Anchored constants", String(r.n_anchored_constants ?? 0));
+
+  const laws = r.laws_discovered || [];
+  if (laws.length) {
+    stdout.write(`\n  ${c.bold(`Laws (${laws.length})`)}\n`);
+    for (const law of laws.slice(0, 8)) {
+      const v = law.n_violations || 0;
+      const vt = v ? c.red(`${v} violation${v === 1 ? "" : "s"}`) : c.dim("no violations");
+      stdout.write(`   ${c.cyan("•")} ${c.dim("[" + law.kind + "]")} ${law.label}   ${vt}\n`);
+      if (law.note) stdout.write(`     ${c.dim(law.note)}\n`);
+    }
+    if (laws.length > 8) stdout.write(`   ${c.dim(`… and ${laws.length - 8} more`)}\n`);
+  }
+
+  const rf = r.row_findings || [];
+  if (rf.length) {
+    const shown = rf.slice().sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0)).slice(0, 10);
+    stdout.write(`\n  ${c.bold(`Row findings (${rf.length}), top ${shown.length}`)}\n`);
+    for (const f of shown) {
+      const mk = f.output_class === "impossible" ? c.red("✗") : c.amber("⚠");
+      stdout.write(`   ${mk} row ${String(f.row_index).padStart(5)} ${c.dim("[" + f.output_class + "]")} ${f.reason}\n`);
+      if (f.counterfactual_repair) stdout.write(`     ${c.cyan("fix:")} ${c.dim(f.counterfactual_repair)}\n`);
+    }
+    if (rf.length > shown.length) stdout.write(`   ${c.dim(`… and ${rf.length - shown.length} more`)}\n`);
+  }
+
+  const ca = r.condition_assertions || [];
+  if (ca.length) {
+    stdout.write(`\n  ${c.bold("Declared-condition assertions")}\n`);
+    for (const a of ca) stdout.write(`   ${c.cyan("•")} ${a.label}: declared=${a.declared}, implied=${a.implied}, rel_dev=${a.rel_dev}\n`);
+  }
+  const uc = r.units_conflicts || [];
+  if (uc.length) {
+    stdout.write(`\n  ${c.bold("Units conflicts")}\n`);
+    for (const u of uc) stdout.write(`   ${c.amber("⚠")} ${u.column}: ${c.dim(u.note)}\n`);
+  }
+  const sup = r.suppressions || [];
+  if (sup.length) {
+    stdout.write(`\n  ${c.bold("Suppressions")} ${c.dim("(checks not run, with reason)")}\n`);
+    for (const s of sup) stdout.write(`   ${c.dim("• " + s)}\n`);
+  }
+  stdout.write("\n");
+}
+
 // ── Help ──────────────────────────────────────────────────────────────────────
 const HELP = {
   init: { usage: "simapi init", desc: "Create a simapi.json config in the current project." },
   validate: { usage: "simapi validate <file>", desc: "Validate a .json or .txt simulation file and print the report. Plain-text/log files are converted to JSON with AI.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--no-ai", "skip the AI second pass"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate simulations.txt --type aerodynamics", "simapi validate run.json --fail-on warning"] },
+  dimensional: { usage: "simapi dimensional <file.csv|file.json>", desc: "Run the dimensional-analysis engine (Buckingham-π groups, anchored physical constants, bimodal-split detection, temporal drift, semantic bounds). Prints laws discovered and row-level findings.", opts: [["--conditions k=v,k=v", "declared conditions (e.g. altitude_m=11000,velocity=45)"], ["--json", "raw JSON output"], ["--fail-on <level>", "exit non-zero on warning|failed (default: exit 1 on any impossible row)"]], ex: ["simapi dimensional simulation.csv", "simapi dimensional run.csv --conditions altitude_m=11000", "simapi dimensional data.json --json > report.json"] },
   domains: { usage: "simapi domains", desc: "List the supported simulation types." },
   doctor: { usage: "simapi doctor [--fix]", desc: "Diagnose config, connectivity, and project setup." },
   explain: { usage: "simapi explain", desc: "Explain the issues from the most recent validation run in detail." },
@@ -544,6 +709,7 @@ function printHelp() {
   const items = [
     ["init", "Create a simapi.json config"],
     ["validate <file>", "Validate a .json or .txt simulation file"],
+    ["dimensional <file>", "Run the dimensional-analysis engine on a CSV/JSON"],
     ["watch <file>", "Re-validate on file change"],
     ["domains", "List supported simulation types"],
     ["usage", "Show API usage statistics"],
