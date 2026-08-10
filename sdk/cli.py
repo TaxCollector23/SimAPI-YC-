@@ -66,6 +66,7 @@ def _law_to_dict(law) -> dict:
         "weight": round(law.weight, 3),
         "n_violations": len(law.violated_rows),
         "note": law.note,
+        "row_clusters": getattr(law, "row_clusters", {}) or {},
     }
 
 

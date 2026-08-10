@@ -398,8 +398,23 @@ def _arbitrate(
         # dataset needs the same rescaling", not a per-row diagnosis.
         skip_counterfactual = law.kind == "systematic_anchor_deviation"
         for rid, factor in law.violated_rows.items():
-            cf = None if skip_counterfactual else _counterfactual_repair(
-                law.columns, rid, factor, si_data, law.kind)
+            # Prefer a shared-factor cluster diagnosis over the per-row
+            # counterfactual repair: when N rows all deviate by the same
+            # factor, the root cause is "one subset was written in the
+            # wrong unit", not "each of these rows is independently off".
+            # The counterfactual still runs for isolated violations.
+            cluster = law.row_clusters.get(rid) if law.row_clusters else None
+            if cluster:
+                named = cluster.get("named")
+                factor_label = named or f"{cluster['cluster_factor']:.4g}x"
+                cf = (f"shared with {cluster['cluster_size']-1} other row(s): "
+                      f"whole cluster is off by {factor_label} -- likely a "
+                      f"wrong-unit subset, not per-row corruption")
+            elif skip_counterfactual:
+                cf = None
+            else:
+                cf = _counterfactual_repair(
+                    law.columns, rid, factor, si_data, law.kind)
             findings.append(RowFinding(
                 row_id=rid, output_class=out_class,
                 reason=f"{law.label} violated ({factor:.4g}x expected); {law.note}",

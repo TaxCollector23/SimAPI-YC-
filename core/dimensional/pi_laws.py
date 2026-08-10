@@ -48,6 +48,12 @@ class LawFinding:
     # the group from scratch. None for bimodal_split (the split itself is the
     # finding; there is no single expected value to residualise against).
     exponents: dict[str, Fraction] | None = None
+    # Per-row shared-factor cluster info, keyed by row id. Populated when >=3
+    # violated rows all deviate from the law by the same factor (within
+    # SHARED_FACTOR_REL_TOLERANCE) -- a strong signal that a subset was
+    # recorded in the wrong unit rather than being scattered bad rows. Each
+    # entry: {"cluster_size", "cluster_factor", "named" (str | None)}.
+    row_clusters: dict[int, dict] = field(default_factory=dict)
 
 
 def _robust_scale(values: np.ndarray, median: float) -> float:
@@ -65,6 +71,95 @@ def _weight_for(mad_over_median: float) -> float:
 
 def _row_index(data: pd.DataFrame, positions: np.ndarray) -> list[int]:
     return [int(data.index[p]) for p in positions]
+
+
+SHARED_FACTOR_MIN_ROWS = 3         # need at least this many rows sharing a factor before naming it
+SHARED_FACTOR_REL_TOLERANCE = 0.05 # rows within 5% of a common factor count as sharing it
+
+
+def _shared_factor_clusters(violated_rows: dict[int, float]) -> dict[int, dict]:
+    """Group violated rows by shared factor. When a subset was exported in
+    the wrong unit (e.g. pressure in kPa written into a Pa column), every
+    affected row deviates from the law by the same factor -- reporting each
+    as an isolated violation buries the diagnostic. Where >=3 rows share a
+    factor within tolerance, tag them with a cluster note and, if the factor
+    matches one of the known SPLIT_FACTORS, name it. Returns a per-row dict
+    with `cluster_size`, `cluster_factor`, and (when recognised) `named`."""
+    from .dimensions import SPLIT_FACTORS
+
+    if len(violated_rows) < SHARED_FACTOR_MIN_ROWS:
+        return {}
+    items = [(rid, float(f)) for rid, f in violated_rows.items()
+             if np.isfinite(f) and f > 0]
+    if len(items) < SHARED_FACTOR_MIN_ROWS:
+        return {}
+    # Cluster in log space so 1000x and 1/1000 collapse to the same |log|
+    # magnitude when we then check both signs -- a corrupted subset can be
+    # off either direction, and we still want to name the ratio.
+    log_factors = np.array([np.log10(abs(f)) for _, f in items])
+    order = np.argsort(log_factors)
+    sorted_logs = log_factors[order]
+    sorted_ids = [items[i][0] for i in order]
+    sorted_raw = [items[i][1] for i in order]
+
+    clusters: list[list[int]] = []  # list of position runs (into sorted_*)
+    run = [0]
+    tol_log = np.log10(1.0 + SHARED_FACTOR_REL_TOLERANCE)
+    for i in range(1, len(sorted_logs)):
+        if sorted_logs[i] - sorted_logs[i - 1] <= tol_log:
+            run.append(i)
+        else:
+            clusters.append(run)
+            run = [i]
+    clusters.append(run)
+
+    out: dict[int, dict] = {}
+    for run in clusters:
+        if len(run) < SHARED_FACTOR_MIN_ROWS:
+            continue
+        cluster_factors = [sorted_raw[i] for i in run]
+        median_factor = float(np.median(cluster_factors))
+        named = None
+        for f, name in SPLIT_FACTORS.items():
+            for candidate in (median_factor, 1.0 / median_factor):
+                if abs(candidate / f - 1.0) < SHARED_FACTOR_REL_TOLERANCE:
+                    named = name
+                    break
+            if named:
+                break
+        for i in run:
+            out[sorted_ids[i]] = {
+                "cluster_size": len(run),
+                "cluster_factor": median_factor,
+                "named": named,
+            }
+    return out
+
+
+def _cluster_note_suffix(row_clusters: dict[int, dict]) -> str:
+    """One-line diagnostic summary of shared-factor clusters, appended to a
+    law's `note`. Reports each cluster once (not per-row) and names the unit
+    factor when known -- "8 rows share factor 1e-3 (kilo/1)" tells the user
+    "one subset was written in the wrong unit" in a way N isolated
+    violations cannot."""
+    if not row_clusters:
+        return ""
+    seen: list[tuple[float, str | None, int]] = []
+    for info in row_clusters.values():
+        f = round(float(info["cluster_factor"]), 6)
+        matched = False
+        for i, (ef, _, _) in enumerate(seen):
+            if ef == f:
+                seen[i] = (ef, seen[i][1], seen[i][2] + 1)
+                matched = True
+                break
+        if not matched:
+            seen.append((f, info.get("named"), 1))
+    parts = []
+    for factor, named, count in seen:
+        label = named or f"{factor:.4g}x"
+        parts.append(f"{count} rows share factor {label}")
+    return "; " + "; ".join(parts)
 
 
 SYSTEMATIC_DEVIATION_MAX_CV = 0.03  # how tight the data's own scatter must be to call it "uniform"
@@ -186,6 +281,10 @@ def _evaluate_anchor(data: pd.DataFrame, exponents: dict[str, Fraction],
         for p in positions:
             factor = float(vals[p] / const.value)
             violated[int(sub.index[p])] = factor
+        row_clusters = _shared_factor_clusters(violated)
+        note = f"{coverage*100:.0f}% of rows sit on {const.name}={const.value:g} {const.description}"
+        if row_clusters:
+            note += _cluster_note_suffix(row_clusters)
         return LawFinding(
             kind="anchored_constant",
             label=f"{label} = {const.name} ({const.value:g})",
@@ -196,8 +295,9 @@ def _evaluate_anchor(data: pd.DataFrame, exponents: dict[str, Fraction],
             violated_rows=violated,
             coverage=coverage,
             weight=1.0,  # a physical constant anchor is maximal-confidence evidence
-            note=f"{coverage*100:.0f}% of rows sit on {const.name}={const.value:g} {const.description}",
+            note=note,
             exponents=dict(exponents),
+            row_clusters=row_clusters,
         )
 
     # No row sits close enough to the true constant for the anchor to
@@ -289,6 +389,10 @@ def layer2_constant_pi_groups(
         for p in np.where(bad)[0]:
             violated[int(data.index[p]) if p < len(data.index) else p] = float(values[p] / median)
 
+        row_clusters = _shared_factor_clusters(violated)
+        note = "exact (zero scatter)" if mad == 0 else f"rel_mad={rel_mad:.2e}"
+        if row_clusters:
+            note += _cluster_note_suffix(row_clusters)
         findings.append(LawFinding(
             kind="pi_constant",
             label=f"{pg.label()} = const",
@@ -299,8 +403,9 @@ def layer2_constant_pi_groups(
             violated_rows=violated,
             coverage=1.0,
             weight=_weight_for(rel_mad),
-            note="exact (zero scatter)" if mad == 0 else f"rel_mad={rel_mad:.2e}",
+            note=note,
             exponents=dict(pg.exponents),
+            row_clusters=row_clusters,
         ))
     return findings
 

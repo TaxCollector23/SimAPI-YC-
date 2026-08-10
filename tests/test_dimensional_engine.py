@@ -102,6 +102,50 @@ def test_7c_tiny_dataset_near_majority_outlier_no_anchor_still_caught():
     assert {2, 4} <= flagged, f"expected rows 2 and 4 (cd=999) flagged, got {flagged}"
 
 
+# ── Test 7d: violated rows sharing one factor are clustered and named ─────
+# When a MINORITY of rows was written in the wrong unit (e.g. a subset of a
+# CSV was pulled from a kPa sensor into a Pa-labelled column), every affected
+# row deviates from the anchored law by the same factor. Before shared-factor
+# clustering, N such rows produced N isolated violation findings with no
+# indication they shared a root cause. Now the finding's note names the
+# factor and each row's counterfactual points at the cluster.
+def test_7d_shared_factor_cluster_named():
+    n = 80
+    df = _ideal_gas_dataset(n, seed=99)
+    corrupt = [3, 11, 17, 25, 34, 42, 51, 63]  # 10% of rows, all wrong-unit
+    df.loc[corrupt, "pressure"] = df.loc[corrupt, "pressure"] / 1000.0
+    report = validate(df)
+
+    anchor = next((law for law in report.laws
+                   if law.kind == "anchored_constant" and "R_air" in law.label), None)
+    assert anchor is not None, "expected the R_air anchor"
+    for rid in corrupt:
+        assert rid in anchor.row_clusters, (
+            f"row {rid} should be in a shared-factor cluster; "
+            f"clusters={anchor.row_clusters}"
+        )
+    a_cluster = anchor.row_clusters[corrupt[0]]
+    assert a_cluster["cluster_size"] >= len(corrupt), (
+        f"cluster should include all {len(corrupt)} corrupt rows; got {a_cluster}"
+    )
+    assert a_cluster["named"] is not None, (
+        f"cluster factor should be recognised (kilo/milli); got {a_cluster}"
+    )
+
+    row_findings_for_cluster = [
+        f for f in report.row_findings if f.row_id in corrupt
+    ]
+    assert row_findings_for_cluster, "expected row findings on the clustered rows"
+    with_cluster_cf = [
+        f for f in row_findings_for_cluster
+        if f.counterfactual and "cluster" in f.counterfactual
+    ]
+    assert with_cluster_cf, (
+        "row findings should carry the cluster diagnosis in their counterfactual; "
+        f"saw: {[f.counterfactual for f in row_findings_for_cluster]}"
+    )
+
+
 # ── Test 8: majority corruption WITHOUT an anchor -> split reported ───────
 def test_8_majority_corruption_no_anchor_reports_split():
     n = 150

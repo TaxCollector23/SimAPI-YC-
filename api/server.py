@@ -1104,6 +1104,10 @@ async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_ide
             "weight": round(law.weight, 3),
             "n_violations": len(law.violated_rows),
             "note": law.note,
+            # Per-row shared-factor cluster info -- when >=3 violated rows
+            # share the same factor, this names the unit conversion instead
+            # of leaving the caller to piece it together from N isolated rows.
+            "row_clusters": getattr(law, "row_clusters", {}) or {},
         }
 
     return _json_safe({
