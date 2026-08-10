@@ -1,13 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /*
- * Black-and-blue theme experiment for SimAPI — v2 (anti-slop).
+ * Black-and-blue theme experiment for SimAPI — v3 (Geist everywhere,
+ * badges gone, less slop).
  *
- * v1 changed colours. v2 changes shape, rhythm, and CTA grammar so the
- * site stops reading like a SaaS landing template. Every string of
- * visible text stays intact — this file only touches CSS.
+ * Drop-in replacement for web/app/globals.css. No component text is
+ * edited. No backend is touched.
+ *
+ * v1: recoloured (black + one blue accent).
+ * v2: reshaped (left-align, serif headings, monospace bracket CTAs,
+ *     rectangle everything).
+ * v3: refined — Geist Sans across the whole page, Geist Mono for code,
+ *     drop the serif experiment, drop the bracket-tag drama on the
+ *     eyebrow, drop the CTA-caps drama, delete every marketing badge
+ *     row so the page reads as a single quiet column.
  *
  * To apply:   cp web-experiments/black-blue/globals.css web/app/globals.css
  * To rollback: git checkout web/app/globals.css
@@ -15,23 +25,37 @@
 
 :root {
   color-scheme: dark;
-  --serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  --font-geist: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-geist-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 html {
   scroll-behavior: smooth;
   overflow-x: hidden;
+  font-family: var(--font-geist);
 }
 
-/*
- * Body: solid true black. The v1 dropped the dual radial fades; v2
- * keeps that.
- */
 body {
   @apply bg-ink-950 text-white/85 antialiased;
   overflow-x: hidden;
   background-color: #000;
+  font-family: var(--font-geist);
+  font-feature-settings: "ss01", "cv11";  /* Geist's contextual alternates: cleaner 'a', tabular digits */
+  letter-spacing: -0.005em;
 }
+
+/* Every text element -> Geist. Every code / mono surface -> Geist Mono. */
+h1, h2, h3, h4, h5, h6,
+p, a, button, input, textarea, select, label, span, div, li, td, th {
+  font-family: var(--font-geist);
+}
+code, pre, kbd, samp,
+.font-mono, [class*="font-mono"] {
+  font-family: var(--font-geist-mono) !important;
+}
+
+/* Kill any lingering serif reference from v2. */
+[class*="font-serif"] { font-family: var(--font-geist) !important; }
 
 ::selection { background: rgba(37, 99, 235, 0.45); color: #fff; }
 
@@ -45,43 +69,32 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); background-clip: content-box; }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v2 — TYPOGRAPHY
+ * v3 — TYPOGRAPHY
  *
- * A real editorial serif for display headings signals "this is a
- * publication," not "this is a landing page." Every marketing
- * template on the internet uses a geometric sans for the hero. Ours
- * doesn't anymore.
+ * Geist Sans is neutral enough to carry both display and body. No
+ * serif experiment. Pull display type down further; the shipped hero
+ * shouted at 68px, v2 spoke at 56px, v3 speaks at 44px — which is
+ * where documentation-hero display type actually sits.
  * ───────────────────────────────────────────────────────────────────── */
-
-h1, h2 {
-  font-family: var(--serif);
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  /* Text-balance is on by default in the shipped hero; keep it. */
-}
 
 h1 {
-  /* The shipped hero is 68px on desktop. Editorial hero sizes are
-   * closer to 48–56px — pulls the reader in instead of shouting. */
-  font-size: clamp(2.25rem, 4.5vw, 3.5rem) !important;
-  line-height: 1.05 !important;
-}
-
-h2 {
-  font-size: clamp(1.75rem, 3vw, 2.5rem) !important;
+  font-size: clamp(2rem, 4vw, 2.75rem) !important;
   line-height: 1.1 !important;
+  letter-spacing: -0.02em !important;
+  font-weight: 600 !important;
 }
+h2 {
+  font-size: clamp(1.5rem, 2.75vw, 2rem) !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.015em !important;
+  font-weight: 600 !important;
+}
+h3 { font-weight: 500 !important; letter-spacing: -0.01em !important; }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v2 — LAYOUT
- *
- * Every SaaS hero centers itself. Ours doesn't. Left-align every
- * `text-center` inside the shipped hero and every `items-center` /
- * `justify-center` container in top-level sections. Buttons drop out
- * of the "flex-wrap centered" pattern and become a left-aligned line.
+ * v3 — LAYOUT
  * ───────────────────────────────────────────────────────────────────── */
 
-/* Force-left the hero content wrapper (targets both possible layouts) */
 section .text-center,
 section [class*="items-center"][class*="text-center"] {
   text-align: left !important;
@@ -89,82 +102,90 @@ section [class*="items-center"][class*="text-center"] {
   margin-left: 0 !important;
   margin-right: auto !important;
 }
-
-/* CTA row + trust-badge row: left-align */
-section .justify-center {
-  justify-content: flex-start !important;
-}
-
-/* The nav is legitimately horizontal — leave it. Reset the rule only
- * inside `<nav>`. */
+section .justify-center { justify-content: flex-start !important; }
 nav .justify-center { justify-content: center !important; }
 
-/* Kill the pulsing dot in the hero eyebrow — decoration. */
-.eyebrow .animate-pulse-soft { display: none !important; }
-
-/* Kill the "hero background" grid/dot canvas entirely. It's the
- * loudest decorative surface. */
+/* Hero background decoration — hidden. */
 section > svg[aria-hidden],
 section > .grid-bg,
 section > div > svg[aria-hidden],
-section > div > .grid-bg {
+section > div > .grid-bg,
+[class*="hero-background"],
+[class*="HeroBackground"] {
   display: none !important;
 }
 
-/* Container tightens for editorial reading. */
 .container-tight {
   @apply mx-auto w-full px-6;
   max-width: 960px !important;
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v2 — COMPONENT LAYER
- * Every class the site imports (btn / btn-primary / btn-ghost /
- * btn-accent / .glass / .card / .eyebrow / text-gradient) still
- * resolves — the values behind the names are rewritten.
+ * v3 — REMOVE THE BADGE ROWS
+ *
+ * The hero renders a row of "trust badges" under the CTAs (CFD/FEA,
+ * CLI/SDK, CI fail gates), and other sections carry pill-badges too.
+ * Every SaaS template has these; they say nothing the copy doesn't.
+ * Kill them.
+ *
+ * Precise-first (the hero's badge row uses `text-white/42`), then
+ * broad (any rounded-full-with-border pill inside a section), then a
+ * final broad hide of any small-icon pill row.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* The hero trust-badge row (exact match for its unique wrapper) */
+section [class*="text-white\\/42"],
+section [class*="text-white/42"] {
+  display: none !important;
+}
+
+/* Any other bordered pill in a content section — trust badges, feature
+ * chips, "Available in beta" tags, etc. */
+section .rounded-full[class*="border"],
+main    .rounded-full[class*="border"] {
+  display: none !important;
+}
+
+/* Whole rows composed of only such pills — kill the container too so
+ * we don't leave an empty flex gap behind. */
+section .flex.flex-wrap.items-center[class*="justify-center"][class*="text-xs"],
+section .flex.flex-wrap.items-center[class*="text-xs"][class*="text-white"] {
+  display: none !important;
+}
+
+/* Legitimate exception: nav pills stay visible; scrollbar/dot rounded
+ * shapes stay round (handled at the bottom of this file). */
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v3 — COMPONENT LAYER
+ * Every class the site imports still resolves; values behind the
+ * names are rewritten.
  * ───────────────────────────────────────────────────────────────────── */
 
 @layer components {
-  .container-tight {
-    @apply mx-auto w-full px-6;
-  }
-
-  /* De-glassed: solid dark surface with a hairline. */
-  .glass { @apply border border-white/10 bg-ink-900; }
-
-  .card  { @apply min-w-0 border border-white/10 bg-ink-900; }
-
+  .container-tight { @apply mx-auto w-full px-6; }
+  .glass  { @apply border border-white/10 bg-ink-900; }
+  .card   { @apply min-w-0 border border-white/10 bg-ink-900; }
   .hairline { @apply border-white/10; }
-
-  /* text-gradient still exists (hero uses it on "wrong"), but it now
-   * resolves to a single flat blue with a whisper of tone. */
   .text-gradient { @apply bg-accent-gradient bg-clip-text text-transparent; }
 
-  /* ── BUTTONS — the anti-slop rework ─────────────────────────────
+  /* ── BUTTONS — cleaner in v3.
    *
-   * Old: coloured pills with icons. New: monospace, uppercase, tight
-   * tracking, bordered rectangles. Reads like a manual or a terminal
-   * button, not a Stripe CTA.
-   *
-   * Class names are unchanged. Text labels are unchanged. Icons the
-   * components render inside buttons still show up — but sized down
-   * so text carries the label.
+   * v2 made them monospace uppercase with 0.08em tracking. That was a
+   * signal, but a loud one. v3 uses Geist Sans, sentence case, medium
+   * weight, tight tracking — reads as a button, not a stylistic
+   * statement.
    */
   .btn {
-    @apply inline-flex items-center gap-2 px-4 py-2 text-xs font-medium
+    @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-medium
       transition-colors duration-150 focus-visible:outline-none
       focus-visible:ring-2 focus-visible:ring-accent-blue/60
       focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950
       disabled:pointer-events-none disabled:opacity-50;
-    font-family: var(--font-mono, ui-monospace, monospace);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-family: var(--font-geist);
+    letter-spacing: -0.005em;
     border-radius: 0;
   }
-
-  /* Primary → bordered rectangle, no fill. The shipped white pill is
-   * the strongest SaaS-landing signature; this reads as "action" not
-   * "buy now." */
   .btn-primary {
     @apply btn border border-white bg-transparent text-white
       hover:bg-white hover:text-ink-950;
@@ -173,18 +194,14 @@ section > div > .grid-bg {
     @apply btn border border-white/25 bg-transparent text-white/85
       hover:border-white/60 hover:text-white;
   }
-  /* Accent → solid blue rectangle. The one saturated surface on the
-   * page — reserve it for the single most important action. */
   .btn-accent {
     @apply btn border border-accent-blue bg-accent-blue text-white
       hover:bg-accent-blueHover hover:border-accent-blueHover;
   }
+  .btn svg { width: 0.875rem !important; height: 0.875rem !important; }
 
-  /* Icons inside buttons shrink so the label carries the meaning. */
-  .btn svg { width: 0.75rem !important; height: 0.75rem !important; }
-
-  /* Eyebrow → bracket-tag style. "[ SIMULATION VALIDATION ]" in
-   * monospace, no background pill, no border. */
+  /* Eyebrow — quiet. No brackets, no border, no pulsing dot, no pill.
+   * Just small tracked Geist Mono grey text sitting above the H1. */
   .eyebrow {
     display: inline-flex;
     align-items: center;
@@ -192,17 +209,15 @@ section > div > .grid-bg {
     padding: 0;
     border: 0;
     background: transparent;
-    color: rgba(255, 255, 255, 0.55);
-    font-family: var(--font-mono, ui-monospace, monospace);
+    color: rgba(255, 255, 255, 0.5);
+    font-family: var(--font-geist-mono);
     font-size: 0.7rem;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    letter-spacing: 0.2em;
     font-weight: 500;
   }
-  .eyebrow::before { content: "["; margin-right: 0.25rem; color: rgba(255,255,255,0.35); }
-  .eyebrow::after  { content: "]"; margin-left:  0.25rem; color: rgba(255,255,255,0.35); }
+  .eyebrow > span[class*="rounded-full"] { display: none !important; }
 
-  /* Grid backdrop muted, not decorative. */
   .grid-bg {
     background-image:
       linear-gradient(to right,  rgba(255, 255, 255, 0.03) 1px, transparent 1px),
@@ -213,9 +228,6 @@ section > div > .grid-bg {
 }
 
 @layer utilities {
-  /* shadow-glow was a 60px blue drop-shadow used to make panels
-   * float. Kill the glow; replace with a hairline that reads as an
-   * actual edge. */
   .shadow-glow { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08); }
   .divider {
     background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.10), transparent);
@@ -223,29 +235,15 @@ section > div > .grid-bg {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v2 — GLOBAL: kill rounded pills that live outside the component
- * layer (nav pills, trust badges, dot indicators). Tailwind config
- * already flattens every `rounded-md/lg/xl/2xl/3xl`; this catches
- * `rounded-full` on any element that isn't a legitimate dot or
- * scrollbar.
+ * v3 — FINAL SWEEPS
  * ───────────────────────────────────────────────────────────────────── */
 
+/* Flatten any remaining rounded-full inside content — but restore
+ * shape for legitimate dots and the scrollbar. */
 nav .rounded-full,
 section .rounded-full,
-main .rounded-full {
-  border-radius: 0 !important;
-}
+main .rounded-full { border-radius: 0 !important; }
 
-/* Trust-badges under the hero: strip pill + wash to plain text w/ hairline */
-section .rounded-full[class*="border"] {
-  border-color: rgba(255, 255, 255, 0.10) !important;
-  background: transparent !important;
-}
-
-/* Explicitly restore the "dot" pattern used in the eyebrow / status
- * indicators (they use `h-1.5 w-1.5 rounded-full`). */
 [class*="h-1.5"][class*="w-1.5"].rounded-full,
 [class*="h-2"][class*="w-2"].rounded-full,
-[class*="h-3"][class*="w-3"].rounded-full {
-  border-radius: 9999px !important;
-}
+[class*="h-3"][class*="w-3"].rounded-full { border-radius: 9999px !important; }

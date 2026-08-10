@@ -1,4 +1,4 @@
-# Black-and-blue theme experiment — v2 (anti-slop)
+# Black-and-blue theme experiment — v3 (Geist + no badges)
 
 A drop-in visual override for the `web/` marketing site. **v1 changed
 colours; v2 changes shape, rhythm, typography, and CTA grammar** so the
@@ -33,6 +33,23 @@ behind those class names change.
 | Decorative animations (`float`, `pulse-soft`, `grid-pan`) | on every hero background | dropped; only `fade-up` kept for essential motion |
 | Hero background canvas (dots / grid / animated svg) | full-viewport decoration | hidden via CSS |
 | Container width | 1200px (pitch-deck) | 960px (editorial reading) |
+
+**Typography and quiet (new in v3):**
+
+| v2 pattern | v3 |
+|---|---|
+| System serif (`ui-serif` / Georgia) on h1/h2 | **Geist Sans** across the whole page — headings, body, buttons, nav |
+| System monospace for code | **Geist Mono** for every code / mono surface |
+| Bracket-tag eyebrow `[ SIMULATION VALIDATION ]` w/ monospace + brackets | Quiet Geist Mono tracked uppercase; no brackets, no border, no pulsing dot |
+| Monospace uppercase buttons w/ 0.08em tracking | Geist Sans sentence-case medium weight — reads as a button, not a stylistic statement |
+| Trust-badge pill row under CTAs (`CFD, FEA, robotics` / `CLI, SDK, REST API` / `CI fail gates`) | **Removed.** Every SaaS template has these; they say nothing the copy doesn't. |
+| Any other bordered-pill badges in sections | Removed the same way — `section .rounded-full[class*="border"] { display: none }` |
+| H1 at 56px | Pulled down to ~44px — documentation-hero scale, not marketing-hero scale |
+
+Geist is loaded from Google Fonts via a single `@import` at the top of
+`globals.css` — no `next/font` change, no `layout.tsx` edit, no addition
+to `package.json`. Falls back to `ui-sans-serif` / `system-ui` if the
+CDN is blocked.
 
 **Reference lineage:**
 
