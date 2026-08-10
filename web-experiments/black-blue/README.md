@@ -1,25 +1,59 @@
-# Black-and-blue theme experiment
+# Black-and-blue theme experiment — v2 (anti-slop)
 
-A drop-in visual override for the `web/` marketing site. Only colors,
-radii, and a few decoration choices change. **No component text is
-touched. No button labels change. No backend is touched.**
+A drop-in visual override for the `web/` marketing site. **v1 changed
+colours; v2 changes shape, rhythm, typography, and CTA grammar** so the
+site stops reading like a SaaS landing template.
+
+No component code is edited. Every visible string of text is preserved.
+Every class name every component imports still resolves. Only the values
+behind those class names change.
 
 ## What changes vs. the shipped theme
 
+**Colour (from v1, retained):**
+
+| Slop pattern | Before | After |
+|---|---|---|
+| Three-colour gradient (cyan → blue → violet) | `#22d3ee → #3b82f6 → #8b5cf6` | Single flat blue `#2563eb → #1d4ed8` |
+| Dual radial fades on the body | blue + violet | true black |
+| Neutrals with a blue undertone | `ink-950 = #06070a` | `#000000` |
+
+**Shape and rhythm (new in v2):**
+
 | Slop pattern (per unslopify + Uncodixfy) | Before | After |
 |---|---|---|
-| Three-color gradient (cyan → blue → violet) | `bg-accent-gradient` uses `#22d3ee → #3b82f6 → #8b5cf6` | Single flat blue `#2563eb → #1d4ed8` (barely a gradient) |
-| Dual radial fades on the body | Blue radial + violet radial | Solid true black |
-| Pill buttons (`rounded-full`) | `rounded-full` on every `.btn` | `rounded-md` |
-| Big white primary CTA (SaaS-landing signature) | `bg-white text-ink-950` with soft shadow | `bg-accent-blue text-white` |
-| Glass-morphism (`.glass`, backdrop-blur cards) | `bg-white/[0.03] backdrop-blur-xl` | Solid `bg-ink-900` with a hairline border |
-| Decorative animations (`float`, `pulse-soft`, `grid-pan`) | On every hero background | Removed; only `fade-up` kept |
-| Big blue drop-shadow "glow" behind panels | `shadow-glow` = 60px blue blur | Replaced by a 1px hairline |
-| Neutrals with a blue undertone (implies "AI") | `ink-950 = #06070a` | True black `#000000`; blue lives only in the accent |
+| Center-aligned marketing hero | `text-center` + `items-center` | Left-aligned, editorial column |
+| Sans-serif hero display type | `font-semibold text-6xl sans` | Editorial serif (system `ui-serif` / Georgia) at ~56px |
+| Pill buttons (`rounded-full`) with icons carrying meaning | `rounded-full` with 4px icon | `rounded-0` monospace uppercase, icon shrunk to 12px so label carries |
+| Big colored primary CTA | `bg-white text-ink-950` (SaaS-landing signature) | Bordered rectangle, transparent fill, inverts on hover |
+| Accent CTA with 60px blue drop-shadow "glow" | `bg-accent-gradient shadow-[…blue-blur…]` | Solid blue rectangle, one accent surface on the page |
+| Pill-shaped "eyebrow" tag | `rounded-full` bordered pill w/ pulsing dot | Bracket-tag `[ SIMULATION VALIDATION ]` in monospace, no border, no dot |
+| Rounded feature cards (`rounded-2xl / 3xl`) | `1rem / 1.5rem` | 0. Every card, badge, and panel is a rectangle |
+| Glass-morphism panels (`bg-white/[0.03] backdrop-blur-xl`) | translucent white wash + backdrop-blur | Solid `bg-ink-900` with a hairline border |
+| Decorative animations (`float`, `pulse-soft`, `grid-pan`) | on every hero background | dropped; only `fade-up` kept for essential motion |
+| Hero background canvas (dots / grid / animated svg) | full-viewport decoration | hidden via CSS |
+| Container width | 1200px (pitch-deck) | 960px (editorial reading) |
 
-Everything the components import still resolves — same class names,
-same tokens, same `text-gradient` / `btn-primary` / `.glass` / etc.
-Only the values behind those names change.
+**Reference lineage:**
+
+- <https://github.com/TaxCollector23/unslopify>
+- <https://github.com/cyxzdev/Uncodixfy> — *"GPT is surprisingly bad at UI design"*
+
+Together these reject: floating cards, oversized radii, gradient-heavy
+compositions, glass-morphism, decorative labeling. v2 implements those
+rejections concretely.
+
+## Files shipped in this folder
+
+- **`tailwind.config.ts`** — collapses every `borderRadius` to 0 (except
+  `full` for legit dots/scrollbars), narrows the container to 960px,
+  removes cyan and violet from `accent`, adds a `serif` family stack,
+  drops the `float` / `pulse-soft` / `grid-pan` animations.
+- **`globals.css`** — retypes headings in system serif, force-lefts the
+  hero, restyles buttons to monospace uppercase bordered rectangles,
+  renders the eyebrow as a bracket-tag, hides the hero background canvas,
+  strips pill radii from nav and trust-badges.
+- **`README.md`** — this file.
 
 ## To apply
 
@@ -29,6 +63,8 @@ cp web-experiments/black-blue/globals.css       web/app/globals.css
 cd web && npm run dev
 ```
 
+Open <http://localhost:3000>.
+
 ## To roll back (exact restore of the shipped theme)
 
 ```bash
@@ -36,21 +72,23 @@ git checkout web/tailwind.config.ts web/app/globals.css
 ```
 
 The experiment folder itself stays committed as a reference regardless
-of whether the override is applied to `web/`. You can delete the entire
-`web-experiments/` tree at any time without touching the shipped site.
+of whether the override is applied to `web/`. Deleting `web-experiments/`
+never touches the shipped site.
 
 ## What is deliberately NOT changed
 
-- Every string of visible text
-- Every button, form, or link's label
-- Every component's structure or props
+- Every string of visible text on the site
+- Every button label
+- Every component's props or structure
 - The API, the CLI, the SDK, or any Python code
 - Any file outside `web/tailwind.config.ts` and `web/app/globals.css`
   when the override is applied
 
-## Design lineage
+## Verified before commit
 
-- <https://github.com/TaxCollector23/unslopify> — anti-slop ruleset
-- <https://github.com/cyxzdev/Uncodixfy> — "GPT is surprisingly bad at UI design"
-  ruleset, blocks floating cards / oversized radii / gradient soup /
-  glass-morphism
+Rendered the applied override locally, checked hero + benchmark
+sections at both mobile (~800px) and desktop (1280px) viewports. No
+console errors. No hydration warnings. All content sections render at
+`opacity: 1`. Body computed background is `rgb(0, 0, 0)`. The
+`text-gradient` utility now resolves to a flat blue, so the word
+"wrong" in the hero renders solid, not tri-colour.

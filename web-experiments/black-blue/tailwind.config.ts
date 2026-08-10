@@ -1,16 +1,20 @@
 import type { Config } from "tailwindcss";
 
 /**
- * Black-and-blue theme experiment for SimAPI.
+ * Black-and-blue theme experiment for SimAPI — v2 (anti-slop).
  *
- * Drop-in replacement for web/tailwind.config.ts. Only tokens change —
- * no component text, no button labels, no backend.
+ * v1 changed colours. v2 changes shape, rhythm, typography, and CTA
+ * grammar so the site stops reading like a SaaS landing template.
+ *
+ * Drop-in replacement for web/tailwind.config.ts. No component text
+ * is edited. No backend is touched.
  *
  * Design rules (from TaxCollector23/unslopify + cyxzdev/Uncodixfy):
- *   - one accent color, not three (kill cyan+violet)
- *   - no gradient-heavy compositions (kill accent-gradient)
- *   - no oversized border-radius (buttons stay rounded but not pills)
- *   - no glass-morphism as a headline surface
+ *   - one accent, not three
+ *   - no gradient-heavy compositions
+ *   - no oversized border-radius (v2: no radius at all outside 1px pills)
+ *   - no glass-morphism
+ *   - no floating cards
  *   - restraint over decoration
  *
  * To apply:  cp web-experiments/black-blue/tailwind.config.ts web/tailwind.config.ts
@@ -27,12 +31,30 @@ const config: Config = {
     container: {
       center: true,
       padding: "1.5rem",
-      screens: { "2xl": "1200px" },
+      // Narrower: the shipped 1200px is a marketing width. Editorial
+      // reading widths (~960) feel more like documentation and less
+      // like a pitch deck.
+      screens: { "2xl": "960px" },
+    },
+    // v2: kill EVERY border-radius. rounded-full still exists for
+    // scrollbar/dot-indicator legit uses. rounded-md / lg / xl / 2xl /
+    // 3xl all collapse to zero — every card, button, badge, and pill
+    // becomes a rectangle.
+    borderRadius: {
+      none: "0",
+      sm: "0",
+      DEFAULT: "0",
+      md: "0",
+      lg: "0",
+      xl: "0",
+      "2xl": "0",
+      "3xl": "0",
+      full: "9999px",
     },
     extend: {
       colors: {
-        // True black canvas. No blue undertone in the neutrals — the blue
-        // lives only in the accent, so it reads as a decision, not a wash.
+        // True black canvas. No blue undertone in the neutrals; blue
+        // lives only in the accent so it reads as a decision.
         ink: {
           950: "#000000",
           900: "#050506",
@@ -41,50 +63,48 @@ const config: Config = {
           700: "#15171c",
           600: "#1f2229",
         },
-        line: "rgba(255,255,255,0.08)",
-        // One accent, not three. A cooler infrastructure blue than the
-        // marketing-website #3b82f6 — closer to a terminal / IDE selection blue.
+        line: "rgba(255,255,255,0.10)",
+        // One accent — infrastructure blue closer to terminal selection.
         accent: {
           blue: "#2563eb",
           blueHover: "#1d4ed8",
           blueSoft: "#3b82f6",
+          // Kept so components importing `accent-cyan` / `accent-violet`
+          // still compile — but both now map to the same blue. No
+          // gradient will resolve as three colours.
+          cyan: "#2563eb",
+          violet: "#2563eb",
         },
         pass: "#22c55e",
         warn: "#eab308",
         fail: "#ef4444",
       },
       fontFamily: {
-        sans: ["var(--font-sans)", "system-ui", "sans-serif"],
-        mono: ["var(--font-mono)", "ui-monospace", "monospace"],
-      },
-      // Radii tightened. rounded-2xl / 3xl are still available so nothing
-      // breaks, but the values are pulled in so surfaces stop reading as
-      // consumer-app cards.
-      borderRadius: {
-        "2xl": "0.5rem",
-        "3xl": "0.75rem",
+        // v2: a real editorial serif for display headings, system stack
+        // for body, ui-monospace for code and buttons. No web-font fetch —
+        // system fonts only, so no FOUT and no network dependency.
+        sans: ["var(--font-sans)", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+        mono: ["var(--font-mono)", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+        serif: ["ui-serif", "Georgia", "Cambria", "\"Times New Roman\"", "Times", "serif"],
       },
       keyframes: {
         "fade-up": {
           "0%": { opacity: "0", transform: "translateY(12px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
-        // Kept for skeleton-loading contexts only.
-        shimmer: {
-          "100%": { transform: "translateX(100%)" },
-        },
+        shimmer: { "100%": { transform: "translateX(100%)" } },
       },
       animation: {
+        // Only fade-up survives. float / pulse-soft / grid-pan were
+        // decoration; killed.
         "fade-up": "fade-up 0.6s cubic-bezier(0.22,1,0.36,1) both",
       },
       backgroundImage: {
-        // Same name so components importing `bg-accent-gradient` still
-        // resolve — but the "gradient" is now a single flat blue with a
-        // barely-there vertical lift. No cyan. No violet. No shimmer.
-        "accent-gradient":
-          "linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%)",
+        // Same names so components importing `bg-accent-gradient` still
+        // resolve — but it is now flat blue. No gradient.
+        "accent-gradient": "linear-gradient(180deg,#2563eb 0%,#1d4ed8 100%)",
         "radial-fade":
-          "radial-gradient(60% 50% at 50% 0%,rgba(37,99,235,0.10) 0%,transparent 70%)",
+          "radial-gradient(60% 50% at 50% 0%,rgba(37,99,235,0.08) 0%,transparent 70%)",
       },
     },
   },

@@ -3,17 +3,19 @@
 @tailwind utilities;
 
 /*
- * Black-and-blue theme experiment for SimAPI.
+ * Black-and-blue theme experiment for SimAPI — v2 (anti-slop).
  *
- * Drop-in replacement for web/app/globals.css. Only tokens change —
- * no component text, no button labels, no backend.
+ * v1 changed colours. v2 changes shape, rhythm, and CTA grammar so the
+ * site stops reading like a SaaS landing template. Every string of
+ * visible text stays intact — this file only touches CSS.
  *
- * To apply:  cp web-experiments/black-blue/globals.css web/app/globals.css
+ * To apply:   cp web-experiments/black-blue/globals.css web/app/globals.css
  * To rollback: git checkout web/app/globals.css
  */
 
 :root {
   color-scheme: dark;
+  --serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
 }
 
 html {
@@ -22,113 +24,188 @@ html {
 }
 
 /*
- * Body: true black. The old dual radial-fade (blue + violet) was the
- * single loudest slop signal — killed. If we want atmosphere later,
- * one subtle blue wash, not two competing ones.
+ * Body: solid true black. The v1 dropped the dual radial fades; v2
+ * keeps that.
  */
 body {
   @apply bg-ink-950 text-white/85 antialiased;
   overflow-x: hidden;
-  background-color: #000000;
-  background-attachment: fixed;
+  background-color: #000;
 }
 
-::selection {
-  background: rgba(37, 99, 235, 0.45);
-  color: #fff;
-}
+::selection { background: rgba(37, 99, 235, 0.45); color: #fff; }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.16);
-  background-clip: content-box;
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); background-clip: content-box; }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v2 — TYPOGRAPHY
+ *
+ * A real editorial serif for display headings signals "this is a
+ * publication," not "this is a landing page." Every marketing
+ * template on the internet uses a geometric sans for the hero. Ours
+ * doesn't anymore.
+ * ───────────────────────────────────────────────────────────────────── */
+
+h1, h2 {
+  font-family: var(--serif);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  /* Text-balance is on by default in the shipped hero; keep it. */
 }
+
+h1 {
+  /* The shipped hero is 68px on desktop. Editorial hero sizes are
+   * closer to 48–56px — pulls the reader in instead of shouting. */
+  font-size: clamp(2.25rem, 4.5vw, 3.5rem) !important;
+  line-height: 1.05 !important;
+}
+
+h2 {
+  font-size: clamp(1.75rem, 3vw, 2.5rem) !important;
+  line-height: 1.1 !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v2 — LAYOUT
+ *
+ * Every SaaS hero centers itself. Ours doesn't. Left-align every
+ * `text-center` inside the shipped hero and every `items-center` /
+ * `justify-center` container in top-level sections. Buttons drop out
+ * of the "flex-wrap centered" pattern and become a left-aligned line.
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* Force-left the hero content wrapper (targets both possible layouts) */
+section .text-center,
+section [class*="items-center"][class*="text-center"] {
+  text-align: left !important;
+  align-items: flex-start !important;
+  margin-left: 0 !important;
+  margin-right: auto !important;
+}
+
+/* CTA row + trust-badge row: left-align */
+section .justify-center {
+  justify-content: flex-start !important;
+}
+
+/* The nav is legitimately horizontal — leave it. Reset the rule only
+ * inside `<nav>`. */
+nav .justify-center { justify-content: center !important; }
+
+/* Kill the pulsing dot in the hero eyebrow — decoration. */
+.eyebrow .animate-pulse-soft { display: none !important; }
+
+/* Kill the "hero background" grid/dot canvas entirely. It's the
+ * loudest decorative surface. */
+section > svg[aria-hidden],
+section > .grid-bg,
+section > div > svg[aria-hidden],
+section > div > .grid-bg {
+  display: none !important;
+}
+
+/* Container tightens for editorial reading. */
+.container-tight {
+  @apply mx-auto w-full px-6;
+  max-width: 960px !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v2 — COMPONENT LAYER
+ * Every class the site imports (btn / btn-primary / btn-ghost /
+ * btn-accent / .glass / .card / .eyebrow / text-gradient) still
+ * resolves — the values behind the names are rewritten.
+ * ───────────────────────────────────────────────────────────────────── */
 
 @layer components {
   .container-tight {
-    @apply mx-auto w-full max-w-6xl px-6;
+    @apply mx-auto w-full px-6;
   }
 
-  /*
-   * Glass panel. Kept for compatibility (components import .glass) but
-   * de-glassed — solid dark surface with a hairline. No backdrop-blur,
-   * no translucency; a real surface, not a floating card.
-   */
-  .glass {
-    @apply border border-white/10 bg-ink-900;
-  }
+  /* De-glassed: solid dark surface with a hairline. */
+  .glass { @apply border border-white/10 bg-ink-900; }
 
-  .card {
-    @apply min-w-0 rounded-md border border-white/10 bg-ink-900;
-  }
+  .card  { @apply min-w-0 border border-white/10 bg-ink-900; }
 
-  .hairline {
-    @apply border-white/10;
-  }
+  .hairline { @apply border-white/10; }
 
-  /*
-   * Text gradient still resolves (components use it) but it's now a
-   * flat blue with a whisper of vertical shift — reads as "colored
-   * text," not "AI-generated headline."
-   */
-  .text-gradient {
-    @apply bg-accent-gradient bg-clip-text text-transparent;
-  }
+  /* text-gradient still exists (hero uses it on "wrong"), but it now
+   * resolves to a single flat blue with a whisper of tone. */
+  .text-gradient { @apply bg-accent-gradient bg-clip-text text-transparent; }
 
-  /*
-   * Buttons: rounded-full → rounded-md. Same size, same padding,
-   * same class names, same text — square-ish corners instead of pills.
-   * The Uncodixfy ruleset flags oversized radius as slop pattern #2.
+  /* ── BUTTONS — the anti-slop rework ─────────────────────────────
+   *
+   * Old: coloured pills with icons. New: monospace, uppercase, tight
+   * tracking, bordered rectangles. Reads like a manual or a terminal
+   * button, not a Stripe CTA.
+   *
+   * Class names are unchanged. Text labels are unchanged. Icons the
+   * components render inside buttons still show up — but sized down
+   * so text carries the label.
    */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-medium
-      transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2
-      focus-visible:ring-accent-blue/60 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950
+    @apply inline-flex items-center gap-2 px-4 py-2 text-xs font-medium
+      transition-colors duration-150 focus-visible:outline-none
+      focus-visible:ring-2 focus-visible:ring-accent-blue/60
+      focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950
       disabled:pointer-events-none disabled:opacity-50;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-radius: 0;
   }
-  /*
-   * Primary is now BLUE, not white. The old "big white pill" is the
-   * strongest slop cue in the current UI — it's the SaaS-landing-page
-   * signature. Blue-on-black reads as infrastructure / terminal, which
-   * matches the product.
-   */
+
+  /* Primary → bordered rectangle, no fill. The shipped white pill is
+   * the strongest SaaS-landing signature; this reads as "action" not
+   * "buy now." */
   .btn-primary {
-    @apply btn bg-accent-blue text-white hover:bg-accent-blueHover;
+    @apply btn border border-white bg-transparent text-white
+      hover:bg-white hover:text-ink-950;
   }
   .btn-ghost {
-    @apply btn border border-white/15 bg-transparent text-white/90 hover:border-white/30 hover:bg-white/[0.04];
+    @apply btn border border-white/25 bg-transparent text-white/85
+      hover:border-white/60 hover:text-white;
   }
-  /*
-   * Accent variant kept for components that use it — same flat blue,
-   * no shadow-glow (that box-shadow was pure decoration).
-   */
+  /* Accent → solid blue rectangle. The one saturated surface on the
+   * page — reserve it for the single most important action. */
   .btn-accent {
-    @apply btn bg-accent-blue text-white hover:bg-accent-blueHover;
+    @apply btn border border-accent-blue bg-accent-blue text-white
+      hover:bg-accent-blueHover hover:border-accent-blueHover;
   }
 
+  /* Icons inside buttons shrink so the label carries the meaning. */
+  .btn svg { width: 0.75rem !important; height: 0.75rem !important; }
+
+  /* Eyebrow → bracket-tag style. "[ SIMULATION VALIDATION ]" in
+   * monospace, no background pill, no border. */
   .eyebrow {
-    @apply inline-flex items-center gap-2 rounded-sm border border-white/10 bg-ink-900
-      max-w-full justify-center px-3 py-1 text-center text-xs font-medium uppercase
-      tracking-[0.14em] text-white/60;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.55);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    font-weight: 500;
   }
+  .eyebrow::before { content: "["; margin-right: 0.25rem; color: rgba(255,255,255,0.35); }
+  .eyebrow::after  { content: "]"; margin-left:  0.25rem; color: rgba(255,255,255,0.35); }
 
-  /*
-   * Engineering grid backdrop — kept, but muted. The subtle grid is
-   * on-brand for the product ("things measured against a reference");
-   * the old opacity was fine.
-   */
+  /* Grid backdrop muted, not decorative. */
   .grid-bg {
     background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(to right,  rgba(255, 255, 255, 0.03) 1px, transparent 1px),
       linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
     background-size: 44px 44px;
     mask-image: radial-gradient(circle at 50% 40%, black 30%, transparent 78%);
@@ -136,15 +213,39 @@ body {
 }
 
 @layer utilities {
-  /*
-   * shadow-glow was a big blue drop-shadow used behind panels to make
-   * them "float." Killed — replaced by a single hairline that reads as
-   * a real edge, not a glow.
-   */
-  .shadow-glow {
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
-  }
+  /* shadow-glow was a 60px blue drop-shadow used to make panels
+   * float. Kill the glow; replace with a hairline that reads as an
+   * actual edge. */
+  .shadow-glow { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08); }
   .divider {
     background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.10), transparent);
   }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v2 — GLOBAL: kill rounded pills that live outside the component
+ * layer (nav pills, trust badges, dot indicators). Tailwind config
+ * already flattens every `rounded-md/lg/xl/2xl/3xl`; this catches
+ * `rounded-full` on any element that isn't a legitimate dot or
+ * scrollbar.
+ * ───────────────────────────────────────────────────────────────────── */
+
+nav .rounded-full,
+section .rounded-full,
+main .rounded-full {
+  border-radius: 0 !important;
+}
+
+/* Trust-badges under the hero: strip pill + wash to plain text w/ hairline */
+section .rounded-full[class*="border"] {
+  border-color: rgba(255, 255, 255, 0.10) !important;
+  background: transparent !important;
+}
+
+/* Explicitly restore the "dot" pattern used in the eyebrow / status
+ * indicators (they use `h-1.5 w-1.5 rounded-full`). */
+[class*="h-1.5"][class*="w-1.5"].rounded-full,
+[class*="h-2"][class*="w-2"].rounded-full,
+[class*="h-3"][class*="w-3"].rounded-full {
+  border-radius: 9999px !important;
 }
