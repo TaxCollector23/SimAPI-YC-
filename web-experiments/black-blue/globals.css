@@ -1,0 +1,150 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Black-and-blue theme experiment for SimAPI.
+ *
+ * Drop-in replacement for web/app/globals.css. Only tokens change —
+ * no component text, no button labels, no backend.
+ *
+ * To apply:  cp web-experiments/black-blue/globals.css web/app/globals.css
+ * To rollback: git checkout web/app/globals.css
+ */
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow-x: hidden;
+}
+
+/*
+ * Body: true black. The old dual radial-fade (blue + violet) was the
+ * single loudest slop signal — killed. If we want atmosphere later,
+ * one subtle blue wash, not two competing ones.
+ */
+body {
+  @apply bg-ink-950 text-white/85 antialiased;
+  overflow-x: hidden;
+  background-color: #000000;
+  background-attachment: fixed;
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.45);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+  background-clip: content-box;
+}
+
+@layer components {
+  .container-tight {
+    @apply mx-auto w-full max-w-6xl px-6;
+  }
+
+  /*
+   * Glass panel. Kept for compatibility (components import .glass) but
+   * de-glassed — solid dark surface with a hairline. No backdrop-blur,
+   * no translucency; a real surface, not a floating card.
+   */
+  .glass {
+    @apply border border-white/10 bg-ink-900;
+  }
+
+  .card {
+    @apply min-w-0 rounded-md border border-white/10 bg-ink-900;
+  }
+
+  .hairline {
+    @apply border-white/10;
+  }
+
+  /*
+   * Text gradient still resolves (components use it) but it's now a
+   * flat blue with a whisper of vertical shift — reads as "colored
+   * text," not "AI-generated headline."
+   */
+  .text-gradient {
+    @apply bg-accent-gradient bg-clip-text text-transparent;
+  }
+
+  /*
+   * Buttons: rounded-full → rounded-md. Same size, same padding,
+   * same class names, same text — square-ish corners instead of pills.
+   * The Uncodixfy ruleset flags oversized radius as slop pattern #2.
+   */
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-5 py-2.5 text-sm font-medium
+      transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2
+      focus-visible:ring-accent-blue/60 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950
+      disabled:pointer-events-none disabled:opacity-50;
+  }
+  /*
+   * Primary is now BLUE, not white. The old "big white pill" is the
+   * strongest slop cue in the current UI — it's the SaaS-landing-page
+   * signature. Blue-on-black reads as infrastructure / terminal, which
+   * matches the product.
+   */
+  .btn-primary {
+    @apply btn bg-accent-blue text-white hover:bg-accent-blueHover;
+  }
+  .btn-ghost {
+    @apply btn border border-white/15 bg-transparent text-white/90 hover:border-white/30 hover:bg-white/[0.04];
+  }
+  /*
+   * Accent variant kept for components that use it — same flat blue,
+   * no shadow-glow (that box-shadow was pure decoration).
+   */
+  .btn-accent {
+    @apply btn bg-accent-blue text-white hover:bg-accent-blueHover;
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 rounded-sm border border-white/10 bg-ink-900
+      max-w-full justify-center px-3 py-1 text-center text-xs font-medium uppercase
+      tracking-[0.14em] text-white/60;
+  }
+
+  /*
+   * Engineering grid backdrop — kept, but muted. The subtle grid is
+   * on-brand for the product ("things measured against a reference");
+   * the old opacity was fine.
+   */
+  .grid-bg {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(circle at 50% 40%, black 30%, transparent 78%);
+  }
+}
+
+@layer utilities {
+  /*
+   * shadow-glow was a big blue drop-shadow used behind panels to make
+   * them "float." Killed — replaced by a single hairline that reads as
+   * a real edge, not a glow.
+   */
+  .shadow-glow {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  }
+  .divider {
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.10), transparent);
+  }
+}
