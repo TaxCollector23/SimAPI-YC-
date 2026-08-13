@@ -35,7 +35,15 @@ HALF_INTEGER_DENOMS = {1, 2}
 @dataclass
 class PiGroup:
     exponents: dict[str, Fraction]     # column -> exponent, zero entries omitted
-    values: np.ndarray                 # computed group value per row
+    values: np.ndarray                 # computed group value per surviving row
+    # Original data.index labels for each entry in `values`. When any
+    # participating column has NaN, `_compute_values` drops those rows and
+    # `values` becomes shorter than `data`. Downstream layers (2, 4) MUST
+    # map positions through this index or they misattribute violations by
+    # the number of dropped rows -- silently flagging clean rows and
+    # missing corrupted ones. Regression: test_layer4_bimodal_split_row_ids_
+    # survive_nan_column.
+    index: pd.Index | None = None
     origin: str = "basis"              # "basis" | "sum" | "difference"
     source_columns: tuple[str, ...] = field(default_factory=tuple)
 
@@ -77,7 +85,13 @@ def select_columns(data: pd.DataFrame, units: UnitsResolution, cap: int = MAX_CO
     return [c for _, c in scored[:cap]]
 
 
-def _compute_values(data: pd.DataFrame, exponents: dict[str, Fraction]) -> np.ndarray | None:
+def _compute_values(
+    data: pd.DataFrame, exponents: dict[str, Fraction]
+) -> tuple[np.ndarray, pd.Index] | None:
+    """Return (values, surviving_index). Callers must use surviving_index
+    to map positions back to data row ids; the values array is only as
+    long as the rows that had non-NaN entries in every participating
+    column."""
     cols = list(exponents)
     sub = data[cols].apply(pd.to_numeric, errors="coerce")
     if sub.isna().any().any():
@@ -95,7 +109,7 @@ def _compute_values(data: pd.DataFrame, exponents: dict[str, Fraction]) -> np.nd
                 result = result * np.power(col_vals, e)
         if not np.all(np.isfinite(result)):
             return None
-        return result
+        return result, sub.index
     except Exception:
         return None
 
@@ -127,10 +141,12 @@ def find_pi_groups(
                 exponents = {c: e for c, e in zip(subset, normed, strict=True) if e != 0}
                 if len(exponents) < 2:
                     continue
-                values = _compute_values(data, exponents)
-                if values is None:
+                cv = _compute_values(data, exponents)
+                if cv is None:
                     continue
-                pg = PiGroup(exponents=exponents, values=values, origin="basis", source_columns=subset)
+                values, index = cv
+                pg = PiGroup(exponents=exponents, values=values, index=index,
+                             origin="basis", source_columns=subset)
                 if pg.signature in seen_signatures:
                     continue
                 seen_signatures.add(pg.signature)
@@ -150,10 +166,11 @@ def find_pi_groups(
                 continue
             if not all(_is_half_integer(e) for e in combined.values()):
                 continue
-            values = _compute_values(data, combined)
-            if values is None:
+            cv = _compute_values(data, combined)
+            if cv is None:
                 continue
-            pg = PiGroup(exponents=combined, values=values, origin=origin,
+            values, index = cv
+            pg = PiGroup(exponents=combined, values=values, index=index, origin=origin,
                          source_columns=tuple(sorted(set(g1.source_columns) | set(g2.source_columns))))
             if pg.signature in seen_signatures:
                 continue

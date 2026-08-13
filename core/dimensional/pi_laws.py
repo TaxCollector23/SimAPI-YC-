@@ -385,9 +385,13 @@ def layer2_constant_pi_groups(
         scale = _robust_scale(values, median)
         z = np.abs(values - median) / scale
         bad = z > ROBUST_Z_THRESHOLD
-        violated = {}
+        # Map positions in `values` through pg.index -- when a participating
+        # column had NaNs, pg.values is shorter than data and data.index[p]
+        # would be off by the number of dropped rows.
+        violated: dict[int, float] = {}
+        pg_index = pg.index if pg.index is not None else data.index
         for p in np.where(bad)[0]:
-            violated[int(data.index[p]) if p < len(data.index) else p] = float(values[p] / median)
+            violated[int(pg_index[p])] = float(values[p] / median)
 
         row_clusters = _shared_factor_clusters(violated)
         note = "exact (zero scatter)" if mad == 0 else f"rel_mad={rel_mad:.2e}"
@@ -475,7 +479,10 @@ def layer4_bimodal_split(data: pd.DataFrame, groups: list[PiGroup]) -> list[LawF
 
         low_idx = order[:split_point]
         rows_in_minority = low_idx if low_frac <= 0.5 else order[split_point:]
-        violated = {int(data.index[p]): float(np.exp(logv[p]) / (high_med if low_frac <= 0.5 else low_med))
+        # Same NaN-shortening pitfall as Layer 2: index positions in `logv`
+        # (a re-ordering of pg.values) map to pg.index, not data.index.
+        pg_index = pg.index if pg.index is not None else data.index
+        violated = {int(pg_index[p]): float(np.exp(logv[p]) / (high_med if low_frac <= 0.5 else low_med))
                     for p in rows_in_minority}
 
         findings.append(LawFinding(

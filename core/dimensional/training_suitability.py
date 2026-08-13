@@ -96,11 +96,17 @@ def find_feature_target_leakage(data: pd.DataFrame, columns: list[str]) -> list[
     out = []
     cols = [c for c in columns if _numeric(data, c) is not None]
     for i, a in enumerate(cols):
-        va = _numeric(data, a)
         for b in cols[i + 1:]:
-            vb = _numeric(data, b)
-            if va is None or vb is None or len(va) != len(vb):
+            # Joint dropna: correlating two columns that were each
+            # separately dropna'd would silently misalign rows when
+            # the two have different NaN positions -- an equal length
+            # is not a matched pairing, and np.corrcoef would score
+            # independent noise as anything from 0 to 1 by accident.
+            pair = data[[a, b]].apply(pd.to_numeric, errors="coerce").dropna()
+            if len(pair) < MIN_ROWS_FOR_COVERAGE:
                 continue
+            va = pair[a].to_numpy()
+            vb = pair[b].to_numpy()
             if np.std(va) == 0 or np.std(vb) == 0:
                 continue
             r = float(np.corrcoef(va, vb)[0, 1])

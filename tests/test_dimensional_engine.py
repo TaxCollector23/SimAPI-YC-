@@ -840,3 +840,154 @@ def test_definitional_nonnegative_quantity_bound():
     })
     report = validate(df)
     assert 2 in report.impossible_rows
+
+
+# ── Correctness bug: Layer 4 row_id misalignment when a Pi-group column
+# has NaN. `_compute_values` dropna's the participating columns, so
+# `pg.values` is shorter than `data`; positions no longer map to
+# `data.index[p]`. Every violated row after the first NaN was reported
+# off-by-one; the last true violation was silently dropped and one
+# clean row was falsely flagged. Regression test locks in the fix.
+def test_layer4_bimodal_split_row_ids_survive_nan_column():
+    n = 40
+    rng = np.random.default_rng(88)
+    tau = rng.uniform(5, 50, n)
+    omega = rng.uniform(10, 200, n)
+    power = tau * omega
+    tau[3] = np.nan  # sparse row shifts the dropna'd values array
+    corrupt = list(range(20, 31))  # bimodal split minority
+    power[corrupt] = power[corrupt] * 1e3
+    df = pd.DataFrame({"torque": tau, "angular_velocity": omega, "power": power})
+
+    report = validate(df)
+    splits = [law for law in report.laws if law.kind == "bimodal_split"]
+    assert splits, "bimodal-split not detected"
+    flagged = set(splits[0].violated_rows)
+    truth = set(corrupt)
+    tp = len(flagged & truth)
+    fp = len(flagged - truth)
+    # Must NOT report row 19 (a clean row) or drop row 30 (a corrupt one)
+    # -- exactly the off-by-one signature of the fixed bug.
+    assert 30 in flagged, (
+        f"last corrupted row 30 missing from split.violated_rows={sorted(flagged)}"
+    )
+    assert 19 not in flagged, (
+        f"clean row 19 falsely flagged (off-by-one): {sorted(flagged)}"
+    )
+    assert tp >= 10 and fp == 0, f"tp={tp} fp={fp} flagged={sorted(flagged)}"
+
+
+# ── Correctness bug: leakage detector on columns with different NaN
+# patterns computed correlation on misaligned rows. Two independent
+# columns with different missing positions could correlate to noise or
+# spuriously trip R^2 >= 0.9995. Fix aligns via joint dropna.
+def test_leakage_detector_uses_joint_dropna():
+    from core.dimensional.training_suitability import find_feature_target_leakage
+    n = 200
+    rng = np.random.default_rng(77)
+    a = rng.normal(size=n)
+    b = rng.normal(size=n)  # independent of a
+    a[[3, 7, 11]] = np.nan
+    b[[5, 13, 17]] = np.nan  # different NaN positions, same count
+    df = pd.DataFrame({"a_var": a, "b_var": b})
+    findings = find_feature_target_leakage(df, list(df.columns))
+    # Independent noise must NOT be flagged as deterministic leakage.
+    assert findings == [], f"false leakage on independent noise: {findings}"
+
+
+# ── Coverage gap #1: false-positive drift on a clean, noisy time series.
+# The sub-threshold drift detector has a strong recall guarantee
+# (test_4b) but no false-alarm test -- ambient noise correlated with
+# time could trip it and destroy trust in every clean report.
+def test_no_false_drift_on_clean_time_series():
+    n = 200
+    rng = np.random.default_rng(101)
+    time_s = np.arange(n, dtype=float)
+    T = 293.15 + rng.normal(0, 0.5, n)
+    rho = 1.225 + rng.normal(0, 0.003, n)
+    P = rho * 287.05 * T  # clean, no drift
+    df = pd.DataFrame({"time_s": time_s, "temperature": T,
+                       "density": rho, "pressure": P})
+    report = validate(df)
+    drifts = [law for law in report.laws if law.kind == "temporal_drift"]
+    assert not drifts, (
+        f"false gauge drift on clean data: {[l.note for l in drifts]}"
+    )
+
+
+# ── Coverage gap #2: false-positive shared-factor cluster on scattered
+# noise. Three independent violations that happen to fall within 5% of
+# each other in log-space would be clustered and, if the median hit a
+# SPLIT_FACTOR, given a fabricated unit name -- misdirecting root-cause.
+def test_no_spurious_cluster_on_scattered_noise():
+    n = 100
+    df = _ideal_gas_dataset(n, seed=201)
+    rng = np.random.default_rng(201)
+    scatter = rng.choice(n, size=6, replace=False)
+    df.loc[scatter, "pressure"] *= (1 + rng.normal(0, 0.05, 6))
+    report = validate(df)
+    for law in report.laws:
+        clusters = getattr(law, "row_clusters", {}) or {}
+        for info in clusters.values():
+            assert info.get("named") is None, (
+                f"random noise clustered and named as {info}"
+            )
+
+
+# ── Coverage gap #4: an all-NaN placeholder column (real CSVs carry
+# them) must not crash the engine or poison downstream layers.
+def test_all_nan_column_does_not_crash():
+    df = _ideal_gas_dataset(40, seed=404)
+    df["sensor_offline"] = np.nan
+    report = validate(df)  # must not raise
+    assert report.n_rows == 40
+    assert "sensor_offline" not in report.units.usable_columns()
+
+
+# ── Coverage gap #6: bimodal-split MINORITY-side attribution.
+# test_8 asserts the split is reported and named; nothing verifies the
+# flagged rows are the actually-corrupted ones. A regression flipping
+# the labels (clean majority flagged, corrupt minority passed) would
+# be invisible today.
+def test_bimodal_split_flags_the_minority_side():
+    n = 150
+    rng = np.random.default_rng(606)
+    tau = rng.uniform(5, 50, n)
+    omega = rng.uniform(10, 200, n)
+    power = tau * omega
+    corrupt = rng.choice(n, size=30, replace=False)  # 20% minority
+    power[corrupt] = power[corrupt] * 1e3
+    df = pd.DataFrame({"torque": tau, "angular_velocity": omega, "power": power})
+
+    report = validate(df)
+    splits = [law for law in report.laws if law.kind == "bimodal_split"]
+    assert splits, "expected a bimodal-split finding"
+    flagged = set(splits[0].violated_rows)
+    truth = set(int(i) for i in corrupt)
+    tp = len(flagged & truth)
+    assert tp / len(corrupt) > 0.85, (
+        f"minority attribution broken: tp={tp}/{len(corrupt)} "
+        f"flagged={sorted(flagged)[:8]}..."
+    )
+
+
+# ── Coverage gap #5: overlapping anchors on a shared column. Corrupting
+# temperature breaks both the ideal-gas law and the speed-of-sound
+# relation. Arbitration must surface a single primary finding per row,
+# not double-count.
+def test_overlapping_anchors_no_double_report():
+    n = 100
+    rng = np.random.default_rng(505)
+    T = 293.15 + rng.normal(0, 0.5, n)
+    rho = 1.225 + rng.normal(0, 0.003, n)
+    P = rho * 287.05 * T
+    c = np.sqrt(1.4 * 287.05 * T)
+    df = pd.DataFrame({"temperature": T, "density": rho,
+                       "pressure": P, "speed_of_sound": c})
+    df.loc[5, "temperature"] *= 1.20  # breaks both laws
+    report = validate(df)
+    assert 5 in (report.impossible_rows | report.inconsistent_rows)
+    r5 = [f for f in report.row_findings if f.row_id == 5]
+    assert len(r5) == 1, (
+        f"row 5 double-reported: {[(f.layer, f.reason[:40]) for f in r5]}"
+    )
