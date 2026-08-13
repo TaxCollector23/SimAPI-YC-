@@ -404,12 +404,27 @@ def _arbitrate(
             # wrong unit", not "each of these rows is independently off".
             # The counterfactual still runs for isolated violations.
             cluster = law.row_clusters.get(rid) if law.row_clusters else None
-            if cluster:
-                named = cluster.get("named")
-                factor_label = named or f"{cluster['cluster_factor']:.4g}x"
+            if cluster and cluster.get("named"):
+                # Named cluster = shared factor matches a known unit
+                # conversion (kilo/milli/psi/etc.) -- confident to attribute
+                # the whole cluster to a wrong-unit subset.
                 cf = (f"shared with {cluster['cluster_size']-1} other row(s): "
-                      f"whole cluster is off by {factor_label} -- likely a "
+                      f"whole cluster is off by {cluster['named']} -- likely a "
                       f"wrong-unit subset, not per-row corruption")
+            elif cluster:
+                # Unnamed cluster = shared factor doesn't match any known
+                # unit conversion. Report the co-occurrence but do NOT claim
+                # "wrong-unit subset" -- the shared factor may be coincidental
+                # (three independent violations happening to fall inside the
+                # 5% log-space band) and misdirecting a root-cause hunt is
+                # worse than staying quiet. Still fall back to the per-row
+                # counterfactual for concrete guidance.
+                per_row_cf = None if skip_counterfactual else _counterfactual_repair(
+                    law.columns, rid, factor, si_data, law.kind)
+                cf = (f"shares deviation ~{cluster['cluster_factor']:.4g}x with "
+                      f"{cluster['cluster_size']-1} other row(s) (unrecognised factor)")
+                if per_row_cf:
+                    cf = f"{cf}; {per_row_cf}"
             elif skip_counterfactual:
                 cf = None
             else:

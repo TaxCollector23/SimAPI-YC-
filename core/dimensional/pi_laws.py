@@ -157,8 +157,16 @@ def _cluster_note_suffix(row_clusters: dict[int, dict]) -> str:
             seen.append((f, info.get("named"), 1))
     parts = []
     for factor, named, count in seen:
-        label = named or f"{factor:.4g}x"
-        parts.append(f"{count} rows share factor {label}")
+        if named:
+            parts.append(f"{count} rows share factor {named}")
+        else:
+            # Unnamed factor -- softer phrasing than "share factor X". Three
+            # independent noise-driven violations near ~1.5x each are not a
+            # unit-conversion story, they're a coincidence, and asserting
+            # "shared factor" would misdirect the root-cause hunt.
+            parts.append(
+                f"{count} rows co-occur near ~{factor:.4g}x (unrecognised factor)"
+            )
     return "; " + "; ".join(parts)
 
 

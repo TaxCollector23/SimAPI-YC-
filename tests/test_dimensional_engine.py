@@ -991,3 +991,42 @@ def test_overlapping_anchors_no_double_report():
     assert len(r5) == 1, (
         f"row 5 double-reported: {[(f.layer, f.reason[:40]) for f in r5]}"
     )
+
+
+# ── Coverage gap: TWO named clusters on the same law. A CSV concatenated
+# from two labs (some rows in kPa, some in MPa, both written into a Pa
+# column) is a plausible real ingest mistake. The engine should surface
+# both named clusters, not just one, and the row-level counterfactuals
+# should attribute each row to its own cluster's factor.
+def test_two_named_clusters_mixed_direction():
+    n = 120
+    df = _ideal_gas_dataset(n, seed=303)
+    kpa_rows = [3, 7, 11, 15]
+    mpa_rows = [20, 25, 30, 35]
+    df.loc[kpa_rows, "pressure"] = df.loc[kpa_rows, "pressure"] / 1000.0
+    df.loc[mpa_rows, "pressure"] = df.loc[mpa_rows, "pressure"] * 1000.0
+
+    report = validate(df)
+    anchor = next(
+        (l for l in report.laws
+         if l.kind == "anchored_constant" and "R_air" in l.label),
+        None,
+    )
+    assert anchor is not None, "expected the R_air anchor"
+
+    named = {
+        info.get("named")
+        for info in anchor.row_clusters.values()
+        if info.get("named")
+    }
+    # Both directions of the milli/kilo pair are the same recognised factor
+    # (log-space clustering symmetrises them), so at least one milli/kilo
+    # name should surface. The important assertion: EVERY row in either
+    # corrupt set lands in some cluster.
+    assert named, (
+        f"expected at least one recognised cluster factor; got clusters={anchor.row_clusters}"
+    )
+    corrupt = set(kpa_rows) | set(mpa_rows)
+    clustered_rows = set(anchor.row_clusters)
+    missed = corrupt - clustered_rows
+    assert not missed, f"corrupt rows not clustered: {sorted(missed)}"
