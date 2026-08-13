@@ -5,19 +5,15 @@
 @tailwind utilities;
 
 /*
- * Black-and-blue theme experiment for SimAPI — v3 (Geist everywhere,
- * badges gone, less slop).
+ * Black-and-blue theme experiment for SimAPI — v4 (arrow-CTA rework).
+ *
+ * v1 recoloured. v2 reshaped (left-align, rectangles, monospace CTAs).
+ * v3 unified fonts (Geist everywhere) and removed marketing badges.
+ * v4 rethinks the CTAs so the page reads as a real product page, not
+ * a template with two rectangle buttons in the middle.
  *
  * Drop-in replacement for web/app/globals.css. No component text is
  * edited. No backend is touched.
- *
- * v1: recoloured (black + one blue accent).
- * v2: reshaped (left-align, serif headings, monospace bracket CTAs,
- *     rectangle everything).
- * v3: refined — Geist Sans across the whole page, Geist Mono for code,
- *     drop the serif experiment, drop the bracket-tag drama on the
- *     eyebrow, drop the CTA-caps drama, delete every marketing badge
- *     row so the page reads as a single quiet column.
  *
  * To apply:   cp web-experiments/black-blue/globals.css web/app/globals.css
  * To rollback: git checkout web/app/globals.css
@@ -40,11 +36,10 @@ body {
   overflow-x: hidden;
   background-color: #000;
   font-family: var(--font-geist);
-  font-feature-settings: "ss01", "cv11";  /* Geist's contextual alternates: cleaner 'a', tabular digits */
+  font-feature-settings: "ss01", "cv11";
   letter-spacing: -0.005em;
 }
 
-/* Every text element -> Geist. Every code / mono surface -> Geist Mono. */
 h1, h2, h3, h4, h5, h6,
 p, a, button, input, textarea, select, label, span, div, li, td, th {
   font-family: var(--font-geist);
@@ -53,8 +48,6 @@ code, pre, kbd, samp,
 .font-mono, [class*="font-mono"] {
   font-family: var(--font-geist-mono) !important;
 }
-
-/* Kill any lingering serif reference from v2. */
 [class*="font-serif"] { font-family: var(--font-geist) !important; }
 
 ::selection { background: rgba(37, 99, 235, 0.45); color: #fff; }
@@ -69,12 +62,7 @@ code, pre, kbd, samp,
 ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); background-clip: content-box; }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v3 — TYPOGRAPHY
- *
- * Geist Sans is neutral enough to carry both display and body. No
- * serif experiment. Pull display type down further; the shipped hero
- * shouted at 68px, v2 spoke at 56px, v3 speaks at 44px — which is
- * where documentation-hero display type actually sits.
+ * v4 — TYPOGRAPHY
  * ───────────────────────────────────────────────────────────────────── */
 
 h1 {
@@ -92,7 +80,7 @@ h2 {
 h3 { font-weight: 500 !important; letter-spacing: -0.01em !important; }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v3 — LAYOUT
+ * v4 — LAYOUT
  * ───────────────────────────────────────────────────────────────────── */
 
 section .text-center,
@@ -105,7 +93,6 @@ section [class*="items-center"][class*="text-center"] {
 section .justify-center { justify-content: flex-start !important; }
 nav .justify-center { justify-content: center !important; }
 
-/* Hero background decoration — hidden. */
 section > svg[aria-hidden],
 section > .grid-bg,
 section > div > svg[aria-hidden],
@@ -121,45 +108,30 @@ section > div > .grid-bg,
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v3 — REMOVE THE BADGE ROWS
- *
- * The hero renders a row of "trust badges" under the CTAs (CFD/FEA,
- * CLI/SDK, CI fail gates), and other sections carry pill-badges too.
- * Every SaaS template has these; they say nothing the copy doesn't.
- * Kill them.
- *
- * Precise-first (the hero's badge row uses `text-white/42`), then
- * broad (any rounded-full-with-border pill inside a section), then a
- * final broad hide of any small-icon pill row.
+ * v4 — REMOVE THE BADGE ROWS (unchanged from v3)
  * ───────────────────────────────────────────────────────────────────── */
 
-/* The hero trust-badge row (exact match for its unique wrapper) */
 section [class*="text-white\\/42"],
-section [class*="text-white/42"] {
-  display: none !important;
-}
-
-/* Any other bordered pill in a content section — trust badges, feature
- * chips, "Available in beta" tags, etc. */
+section [class*="text-white/42"] { display: none !important; }
 section .rounded-full[class*="border"],
-main    .rounded-full[class*="border"] {
-  display: none !important;
-}
-
-/* Whole rows composed of only such pills — kill the container too so
- * we don't leave an empty flex gap behind. */
+main    .rounded-full[class*="border"] { display: none !important; }
 section .flex.flex-wrap.items-center[class*="justify-center"][class*="text-xs"],
-section .flex.flex-wrap.items-center[class*="text-xs"][class*="text-white"] {
-  display: none !important;
-}
-
-/* Legitimate exception: nav pills stay visible; scrollbar/dot rounded
- * shapes stay round (handled at the bottom of this file). */
+section .flex.flex-wrap.items-center[class*="text-xs"][class*="text-white"] { display: none !important; }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v3 — COMPONENT LAYER
- * Every class the site imports still resolves; values behind the
- * names are rewritten.
+ * v4 — CTA REWORK
+ *
+ * v2/v3 CTAs were rectangles: solid blue + bordered outline. That
+ * pairing is still template-shaped ("primary" + "secondary" pill).
+ * v4 replaces the ghost button with a link-with-sliding-arrow — the
+ * pattern real product pages actually use (Stripe, Linear, Vercel
+ * docs, Fly.io machines) — and keeps ONE saturated rectangle as
+ * the single primary action.
+ *
+ * .btn-accent  -> solid blue rectangle (single accent surface on the
+ *                 page; reserve for the one most-important CTA)
+ * .btn-primary -> link with a sliding "→" arrow, no border, no fill
+ * .btn-ghost   -> quieter link with a sliding "→" arrow
  * ───────────────────────────────────────────────────────────────────── */
 
 @layer components {
@@ -169,15 +141,9 @@ section .flex.flex-wrap.items-center[class*="text-xs"][class*="text-white"] {
   .hairline { @apply border-white/10; }
   .text-gradient { @apply bg-accent-gradient bg-clip-text text-transparent; }
 
-  /* ── BUTTONS — cleaner in v3.
-   *
-   * v2 made them monospace uppercase with 0.08em tracking. That was a
-   * signal, but a loud one. v3 uses Geist Sans, sentence case, medium
-   * weight, tight tracking — reads as a button, not a stylistic
-   * statement.
-   */
+  /* Shared base — kept small on purpose so links don't LOOK like buttons */
   .btn {
-    @apply inline-flex items-center gap-2 px-4 py-2 text-sm font-medium
+    @apply inline-flex items-center gap-2 text-sm font-medium
       transition-colors duration-150 focus-visible:outline-none
       focus-visible:ring-2 focus-visible:ring-accent-blue/60
       focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950
@@ -186,29 +152,81 @@ section .flex.flex-wrap.items-center[class*="text-xs"][class*="text-white"] {
     letter-spacing: -0.005em;
     border-radius: 0;
   }
-  .btn-primary {
-    @apply btn border border-white bg-transparent text-white
-      hover:bg-white hover:text-ink-950;
-  }
-  .btn-ghost {
-    @apply btn border border-white/25 bg-transparent text-white/85
-      hover:border-white/60 hover:text-white;
-  }
-  .btn-accent {
-    @apply btn border border-accent-blue bg-accent-blue text-white
-      hover:bg-accent-blueHover hover:border-accent-blueHover;
-  }
-  .btn svg { width: 0.875rem !important; height: 0.875rem !important; }
 
-  /* Eyebrow — quiet. No brackets, no border, no pulsing dot, no pill.
-   * Just small tracked Geist Mono grey text sitting above the H1. */
+  /*
+   * PRIMARY  =  link + sliding arrow.
+   * No border, no fill, no icon-based padding — just a white link
+   * with a "→" arrow after the label that slides 4px right on hover.
+   */
+  .btn-primary {
+    @apply btn text-white bg-transparent border-0 px-0 py-1;
+    position: relative;
+  }
+  .btn-primary::after {
+    content: "→";
+    display: inline-block;
+    margin-left: 0.35rem;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    font-weight: 400;
+  }
+  .btn-primary:hover::after { transform: translateX(4px); }
+  .btn-primary:hover {
+    color: #fff;
+    text-decoration: underline;
+    text-underline-offset: 0.35em;
+    text-decoration-thickness: 1px;
+  }
+
+  /*
+   * GHOST  =  quieter version of primary. Grey text, same sliding
+   * arrow, brighter on hover.
+   */
+  .btn-ghost {
+    @apply btn text-white/60 bg-transparent border-0 px-0 py-1;
+    position: relative;
+  }
+  .btn-ghost::after {
+    content: "→";
+    display: inline-block;
+    margin-left: 0.35rem;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    font-weight: 400;
+  }
+  .btn-ghost:hover::after { transform: translateX(4px); }
+  .btn-ghost:hover {
+    color: rgba(255,255,255,0.95);
+    text-decoration: underline;
+    text-underline-offset: 0.35em;
+    text-decoration-thickness: 1px;
+  }
+
+  /*
+   * ACCENT  =  the one solid rectangle. Small, dense, monospace-hint.
+   * Reserve for the single most-important call to action on any page
+   * (nav Get API Key, hero Get API Key).
+   */
+  .btn-accent {
+    @apply btn text-white px-4 py-2;
+    background: #2563eb;
+    border: 1px solid #2563eb;
+  }
+  .btn-accent:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
+  }
+
+  /* Icons inside link-style CTAs shrink so the label carries meaning.
+   * Icons inside the solid accent stay slightly larger for weight. */
+  .btn-primary svg,
+  .btn-ghost svg { width: 0.75rem !important; height: 0.75rem !important; opacity: 0.6; }
+  .btn-accent svg { width: 0.875rem !important; height: 0.875rem !important; }
+
+  /* Eyebrow — quiet (unchanged from v3) */
   .eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0;
-    border: 0;
-    background: transparent;
+    padding: 0; border: 0; background: transparent;
     color: rgba(255, 255, 255, 0.5);
     font-family: var(--font-geist-mono);
     font-size: 0.7rem;
@@ -235,11 +253,9 @@ section .flex.flex-wrap.items-center[class*="text-xs"][class*="text-white"] {
 }
 
 /* ─────────────────────────────────────────────────────────────────────
- * v3 — FINAL SWEEPS
+ * v4 — FINAL SWEEPS
  * ───────────────────────────────────────────────────────────────────── */
 
-/* Flatten any remaining rounded-full inside content — but restore
- * shape for legitimate dots and the scrollbar. */
 nav .rounded-full,
 section .rounded-full,
 main .rounded-full { border-radius: 0 !important; }

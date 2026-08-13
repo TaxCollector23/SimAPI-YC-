@@ -1,4 +1,4 @@
-# Black-and-blue theme experiment — v3 (Geist + no badges)
+# Black-and-blue theme experiment — v4 (arrow-CTA rework)
 
 A drop-in visual override for the `web/` marketing site. **v1 changed
 colours; v2 changes shape, rhythm, typography, and CTA grammar** so the
@@ -50,6 +50,32 @@ Geist is loaded from Google Fonts via a single `@import` at the top of
 `globals.css` — no `next/font` change, no `layout.tsx` edit, no addition
 to `package.json`. Falls back to `ui-sans-serif` / `system-ui` if the
 CDN is blocked.
+
+**CTA rework (new in v4):**
+
+| v3 | v4 |
+|---|---|
+| Two rectangle buttons in the hero (bordered ghost + solid blue) — still template-shaped ("primary + secondary" pair) | **One** solid blue rectangle (`.btn-accent`) as the single primary. Everything else is a **link with a sliding "→" arrow** on hover. |
+| `.btn-primary` = bordered transparent rectangle | `.btn-primary` = white link + `→` arrow, underline on hover, arrow slides 4px right |
+| `.btn-ghost` = bordered greyer rectangle | `.btn-ghost` = grey link + `→` arrow, same hover behaviour, brighter on hover |
+| `.btn-accent` = solid blue rectangle | `.btn-accent` = solid blue rectangle (unchanged) — reserve for the single most important action on any page |
+
+The pattern is what real product pages actually use (Stripe, Linear,
+Vercel docs, Fly.io machines): **one** saturated call to action per
+view, and every other navigation move is a quiet link. Nav's "Get API
+Key" quietens to a link, hero's stays solid. Reads as a real product
+page, not a template.
+
+## Local dev
+
+Once the override is applied, start the dev server on any free port:
+
+```bash
+PORT=4321 npm --prefix web run dev
+```
+
+Open <http://localhost:4321> (or whatever port you chose). The shipped
+`.claude/launch.json` targets 3000; passing `PORT` overrides it.
 
 **Reference lineage:**
 
