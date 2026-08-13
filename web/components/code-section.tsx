@@ -1,8 +1,7 @@
 "use client";
 
-import Image from "next/image";
-import { useState } from "react";
-import { Copy, Check, Terminal, GitBranch, FileJson } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Copy, Check } from "lucide-react";
 import { SectionHeader } from "./ui/section";
 import { cn } from "@/lib/utils";
 
@@ -13,10 +12,17 @@ const install: Record<string, string> = {
   npm: "npm install -g simapi-cli",
 };
 
-const checks = [
-  { icon: Terminal, label: "Global command", value: "simapi" },
-  { icon: GitBranch, label: "CI policy", value: "--fail-on warning" },
-  { icon: FileJson, label: "Machine output", value: "--json" },
+// The three lucide-icon rows here used to be `Terminal / GitBranch /
+// FileJson` icons paired with "Global command / CI policy / Machine
+// output" labels. Icon-card grids are the SaaS-template signature the
+// theme experiment is trying to erase. Replaced with a `simapi --help`
+// excerpt rendered as a real man-page: flag on the left, description
+// on the right, hairline between rows, no icons, no card chrome.
+const flags = [
+  { flag: "simapi",             desc: "global command, installed on PATH" },
+  { flag: "--fail-on warning",  desc: "exit non-zero for CI; also supports failed" },
+  { flag: "--json",             desc: "machine-readable output for pipelines" },
+  { flag: "--conditions k=v",   desc: "declared conditions, comma-separated" },
 ];
 
 export function CodeSection() {
@@ -66,55 +72,131 @@ export function CodeSection() {
               <span className="text-accent-cyan">$ </span>
               {install[inst]}
             </pre>
-            <div className="grid divide-y divide-white/[0.06]">
-              {checks.map(({ icon: Icon, label, value }) => (
-                <div key={label} className="flex items-center justify-between gap-4 px-4 py-3">
-                  <div className="flex items-center gap-2.5 text-sm text-white/62">
-                    <Icon className="h-4 w-4 text-accent-cyan" />
-                    {label}
-                  </div>
-                  <code className="rounded-md border border-white/[0.08] bg-black/25 px-2 py-1 font-mono text-xs text-white/70">
-                    {value}
-                  </code>
+            {/* Man-page style flag list. No icons, no card chrome — flag
+                on the left in mono, description on the right in sans,
+                hairline between rows. Reads like `man simapi`, not like
+                a lucide-icon feature grid. */}
+            <div className="divide-y divide-white/[0.06]">
+              {flags.map(({ flag, desc }) => (
+                <div key={flag} className="grid grid-cols-[minmax(9rem,auto)_1fr] gap-4 px-4 py-3">
+                  <code className="font-mono text-[12.5px] text-accent-blueSoft">{flag}</code>
+                  <span className="text-[13px] leading-relaxed text-white/55">{desc}</span>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Terminal preview */}
-          <div className="card min-w-0 overflow-hidden">
-            <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2.5">
-              <span className="h-3 w-3 rounded-full bg-white/15" />
-              <span className="h-3 w-3 rounded-full bg-white/15" />
-              <span className="h-3 w-3 rounded-full bg-white/15" />
-              <span className="ml-2 font-mono text-xs text-white/40">simapi validate</span>
-            </div>
-            <div className="bg-black/40">
-              <Image
-                src="/cli-banner.png"
-                alt="SimAPI CLI startup banner"
-                width={1776}
-                height={785}
-                className="h-auto w-full border-b border-white/[0.06]"
-                priority
-              />
-              <pre className="p-5 font-mono text-[13px] leading-relaxed sm:text-[14px]">
-                <span className="text-accent-cyan">$ </span>
-                <span className="text-accent-blue">simapi validate simulations.json</span>
-                {"\n"}
-                <span className="text-white/45">{"\n"}</span>
-                <span className="text-white/55">
-{`  Validation report  simulations.json
-  ──────────────────────────────────────────────
-  Status                 `}<span className="text-pass">PASSED</span>{`
-  Validation score       98
-  Execution time         23ms`}
-                </span>
-              </pre>
-            </div>
-          </div>
+          {/* Terminal preview — types on load with the real dimensional
+              engine catching a wrong-unit subset (the shared-factor cluster
+              case shipped in the CLI). Hand-typed feel: 40-80ms per char
+              on the command, one line at a time on the output. */}
+          <InteractiveTerminal />
         </div>
       </div>
     </section>
+  );
+}
+
+// ── Interactive terminal ─────────────────────────────────────────────
+// Types the command char-by-char on mount, then streams the report line
+// by line. No startup banner, no fake output — the transcript below is
+// exactly what `simapi dimensional cfd_output.csv` prints today when the
+// engine finds a shared-factor cluster (see the shared-factor-clustering
+// commit).
+
+const CMD = "simapi dimensional cfd_output.csv";
+
+const OUTPUT_LINES: Array<{ text: string; cls?: string }> = [
+  { text: "" },
+  { text: "Rows:                60" },
+  { text: "Impossible:          7", cls: "text-fail" },
+  { text: "Inconsistent:        0" },
+  { text: "Training ready:      NO", cls: "text-fail" },
+  { text: "Status:              FAIL", cls: "text-fail" },
+  { text: "" },
+  { text: "Laws discovered (1):" },
+  { text: "  • [anchored_constant] pressure·density^-1·temperature^-1 = R_air (287.05)" },
+  { text: "    88% of rows sit on R_air=287.05;", cls: "text-white/55" },
+  { text: "    7 rows share factor ×1e3 = kilo", cls: "text-accent-blueSoft" },
+  { text: "" },
+  { text: "Row findings (7), top 3:" },
+  { text: "  ✗ row  3 [impossible] pressure·density^-1·temperature^-1 violated (0.001x)", cls: "text-fail" },
+  { text: "     fix: shared with 6 other row(s)", cls: "text-white/55" },
+  { text: "          whole cluster off by ×1e3 = kilo", cls: "text-white/55" },
+  { text: "  ✗ row 11 [impossible] pressure·density^-1·temperature^-1 violated (0.001x)", cls: "text-fail" },
+  { text: "  ✗ row 17 [impossible] pressure·density^-1·temperature^-1 violated (0.001x)", cls: "text-fail" },
+];
+
+function InteractiveTerminal() {
+  const [typedCmd, setTypedCmd] = useState("");
+  const [linesShown, setLinesShown] = useState(0);
+  const [done, setDone] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let cmdIdx = 0;
+    let lineIdx = 0;
+
+    // Hand-typed jitter: 40-90ms per character. A small pause on
+    // punctuation because that's how humans actually type.
+    function typeCmd() {
+      if (cancelled) return;
+      if (cmdIdx >= CMD.length) {
+        setTimeout(streamLines, 380);
+        return;
+      }
+      const ch = CMD[cmdIdx];
+      setTypedCmd(CMD.slice(0, ++cmdIdx));
+      const pause = /[\s.]/.test(ch) ? 120 : 40 + Math.random() * 50;
+      setTimeout(typeCmd, pause);
+    }
+    function streamLines() {
+      if (cancelled) return;
+      if (lineIdx >= OUTPUT_LINES.length) {
+        setDone(true);
+        return;
+      }
+      setLinesShown(++lineIdx);
+      // Blank lines flash by; content lines linger a hair for
+      // scannability. Header block runs slower than the row list.
+      const line = OUTPUT_LINES[lineIdx - 1];
+      const delay = line.text === "" ? 60 : lineIdx < 8 ? 140 : 90;
+      setTimeout(streamLines, delay);
+    }
+    typeCmd();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div className="card min-w-0 overflow-hidden" ref={ref}>
+      <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2.5">
+        <span className="h-3 w-3 rounded-full bg-white/15" />
+        <span className="h-3 w-3 rounded-full bg-white/15" />
+        <span className="h-3 w-3 rounded-full bg-white/15" />
+        <span className="ml-2 font-mono text-xs text-white/40">simapi</span>
+      </div>
+      <div className="bg-black/40">
+        <pre className="min-h-[380px] whitespace-pre-wrap p-5 font-mono text-[12.5px] leading-[1.55] sm:text-[13px]">
+          <span className="text-accent-blueSoft">$ </span>
+          <span className="text-white">{typedCmd}</span>
+          {typedCmd.length < CMD.length && (
+            <span className="inline-block w-[7px] translate-y-[1px] animate-pulse bg-white/80">&nbsp;</span>
+          )}
+          {typedCmd.length === CMD.length && "\n"}
+          {OUTPUT_LINES.slice(0, linesShown).map((l, i) => (
+            <span key={i} className={cn("block", l.cls ?? "text-white/70")}>
+              {l.text || " "}
+            </span>
+          ))}
+          {done && (
+            <span className="mt-2 block">
+              <span className="text-accent-blueSoft">$ </span>
+              <span className="inline-block w-[7px] translate-y-[1px] animate-pulse bg-white/80">&nbsp;</span>
+            </span>
+          )}
+        </pre>
+      </div>
+    </div>
   );
 }
