@@ -241,7 +241,7 @@ class PhysicsManifoldValidator:
                 'most_violated_columns': top_cols,
                 'column_violation_scores': {c: round(col_scores[c], 4) for c in top_cols},
                 'reconstructed_values': recon_vals,
-                'diagnosis': self._diagnose_violation(top_cols, col_scores, X[i], recon_vals),
+                'diagnosis': self._diagnose_violation(top_cols, col_scores, X[i], recon_vals, column_names=numeric_cols),
             }
 
             if score > thr_auto:
@@ -295,6 +295,7 @@ class PhysicsManifoldValidator:
         col_scores: dict[str, float],
         row_values: np.ndarray,
         recon_values: dict | None,
+        column_names: list[str] | None = None,
     ) -> str:
         """
         Generate a plain-English diagnosis of what the manifold violation means.
@@ -307,7 +308,19 @@ class PhysicsManifoldValidator:
         parts = [f"The physics manifold is violated primarily in '{primary}'."]
 
         if recon_values and primary in recon_values:
-            actual = row_values[0] if len(row_values) > 0 else None
+            # BUG FIX: `row_values[0]` was ALWAYS column 0's value, but
+            # `primary` is the MOST-violated column name. That made every
+            # ratio, "~1000x kPa->Pa" narrative, and "~0.001x" diagnosis
+            # a lie -- it compared column 0's actual to column primary's
+            # reconstruction. Now use the actual index of `primary` in
+            # `column_names` (fed through by the caller since 2025-08).
+            actual = None
+            if column_names is not None and primary in column_names:
+                j = column_names.index(primary)
+                if 0 <= j < len(row_values):
+                    actual = float(row_values[j])
+            elif len(row_values) > 0:
+                actual = float(row_values[0])  # legacy fallback; wrong but harmless
             reconstructed = recon_values[primary]
             if actual is not None and abs(reconstructed) > 1e-10:
                 ratio = actual / (reconstructed + 1e-30)

@@ -46,7 +46,10 @@ COLUMN_ALIASES = {
     "skin_friction_coefficient": "skin_friction_coefficient",
     "skin_friction": "skin_friction_coefficient",
 
-    "e": "oswald_efficiency", "oswald_e": "oswald_efficiency",
+    # Single-letter `e` removed: it collided with EM `E` (electric field)
+    # after case-collapse and silently renamed EM columns to `oswald_efficiency`.
+    # Aero callers should use the explicit `oswald_e` or `oswald_efficiency`.
+    "oswald_e": "oswald_efficiency",
     "oswald_efficiency": "oswald_efficiency", "span_efficiency": "oswald_efficiency",
 
     "cdi": "induced_drag_coefficient", "c_di": "induced_drag_coefficient",
@@ -220,7 +223,9 @@ COLUMN_ALIASES = {
     "s_gen": "entropy_generation", "entropy_gen": "entropy_generation",
     "entropy_generation": "entropy_generation",
 
-    "h": "enthalpy", "enthalpy": "enthalpy",
+    # Single-letter `h` removed: collided with EM `H` (magnetic field)
+    # after case-collapse. Thermo callers should use the full `enthalpy`.
+    "enthalpy": "enthalpy",
     "specific_enthalpy": "enthalpy",
 
     "k_therm": "thermal_conductivity", "conductivity": "thermal_conductivity",
@@ -358,10 +363,18 @@ COLUMN_ALIASES = {
     "nr": "noise_reduction", "noise_reduction": "noise_reduction",
 
     # ── Electromagnetics ──────────────────────────────────────────────────────
-    "e_field": "electric_field", "electric_field": "electric_field", "E": "electric_field",
+    # `_normalize` case-collapses lookups, so `"E": "electric_field"` was
+    # unreachable and every EM column named `E` was silently renamed to
+    # `oswald_efficiency` via the aerodynamics `"e"` alias. Removed the
+    # uppercase key; EM callers should use the explicit `electric_field`
+    # or `e_field` alias.
+    "e_field": "electric_field", "electric_field": "electric_field",
 
     "b_field": "magnetic_field", "magnetic_field": "magnetic_field",
-    "H": "magnetic_field", "h_field": "magnetic_field",
+    # Same class of bug as the `E` above: `"H"` was unreachable and every
+    # EM column named `H` was silently renamed to `enthalpy` via the
+    # thermodynamics `"h"` alias. Removed the uppercase key.
+    "h_field": "magnetic_field",
 
     "v_elec": "electric_potential", "electric_potential": "electric_potential",
     "voltage": "electric_potential", "volt": "electric_potential",
@@ -406,7 +419,13 @@ COLUMN_ALIASES = {
 
     "e_void": "void_ratio", "void_ratio": "void_ratio",
 
-    "sr": "degree_of_saturation", "degree_of_saturation": "degree_of_saturation",
+    # NOTE: the "sr" key here previously collided with "sr": "strouhal_number"
+    # earlier in this dict (Python keeps the LAST definition, so every column
+    # named `Sr`/`sr` -- Strouhal number in fluid-mechanics datasets -- was
+    # silently renamed to `degree_of_saturation` and hit geomech bounds).
+    # Dropped the collision; saturation callers should use "s_r" or the full
+    # column name "degree_of_saturation".
+    "degree_of_saturation": "degree_of_saturation", "s_r": "degree_of_saturation",
     "saturation": "degree_of_saturation",
 
     "su_shear": "shear_strength", "shear_strength": "shear_strength",
@@ -634,9 +653,21 @@ def _normalize_col(col: str) -> str:
 
 
 def _coerce_numeric(series: pd.Series) -> pd.Series:
-    """Convert a column to numeric where possible, leaving it untouched otherwise."""
+    """Convert a column to numeric ONLY when every non-null cell parses.
+
+    Previously accepted the coerced series whenever ANY value parsed, silently
+    turning unparseable strings ("NA", "3.2e-4 Pa", "1,234") into NaN and
+    letting `repair_short_nan_gaps` interpolate a fabricated number in their
+    place. Now the column stays as-is (object dtype) unless every real value
+    coerces cleanly -- so downstream layers see the raw strings and treat
+    the column as non-numeric, which is the honest outcome.
+    """
     converted = pd.to_numeric(series, errors="coerce")
-    return converted if converted.notna().any() else series
+    # Require: every cell that was non-null in the input is also non-null
+    # after conversion. If a real value became NaN, we lost information.
+    if converted.notna().sum() == series.notna().sum() and converted.notna().any():
+        return converted
+    return series
 
 
 class DataIngester:

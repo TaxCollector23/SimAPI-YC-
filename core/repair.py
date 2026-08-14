@@ -181,13 +181,29 @@ def repair_timestamp_ordering(df: pd.DataFrame) -> RepairProposal | None:
 
 
 def repair_wrapped_angles(df: pd.DataFrame) -> RepairProposal | None:
-    """Angle columns outside [-180, 180] are usually a wrap-around convention mismatch, not corruption."""
+    """Angle columns outside [-180, 180] are ONLY normalised when they land in
+    the small "convention mismatch" band (180 < |x| <= 540). Values further
+    out (720°+, 3600°+) are more likely a unit-vs-radian bug or sensor drift
+    than a wrap convention -- rewriting them silently would launder physically
+    implausible data past validation, which is exactly the module's stated
+    trust boundary ("SimAPI will never silently rewrite a physically
+    implausible value"). Those are left alone so the physics layer can flag
+    them, and are reported as unrepairable if needed.
+    """
     changes = []
     for col in df.columns:
         if col.lower() not in ANGLE_COLUMNS or not pd.api.types.is_numeric_dtype(df[col]):
             continue
         for idx, val in df[col].items():
             if pd.isna(val) or -180.0 <= val <= 180.0:
+                continue
+            # Trust boundary: only ONE-turn wraps are eligible for silent
+            # rewrite (|x| in (180, 360]). Values past 360 are multi-turn --
+            # far more likely a unit / radian-vs-degree bug or sensor drift
+            # than a wrap convention mismatch, and silently normalising
+            # 720° to 0° would launder a physically implausible value past
+            # every downstream check.
+            if abs(val) > 360.0:
                 continue
             wrapped = ((val + 180.0) % 360.0) - 180.0
             changes.append(RepairChange(row=idx, column=col, before=val, after=round(wrapped, 6)))
@@ -201,9 +217,43 @@ def repair_wrapped_angles(df: pd.DataFrame) -> RepairProposal | None:
 
 
 def repair_short_nan_gaps(df: pd.DataFrame, max_gap: int = 3) -> tuple[RepairProposal | None, list[dict]]:
-    """Interpolate isolated short runs of missing numeric values; flag long gaps as unrepairable."""
+    """Interpolate isolated short runs of missing numeric values IN A TIME
+    SERIES, and only in a time series. When rows are independent
+    experiments in a parameter sweep, "interpolate between adjacent rows"
+    fabricates a value that then passes every downstream physics check --
+    exactly the trust breach the module docstring rules out. Detect the
+    time-series case via a monotonic time-like column; otherwise treat
+    NaNs as unrepairable and let the caller review manually.
+    """
     changes = []
     unrepairable = []
+    # Time-series check: require a monotonic time-like column. Without it,
+    # rows are independent experiments and interpolation would fabricate.
+    time_col = None
+    for c in df.columns:
+        if c.lower() in {"time", "t", "timestamp", "time_s", "t_sim"}:
+            s = pd.to_numeric(df[c], errors="coerce")
+            if s.notna().sum() >= max(3, len(df) // 2) and s.is_monotonic_increasing:
+                time_col = c
+                break
+    if time_col is None:
+        # Report every NaN as unrepairable instead of interpolating.
+        id_cols_ = {c.lower() for c in df.columns if c.lower() in ID_COLUMNS}
+        numeric_cols_ = [c for c in df.select_dtypes(include=[np.number]).columns
+                         if c.lower() not in id_cols_]
+        for col in numeric_cols_:
+            na_idx = df.index[df[col].isna()]
+            if len(na_idx) == 0:
+                continue
+            unrepairable.append({
+                "column": col,
+                "reason": (f"{len(na_idx)} missing value(s) in '{col}' can't be "
+                           f"safely interpolated: no monotonic time column, so "
+                           f"rows are treated as independent experiments where "
+                           f"interpolation would fabricate values."),
+                "rows": na_idx.tolist()[:20],
+            })
+        return None, unrepairable
     id_cols = {c.lower() for c in df.columns if c.lower() in ID_COLUMNS}
     numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c.lower() not in id_cols]
     for col in numeric_cols:

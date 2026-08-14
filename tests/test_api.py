@@ -105,7 +105,10 @@ def test_unsupported_simulation_type_upload(client):
         files={"file": ("d.csv", "cd,cl\n0.3,0.8\n0.31,0.82\n", "text/csv")},
         data={"simulation_type": "warp_drive"},
     )
-    assert r.status_code == 400
+    # 415 Unsupported Media Type is the correct HTTP contract for
+    # unrecognised simulation_type; previously returned 400 (default)
+    # which was contract drift for clients that branched on status.
+    assert r.status_code == 415
     assert r.json()["error"]["code"] == "unsupported_format"
 
 
@@ -175,3 +178,95 @@ def test_validate_dimensional_catches_unit_swap(client):
     assert r.status_code == 200
     body = r.json()
     assert 5 in body["impossible"]
+
+
+# ── Physics-validator ns_inf regression ───────────────────────────────
+# `.replace([inf,-inf], nan).fillna(0)` before `np.isinf` used to strip
+# every Inf, so `total_inf` was always 0 and the ns_inf check always
+# passed silently. Direct call (not HTTP) because Python's json rejects
+# Inf and TestClient can't ship a NaN/Inf-bearing body.
+def test_ns_inf_check_catches_infinity():
+    import math
+    import pandas as pd
+    from core.physics_validator import PhysicsValidator, SimulationType
+    v = PhysicsValidator()
+    df = pd.DataFrame([
+        {"velocity": 10.0, "pressure": 101325.0, "temperature": 293.15},
+        {"velocity": 11.0, "pressure": 101325.0, "temperature": 293.15},
+        {"velocity": math.inf, "pressure": 101325.0, "temperature": 293.15},
+        {"velocity": 12.0, "pressure": 101325.0, "temperature": 293.15},
+    ])
+    report = v.validate(df, SimulationType.AERODYNAMICS, {})
+    inf_check = next((c for c in report.issues if c.name == "ns_inf"), None)
+    inf_row_excluded = any(
+        (e.reason or "").lower().find("nan/inf") >= 0 or (e.reason or "").lower().find("divergence") >= 0
+        for e in report.exclusions
+    )
+    # Either the ns_inf check now fails (total_inf > 0), or the Inf-bearing
+    # row is excluded on numerical divergence. Both are correct signal.
+    assert (inf_check is not None and inf_check.status.value != "passed") or inf_row_excluded, (
+        f"Inf value slipped past ns_inf: ns_inf={inf_check.status if inf_check else None} "
+        f"excluded={[e.reason for e in report.exclusions][:3]}"
+    )
+
+
+# ── Row-cap regression: /v1/validate/dimensional and /v1/repair must
+# now reject over-large bodies before pandas parses them.
+def test_dimensional_endpoint_enforces_row_cap(client):
+    from api.config import settings
+    if settings.max_rows > 200_000:
+        import pytest
+        pytest.skip("max_rows too high to exercise cheaply")
+    oversize = [{"temperature": 293.15, "density": 1.225, "pressure": 101325.0}] * (settings.max_rows + 1)
+    r = client.post("/v1/validate/dimensional", json={"data": oversize})
+    assert r.status_code == 413
+    assert r.json()["error"]["code"] in ("payload_too_large", "PAYLOAD_TOO_LARGE")
+
+
+# ── SDK regression: reserved attributes not overwritten by columns ──
+def test_sdk_reserved_attributes_not_clobbered_by_column_stats():
+    from sdk.simapi import ValidationResult
+    raw = {
+        "job_id": "abc", "status": "passed", "confidence": "high",
+        "trials_submitted": 10, "trials_valid": 10, "trials_excluded": 0,
+        "exclusion_rate": 0.0, "training_ready": True, "processing_ms": 12.3,
+        "statistics": {
+            "status": {"mean": 0.5, "std": 0.1, "median": 0.5, "p5": 0.4,
+                       "p95": 0.6, "min": 0.4, "max": 0.6, "n": 10},
+            "drag_coefficient": {"mean": 0.312, "std": 0.02, "median": 0.31,
+                                 "p5": 0.28, "p95": 0.34, "min": 0.27,
+                                 "max": 0.35, "n": 10},
+        },
+    }
+    result = ValidationResult(raw)
+    # Reserved name must NOT be overwritten -- .status stays the pass/fail string.
+    assert result.status == "passed"
+    # Column collides w/ reserved name -> reachable via .statistics dict.
+    assert "status" in result.statistics
+    # Non-reserved column still bound as attribute.
+    assert hasattr(result, "drag_coefficient")
+    assert result.drag_coefficient.mean == 0.312
+    # summary() still callable (would crash if setattr had clobbered it).
+    assert isinstance(result.summary(), str)
+
+
+# ── SDK NaN sanitization: a DataFrame with a blank cell used to break
+# the JSON body because requests(json=payload) emits bare `NaN`.
+def test_sdk_sanitizes_nan_before_posting():
+    from sdk.simapi import _sanitize_for_json
+    import math
+    payload = {
+        "data": [
+            {"velocity": 10.0, "pressure": math.nan},
+            {"velocity": 11.0, "pressure": 101300.0},
+            {"velocity": math.inf, "pressure": 101310.0},
+        ],
+        "simulation_type": "aerodynamics",
+    }
+    out = _sanitize_for_json(payload)
+    import json
+    # Must produce strict JSON (no NaN token). If sanitization missed
+    # a spot, `allow_nan=False` raises.
+    _ = json.dumps(out, allow_nan=False)
+    assert out["data"][0]["pressure"] is None
+    assert out["data"][2]["velocity"] is None

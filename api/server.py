@@ -827,12 +827,20 @@ except Exception:
     APIE_AVAILABLE = False
 
 
-async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
-    if len(req.data) > settings.max_rows:
+def _enforce_row_cap(rows: list[Any]) -> None:
+    """Shared row-count guard. Previously only _validate_core enforced
+    settings.max_rows -- the dimensional and repair endpoints ingested
+    req.data straight into pandas with no bound, so a 5M-row POST could
+    OOM the worker before any physics check ran."""
+    if len(rows) > settings.max_rows:
         raise PayloadTooLargeError(
             f"Request exceeds the maximum of {settings.max_rows} rows.",
-            details={"rows": len(req.data), "limit": settings.max_rows},
+            details={"rows": len(rows), "limit": settings.max_rows},
         )
+
+
+async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
+    _enforce_row_cap(req.data)
 
     df, ingest_meta = ingester.ingest(req.data, format_hint="json")
     # ``df.attrs`` is the pandas-sanctioned slot for user metadata (no warning).
@@ -884,7 +892,11 @@ async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
                           else str(req.simulation_type))
             conditions_dict = dict(req.conditions or {})
 
-            apie_result = _apie_engine.validate(
+            # Offload the CPU-bound APIE engine so a large request doesn't
+            # stall the event loop (and thus every other route's health
+            # check, metrics scrape, and validation call on this worker).
+            apie_result = await asyncio.to_thread(
+                _apie_engine.validate,
                 df, domain=domain_str, conditions=conditions_dict, risk_mode="precision",
             )
 
@@ -1016,6 +1028,7 @@ async def validate(req: ValidateRequest, _: str = Depends(caller_identity)):
 
 @app.post("/v1/validate/upload", tags=["validation"])
 async def validate_upload(
+    request: Request,
     file: UploadFile = File(...),
     simulation_type: str = Form("aerodynamics"),
     conditions: str = Form("{}"),
@@ -1023,12 +1036,30 @@ async def validate_upload(
     run_ai: str = Form("true"),
     _: str = Depends(caller_identity),
 ):
-    contents = await file.read()
-    if len(contents) > settings.max_upload_bytes:
+    # 1) Cheap header check first so a 10 GB body never buffers.
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > settings.max_upload_bytes:
         raise PayloadTooLargeError(
-            f"Upload exceeds the maximum of {settings.max_upload_bytes} bytes.",
-            details={"bytes": len(contents), "limit": settings.max_upload_bytes},
+            f"Upload declares {declared} bytes; maximum is {settings.max_upload_bytes}.",
+            details={"declared_bytes": int(declared), "limit": settings.max_upload_bytes},
         )
+    # 2) Streaming safety net for clients that lie about Content-Length or
+    #    omit it (chunked transfer). Reject as soon as the running total
+    #    crosses the ceiling; never buffer past the limit.
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(1 << 20)  # 1 MiB
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > settings.max_upload_bytes:
+            raise PayloadTooLargeError(
+                f"Upload exceeds the maximum of {settings.max_upload_bytes} bytes.",
+                details={"bytes_so_far": total, "limit": settings.max_upload_bytes},
+            )
+        chunks.append(chunk)
+    contents = b"".join(chunks)
     try:
         conditions_parsed = json.loads(conditions or "{}")
     except json.JSONDecodeError as e:
@@ -1039,9 +1070,10 @@ async def validate_upload(
         raise SimAPIError(
             f"Unknown simulation_type '{simulation_type}'.",
             code=ErrorCode.UNSUPPORTED_FORMAT,
+            status_code=415,  # Unsupported Media Type -- the actual HTTP contract for this
             details={"allowed": [s.value for s in SimulationType]},
         ) from e
-    df, _meta = ingester.ingest(contents, filename=file.filename)
+    df, _meta = await asyncio.to_thread(ingester.ingest, contents, filename=file.filename)
     req = ValidateRequest(
         data=df.to_dict(orient="records"),
         simulation_type=sim,
@@ -1076,6 +1108,7 @@ async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_ide
     when you want the full detail; use /v1/validate for the standard,
     backward-compatible report.
     """
+    _enforce_row_cap(req.data)
     df, ingest_meta = ingester.ingest(req.data, format_hint="json")
     conditions_dict = dict(req.conditions or {})
     report = await asyncio.to_thread(
@@ -1164,7 +1197,7 @@ async def validate_setup(req: SetupValidateRequest, _: str = Depends(caller_iden
     historical run data to predict specific corruption types (solver divergence,
     sensor drift, measurement noise) with confidence scores.
     """
-    report = mesh_validator.validate(
+    report = await asyncio.to_thread(mesh_validator.validate,
         config=req.config, mesh_stats=req.mesh_stats,
         solver=req.solver, physics=req.physics, simulation_type=req.simulation_type,
     )
@@ -1232,8 +1265,9 @@ async def repair(req: RepairRequest, _: str = Depends(caller_identity)):
     By default this only previews proposed changes (`apply=false`). Set
     `apply=true` to receive the repaired dataset in the response.
     """
-    df, _meta = ingester.ingest(req.data, format_hint="json")
-    report = repair_analyze(df)
+    _enforce_row_cap(req.data)
+    df, _meta = await asyncio.to_thread(ingester.ingest, req.data, format_hint="json")
+    report = await asyncio.to_thread(repair_analyze, df)
     result = _json_safe(report.to_dict())
     metrics.incr("repairs_total", proposals=str(len(report.proposals)))
     if req.apply:
@@ -1311,7 +1345,11 @@ async def list_jobs(
 @app.post("/v1/demo", tags=["validation"])
 async def demo(_: str = Depends(caller_identity)):
     """Run a validation against pristine synthetic aerodynamics data (100% pass example)."""
-    np.random.seed(42)
+    # LOCAL generator only. `np.random.seed(42)` used to reset the
+    # process-wide legacy RNG on every /v1/demo call -- so any concurrent
+    # request in the same worker (or any library using np.random) saw
+    # deterministic, correlated draws. `default_rng` is instance-scoped.
+    rng = np.random.default_rng(42)
     n = 500
     v = 15.0
     rho = 1.225  # Air density at sea level
@@ -1321,23 +1359,23 @@ async def demo(_: str = Depends(caller_identity)):
     # Generate perfectly valid aerodynamic dataset with exact physics relationships
     for _i in range(n):
         # Small variations on base values
-        v_var = v + np.random.normal(0, 0.02)
-        cd = 0.31 + np.random.normal(0, 0.007)
-        cl = 0.85 + np.random.normal(0, 0.012)
+        v_var = v + rng.normal(0, 0.02)
+        cd = 0.31 + rng.normal(0, 0.007)
+        cl = 0.85 + rng.normal(0, 0.012)
         cd = np.clip(cd, 0.09, 0.42)
         cl = np.clip(cl, -1.0, 1.0)
         # Exact physics relationships
         mach = v_var / 343.0
         reynolds = (rho * v_var * L) / mu  # Exact Reynolds number
-        temperature = float(288.15 + np.random.normal(0, 2.0))
-        density = float(rho + np.random.normal(0, 0.01))
+        temperature = float(288.15 + rng.normal(0, 2.0))
+        density = float(rho + rng.normal(0, 0.01))
         # Pressure is DERIVED from the ideal-gas law (P = rho*R_air*T), not
         # generated as an independent noise source -- three independently
         # noisy quantities that "happen to look like" P=rhoRT is exactly
         # the self-inconsistency the dimensional engine's R_air anchor is
         # designed to (correctly) flag. A real sensor's P, rho and T are
         # physically coupled; this dataset should be too.
-        pressure = float(density * 287.05 * temperature + np.random.normal(0, 15))
+        pressure = float(density * 287.05 * temperature + rng.normal(0, 15))
         data.append({
             "drag_coefficient": float(cd),
             "lift_coefficient": float(cl),
@@ -1345,19 +1383,19 @@ async def demo(_: str = Depends(caller_identity)):
             "pressure": pressure,
             "velocity": float(v_var),
             "mach_number": float(mach),  # Exact relationship
-            "angle_of_attack": float(4.0 + np.random.normal(0, 1.0)),
+            "angle_of_attack": float(4.0 + rng.normal(0, 1.0)),
             "temperature": temperature,
             "density": density,
-            "viscosity": float(mu + np.random.normal(0, 1e-7)),
-            "skin_friction_coefficient": float(0.004 + np.random.normal(0, 0.0003)),
-            "turbulence_intensity": float(0.03 + np.random.normal(0, 0.004)),
-            "pitching_moment": float(-0.05 + np.random.normal(0, 0.005)),
-            "side_force_coefficient": float(0.02 + np.random.normal(0, 0.003)),
-            "rolling_moment": float(0.01 + np.random.normal(0, 0.002)),
-            "wall_shear_stress": float(0.8 + np.random.normal(0, 0.05)),
-            "vibration_frequency": float(120.0 + np.random.normal(0, 3.0)),
-            "boundary_layer_thickness": float(0.012 + np.random.normal(0, 0.0006)),
-            "heat_transfer_coefficient": float(25.0 + np.random.normal(0, 1.5)),
+            "viscosity": float(mu + rng.normal(0, 1e-7)),
+            "skin_friction_coefficient": float(0.004 + rng.normal(0, 0.0003)),
+            "turbulence_intensity": float(0.03 + rng.normal(0, 0.004)),
+            "pitching_moment": float(-0.05 + rng.normal(0, 0.005)),
+            "side_force_coefficient": float(0.02 + rng.normal(0, 0.003)),
+            "rolling_moment": float(0.01 + rng.normal(0, 0.002)),
+            "wall_shear_stress": float(0.8 + rng.normal(0, 0.05)),
+            "vibration_frequency": float(120.0 + rng.normal(0, 3.0)),
+            "boundary_layer_thickness": float(0.012 + rng.normal(0, 0.0006)),
+            "heat_transfer_coefficient": float(25.0 + rng.normal(0, 1.5)),
         })
     return await _validate_core(ValidateRequest(
         data=data,

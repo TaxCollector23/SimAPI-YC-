@@ -474,11 +474,19 @@ class RunHistoryTracker:
         return {}
 
     def _maybe_save(self):
-        if self._storage_path:
-            try:
-                self._storage_path.write_text(json.dumps(self._data))
-            except Exception:
-                pass
+        if not self._storage_path:
+            return
+        # Atomic write: tmp file + os.replace, so a mid-write SIGKILL /
+        # OOM never leaves a truncated JSON that _load then swallows and
+        # discards, silently zeroing the entire history and turning
+        # every downstream cross-run drift check into a no-op.
+        import os
+        try:
+            tmp = self._storage_path.with_suffix(self._storage_path.suffix + ".tmp")
+            tmp.write_text(json.dumps(self._data))
+            os.replace(tmp, self._storage_path)
+        except Exception:
+            pass
 
 
 # Module-level default tracker (in-memory, per-process)

@@ -84,8 +84,12 @@ async function readJson(path, fallback = {}) {
   }
 }
 async function writeJson(path, obj) {
-  if (!existsSync(CONFIG_DIR)) await mkdir(CONFIG_DIR, { recursive: true });
-  await writeFile(path, JSON.stringify(obj, null, 2));
+  // 0o700 on the dir, 0o600 on the file: the config carries the user's
+  // API key in cleartext (see mask() -- that's for display only). Default
+  // umask 022 would leave it world-readable, so any local user could
+  // `cat ~otheruser/.simapi/config.json` and read the key.
+  if (!existsSync(CONFIG_DIR)) await mkdir(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  await writeFile(path, JSON.stringify(obj, null, 2), { mode: 0o600 });
 }
 const readConfig = () => readJson(CONFIG_PATH);
 const writeConfig = (o) => writeJson(CONFIG_PATH, o);
@@ -112,8 +116,16 @@ async function api(path, { method = "GET", body, key } = {}) {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const json = text ? JSON.parse(text) : {};
-  return { ok: res.ok, status: res.status, json };
+  // Non-JSON error bodies (Vercel/proxy HTML 5xx pages, plain-text
+  // gateway errors) used to make JSON.parse throw, hiding the real HTTP
+  // status behind "Unexpected token < ...". Return the raw text so
+  // callers can surface it verbatim.
+  let json = {};
+  if (text) {
+    try { json = JSON.parse(text); }
+    catch { return { ok: res.ok, status: res.status, json: {}, text }; }
+  }
+  return { ok: res.ok, status: res.status, json, text };
 }
 
 function openBrowser(url) {
@@ -759,7 +771,7 @@ function fail(msg) {
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────────
 function parse(argv) {
-  const out = { _: [], type: undefined, json: false, "fail-on": undefined, help: false, fix: false, apply: false };
+  const out = { _: [], type: undefined, json: false, "fail-on": undefined, help: false, fix: false, apply: false, conditions: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") out.help = true;
@@ -768,6 +780,11 @@ function parse(argv) {
     else if (a === "--apply") out.apply = true;
     else if (a === "--type") out.type = argv[++i];
     else if (a === "--fail-on") out["fail-on"] = argv[++i];
+    // Was missing: `--conditions` used by `simapi dimensional`. The
+    // command site referenced args.conditions but the parser dropped
+    // the token into args._ as a positional, so `--conditions altitude_m=11000`
+    // was silently ignored and dimensional ran with empty conditions.
+    else if (a === "--conditions") out.conditions = argv[++i];
     else out._.push(a);
   }
   return out;

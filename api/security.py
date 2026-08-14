@@ -40,14 +40,33 @@ def _key_is_valid(candidate: str) -> bool:
     return False
 
 
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP for anonymous rate limiting. Honours
+    X-Forwarded-For (first hop) so that instances behind a trusted proxy
+    still get per-client isolation instead of the proxy's single IP."""
+    fwd = request.headers.get("x-forwarded-for")
+    if fwd:
+        first = fwd.split(",")[0].strip()
+        if first:
+            return first
+    client = request.client
+    return client.host if client and client.host else "unknown"
+
+
 def authenticate(request: Request) -> str:
     """
     FastAPI dependency. Returns the caller's identity (the API key, or
-    ``"anonymous"`` when auth is disabled). Raises ``UnauthorizedError`` on a
-    missing or invalid key when auth is required.
+    a per-client fingerprint when auth is disabled). Raises
+    ``UnauthorizedError`` on a missing or invalid key when auth is required.
+
+    NOTE: previously returned the literal ``"anonymous"`` when auth was
+    disabled, funneling every caller into a single shared rate-limit
+    bucket -- one client (or attacker) could exhaust the RPM budget and
+    429 every other user on the same worker. Now anonymous callers are
+    keyed by client IP so per-client isolation still holds.
     """
     if not settings.require_auth and not settings.api_keys:
-        return "anonymous"
+        return f"anon_{_client_ip(request)}"
 
     key = extract_api_key(request)
     if not key or not _key_is_valid(key):

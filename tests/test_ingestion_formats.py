@@ -79,3 +79,47 @@ def test_format_hint_overrides_detection():
 def test_unsupported_format_raises():
     with pytest.raises(ValueError):
         ing.ingest("some data", format_hint="pdf")
+
+
+# ── Alias-collision regressions ───────────────────────────────────────
+# `Sr` (Strouhal number) was silently renamed to `degree_of_saturation`
+# because a later dict entry overwrote the earlier alias. Fluid columns
+# then hit the geomech saturation bound.
+def test_sr_stays_strouhal_number():
+    from core.ingestion import DataIngester
+    ing = DataIngester()
+    df, meta = ing.ingest("Sr,velocity\n0.21,15.0\n0.22,15.5\n", filename="fluid.csv")
+    assert "strouhal_number" in df.columns, (
+        f"Sr alias regressed: {list(df.columns)}"
+    )
+    assert "degree_of_saturation" not in df.columns
+
+
+# `E` / `H` uppercase-only aliases were unreachable through the
+# case-collapsing lookup; column `E` (electric field) was silently
+# renamed to `oswald_efficiency`, `H` to `enthalpy`.
+def test_electric_and_magnetic_fields_are_not_silently_relabelled():
+    from core.ingestion import DataIngester
+    ing = DataIngester()
+    df, _ = ing.ingest("E,H\n1e3,4.0\n1.1e3,4.1\n", filename="em.csv")
+    # Either they stay as-is (safe) or resolve to the correct EM
+    # canonical name. What must NOT happen: they become the
+    # aerodynamics/thermo names they used to be.
+    assert "oswald_efficiency" not in df.columns
+    assert "enthalpy" not in df.columns
+
+
+# _coerce_numeric was silently dropping unparseable strings ("NA",
+# "1,234", "3.2e-4 Pa"). A downstream `repair_short_nan_gaps` (or ML
+# training run) would then see interpolated numbers where the source
+# had labels the user cared about.
+def test_coerce_numeric_preserves_column_when_any_cell_is_unparseable():
+    from core.ingestion import _coerce_numeric
+    import pandas as pd
+    s = pd.Series(["1.0", "2.0", "NA", "4.0"])
+    out = _coerce_numeric(s)
+    # "NA" is a real value the caller must see, not a NaN to interpolate.
+    assert (out == s).all(), f"lost 'NA' during coerce: {out.tolist()}"
+    # But a fully-numeric column still coerces.
+    s2 = pd.Series(["1.0", "2.0", "3.0"])
+    assert pd.api.types.is_numeric_dtype(_coerce_numeric(s2))

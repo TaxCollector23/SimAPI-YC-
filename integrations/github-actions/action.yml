@@ -107,22 +107,35 @@ runs:
 
         [ -n "${{ inputs.export-clean }}" ] && SIMAPI_ARGS="$SIMAPI_ARGS --export ${{ inputs.export-clean }}"
 
-        # Run validation, capturing JSON output for outputs
-        python -m simapi.cli ci $SIMAPI_ARGS --json > $JSON_FILE 2>&1 || true
-        python -m simapi.cli validate ${{ inputs.file }} $SIMAPI_ARGS || true
-
-        # Parse outputs from JSON result
-        if [ -f "$JSON_FILE" ]; then
-          STATUS=$(python3 -c "import json,sys; d=json.load(open('$JSON_FILE')); print(d.get('status','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
-          N_REMOVED=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_auto_removed',0))" 2>/dev/null || echo "0")
-          N_FLAGGED=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_flagged_review',0))" 2>/dev/null || echo "0")
-          N_CLEAN=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_clean',0))" 2>/dev/null || echo "0")
-          N_TOTAL=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('n_rows',1))" 2>/dev/null || echo "1")
-          CORRUPT_RATE=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(round(d.get('n_auto_removed',0)/max(d.get('n_rows',1),1)*100,2))" 2>/dev/null || echo "0")
-          DIAGNOSIS=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(d.get('diagnosis',{}).get('primary') or 'none')" 2>/dev/null || echo "none")
+        # Run validation. Use the actual `dimensional` CLI subcommand
+        # (defined in sdk/cli.py). Previously invoked a non-existent
+        # `ci` subcommand, merged stderr into the JSON file via `2>&1`,
+        # and swallowed the exit code with `|| true` -- so any CI run
+        # (including one with severe corruption, or one where the CLI
+        # wasn't even installed) reported 0 rows corrupt and passed.
+        set -o pipefail
+        FILE_ARG="${{ inputs.file }}"
+        # Prefer the local package if present; else use the installed CLI.
+        if command -v simapi >/dev/null 2>&1; then
+          simapi dimensional "$FILE_ARG" --json > "$JSON_FILE"
         else
-          STATUS="ERROR"; N_REMOVED=0; N_FLAGGED=0; N_CLEAN=0; CORRUPT_RATE=0; DIAGNOSIS="none"
+          python -m sdk.cli dimensional "$FILE_ARG" --json > "$JSON_FILE"
         fi
+        set +o pipefail
+
+        # Parse outputs. Any parse failure now fails the step -- silent
+        # zero counts were the false-pass mechanism.
+        if [ ! -s "$JSON_FILE" ]; then
+          echo "::error::SimAPI produced no JSON output (see logs above)"
+          exit 1
+        fi
+        STATUS=$(python3 -c "import json; print(json.load(open('$JSON_FILE')).get('training_ready') and 'PASS' or 'FAIL')")
+        N_REMOVED=$(python3 -c "import json; print(json.load(open('$JSON_FILE')).get('n_impossible',0))")
+        N_FLAGGED=$(python3 -c "import json; print(json.load(open('$JSON_FILE')).get('n_inconsistent',0))")
+        N_TOTAL=$(python3 -c "import json; print(json.load(open('$JSON_FILE')).get('n_rows',1))")
+        N_CLEAN=$(( N_TOTAL - N_REMOVED - N_FLAGGED ))
+        CORRUPT_RATE=$(python3 -c "import json; d=json.load(open('$JSON_FILE')); print(round(d.get('n_impossible',0)/max(d.get('n_rows',1),1)*100,2))")
+        DIAGNOSIS="none"
 
         # Set outputs
         echo "status=$STATUS" >> $GITHUB_OUTPUT

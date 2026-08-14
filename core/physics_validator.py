@@ -587,9 +587,16 @@ class PhysicsValidator:
         total_nan=int(data[nc].isna().sum().sum())
         status=(ValidationStatus.PASSED if total_nan==0 else ValidationStatus.WARNING if total_nan<len(data)*0.02 else ValidationStatus.FAILED)
         C.append(PhysicsCheck("ns_nan",status,"No NaN (solver divergence)",float(total_nan),0.0,f"{total_nan} NaN",cat))
-        total_inf=int(np.isinf(data[nc].replace([np.inf,-np.inf],np.nan).fillna(0).values).sum())
+        # BUG FIX: the previous idiom `.replace([inf,-inf], nan).fillna(0)`
+        # stripped every Inf before `np.isinf` ran, so `total_inf` was
+        # ALWAYS 0 and the check always passed silently. A dataset with
+        # a solver-divergence Inf in any column was reported as clean.
+        # Same defect on div_mask -- Inf-only rows were never excluded.
+        # Coerce non-numeric to NaN, then test isinf on the numeric array.
+        _num = data[nc].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float, copy=False)
+        total_inf = int(np.isinf(_num).sum())
         C.append(self._c("ns_inf",total_inf==0,"No Inf values",f"{total_inf}",float(total_inf),cat=cat))
-        div_mask=data[nc].isna().any(axis=1)|np.isinf(data[nc].replace([np.inf,-np.inf],np.nan).fillna(0).values).any(axis=1)
+        div_mask=data[nc].isna().any(axis=1) | np.isinf(_num).any(axis=1)
         for idx in data.index[div_mask]:
             E.append(TrialExclusion(int(idx),"NaN/Inf: numerical divergence","critical"))
         for col in nc:

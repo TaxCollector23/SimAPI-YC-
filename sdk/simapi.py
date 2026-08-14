@@ -37,6 +37,24 @@ def _auth_headers(api_key: str | None) -> dict[str, str]:
     return {"X-API-Key": key} if key else {}
 
 
+def _sanitize_for_json(obj):
+    """Recursively convert NaN/Inf floats to None so `json.dumps` produces
+    strict RFC-8259 JSON. `requests.post(json=...)` uses `allow_nan=True` by
+    default, emitting the bare token `NaN` -- strict servers/proxies reject
+    it and the caller sees an opaque 400/500. Any CSV with a blank cell
+    (`pd.read_csv().to_dict('records')` produces NaN) would previously
+    break `simapi.validate` for no user-visible reason.
+    """
+    import math
+    if isinstance(obj, float):
+        return None if not math.isfinite(obj) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v) for v in obj]
+    return obj
+
+
 # ── Result objects ─────────────────────────────────────────────────────────────
 
 @dataclass
@@ -119,11 +137,32 @@ class ValidationResult:
         ]
 
         # Statistics — accessible as result.drag_coefficient, result.pressure, etc.
+        # Never overwrite a known ValidationResult attribute or method: a
+        # dataset with a column literally named `status` / `confidence` /
+        # `summary` / `to_dataframe` / `training_ready` would previously
+        # replace those on `self`, so `result.status` returned a StatResult
+        # (not the pass/fail string) and `result.summary()` crashed.
+        # Access all statistics via `result.statistics[col]` in that case.
+        _RESERVED = {
+            "job_id", "status", "confidence", "trials_submitted", "trials_valid",
+            "trials_excluded", "exclusion_rate", "training_ready", "processing_ms",
+            "warning_count", "exclusions", "provenance", "ai", "ai_status",
+            "physics_checks", "statistics", "passed_checks", "failed_checks",
+            "warning_checks", "summary", "to_dataframe", "download_csv",
+        }
         self._statistics = {}
         for col, stats in raw.get("statistics", {}).items():
             stat = StatResult.from_dict(stats)
             self._statistics[col] = stat
+            if col in _RESERVED or col.startswith("_"):
+                continue  # reserved -- reachable via .statistics[col]
             setattr(self, col, stat)
+
+    @property
+    def statistics(self) -> dict[str, "StatResult"]:
+        """Canonical way to reach a per-column StatResult; safe even when
+        the column name collides with a reserved attribute."""
+        return dict(self._statistics)
 
     def passed_checks(self) -> list[PhysicsCheck]:
         return [c for c in self.physics_checks if c.status == "passed"]
@@ -237,7 +276,7 @@ def validate(
 
     response = requests.post(
         f"{API_BASE}/v1/validate",
-        json    = payload,
+        json    = _sanitize_for_json(payload),
         headers = _auth_headers(api_key),
         timeout = 60,
     )
@@ -313,7 +352,7 @@ class SimAPI:
             payload["job_id"] = job_id
         response = requests.post(
             f"{self.base_url}/v1/validate",
-            json=payload,
+            json=_sanitize_for_json(payload),
             headers=_auth_headers(self.api_key),
             timeout=60,
         )
