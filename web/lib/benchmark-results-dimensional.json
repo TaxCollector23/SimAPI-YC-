@@ -10,18 +10,18 @@
   "n_train": 9333,
   "n_test": 4000,
   "corruption_rate_pct": 30.2,
-  "validation_ms_mean": 6825.2,
-  "validation_ms_std": 587.3,
+  "validation_ms_mean": 1979.3,
+  "validation_ms_std": 123.2,
   "models": {
     "gbt": {
       "mape_improvement_mean": -1.18,
       "mape_improvement_std": 1.67,
       "mape_corrupted_mean": 0.4216,
       "mape_simapi_mean": 0.4265,
-      "mape_naive_mean": 0.4382,
+      "mape_naive_mean": 0.4383,
       "mape_clean_mean": 0.3943,
-      "naive_improvement_mean": -3.98,
-      "simapi_vs_naive_mean": 2.67
+      "naive_improvement_mean": -3.99,
+      "simapi_vs_naive_mean": 2.68
     },
     "mlp": {
       "mape_improvement_mean": -16.72,
@@ -47,7 +47,7 @@
     }
   },
   "total_detected": {
-    "precision": 0.9995,
+    "precision": 0.9999,
     "recall": 0.9582,
     "per_category_recall_pct": {
       "solver_divergence": 98.7,
@@ -58,5 +58,5 @@
       "measurement_noise": 73.4
     }
   },
-  "elapsed_s": 128.9
+  "elapsed_s": 72.5
 }

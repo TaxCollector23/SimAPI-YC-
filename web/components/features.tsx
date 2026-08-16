@@ -11,7 +11,7 @@ import { SectionHeader } from "./ui/section";
 const items: Array<{ title: string; desc: string }> = [
   {
     title: "Deterministic physics validation",
-    desc: "287 rule-based checks across 21 domains: bounds, conservation laws, dimensional and cross-variable consistency.",
+    desc: "Hundreds of rule-based checks across 21 simulation domains: bounds, conservation laws, dimensional and cross-variable consistency.",
   },
   {
     title: "Dimensional-analysis engine",
@@ -26,32 +26,32 @@ const items: Array<{ title: string; desc: string }> = [
     desc: "Field-level and statistical diffs between two runs, surfaced as a structured report.",
   },
   {
-    title: "CI/CD integration",
-    desc: "Gate merges and deploys on validation status. GitHub Actions ships today; GitLab and Jenkins compatible.",
+    title: "CI/CD gating",
+    desc: "The simapi-cli exit-code gate blocks a merge or deploy on validation status — a GitHub Action ships today, and any CI that can run a command works the same way.",
+  },
+  {
+    title: "SARIF & JUnit reports",
+    desc: "Emit a deterministic SARIF 2.1.0 or JUnit XML report from any run, for GitHub code scanning and pipeline test summaries.",
   },
   {
     title: "Historical analysis",
-    desc: "Track validation trends across thousands of runs to spot slow degradation early.",
+    desc: "Track validation results across runs to spot slow degradation before it reaches a decision.",
   },
   {
-    title: "Batch validation",
-    desc: "Validate entire sweeps and datasets in parallel with per-trial exclusion accounting.",
-  },
-  {
-    title: "Plugin system",
-    desc: "Register custom validators and organization-specific rules in a typed rule engine.",
+    title: "Full-dataset validation",
+    desc: "Validate an entire sweep or dataset in one call, with per-trial exclusion accounting and a training-readiness verdict.",
   },
   {
     title: "API-first architecture",
-    desc: "Everything is an endpoint. Consistent schemas, stable error codes, request IDs.",
+    desc: "Every capability is an endpoint. Consistent schemas, stable error codes, a request ID on every response.",
   },
   {
     title: "First-class SDKs",
-    desc: "Python and Node today, generated from one OpenAPI spec.",
+    desc: "A Node CLI + SDK on npm and a Python package, talking to the same REST API.",
   },
   {
-    title: "Enterprise security",
-    desc: "API keys, rate limiting, audit logs, SSO, and private deployments for regulated teams.",
+    title: "Self-hostable & private",
+    desc: "API keys, rate limiting, and a fully self-hosted deployment — the default path runs entirely on your machine, with no data leaving it.",
   },
 ];
 
