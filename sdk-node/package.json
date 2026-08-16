@@ -1,6 +1,6 @@
 {
   "name": "simapi-cli",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "CLI and Node.js SDK for SimAPI — validate engineering simulation results against physical laws. Install globally for the `simapi` command.",
   "type": "module",
   "main": "./dist/index.js",

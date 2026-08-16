@@ -41,7 +41,7 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   alternates: { canonical: site.url },
-  icons: { icon: "/hero.svg", shortcut: "/hero.svg", apple: "/hero.svg" },
+  icons: { icon: "/favicon.svg", shortcut: "/favicon.svg", apple: "/favicon.svg" },
 };
 
 export const viewport: Viewport = {

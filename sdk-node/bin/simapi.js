@@ -16,7 +16,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout, platform, env } from "node:process";
 import { exec } from "node:child_process";
 
-const VERSION = "1.1.1";
+const VERSION = "1.1.2";
 const WEB_BASE = env.SIMAPI_WEB_URL || "https://sim-api.vercel.app";
 const API_BASE = env.SIMAPI_BASE_URL || "https://sim-api.vercel.app/api";
 const CONFIG_DIR = join(homedir(), ".simapi");
@@ -543,6 +543,17 @@ const commands = {
     openBrowser(url);
   },
 
+  // Open the browser setup page to generate and copy an API key. The hosted API
+  // is open by default, so this is optional — needed only for higher limits,
+  // gated/private deployments, or the dimensional engine.
+  async login() {
+    const url = `${WEB_BASE}/auth?cli=true`;
+    ok(`Opening ${c.cyan(url)}`);
+    stdout.write(`  ${c.dim("Generate a key there, then run:")}  ${c.cyan("simapi config set api_key <key>")}\n`);
+    stdout.write(`  ${c.dim("The API is open by default — a key is only needed for gated deployments or higher limits.")}\n\n`);
+    openBrowser(url);
+  },
+
   version() {
     banner();
     stdout.write(`  ${c.bold(`v${VERSION}`)}  ${c.dim(`node ${process.version}`)}\n\n`);
@@ -832,6 +843,7 @@ const HELP = {
   doctor: { usage: "simapi doctor [--fix]", desc: "Diagnose config, connectivity, and project setup." },
   explain: { usage: "simapi explain", desc: "Explain the issues from the most recent validation run in detail." },
   repair: { usage: "simapi repair <file> [--apply]", desc: "Preview or apply automatic structural repairs to a data file.", ex: ["simapi repair simulation.json", "simapi repair simulation.json --apply"] },
+  login: { usage: "simapi login", desc: "Open the browser setup page to generate and save an API key (optional — the API is open by default)." },
   open: { usage: "simapi open", desc: "Open the SimAPI dashboard in your browser." },
   watch: { usage: "simapi watch <file>", desc: "Re-run validation automatically whenever the file changes.", ex: ["simapi watch simulation.json"] },
   usage: { usage: "simapi usage", desc: "Show requests today/this month, remaining quota, and average time." },
