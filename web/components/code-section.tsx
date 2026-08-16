@@ -5,26 +5,16 @@ import { Copy, Check } from "lucide-react";
 import { SectionHeader } from "./ui/section";
 import { cn } from "@/lib/utils";
 
-// The primary install path is npm — one command, identical on every OS.
-const NPM = "npm install -g simapi-cli";
+// One install path per platform: npm on macOS + Windows, Homebrew on Linux.
+// Pick an OS tab and you get exactly the command for it — nothing else.
 const OSES = ["macOS", "Windows", "Linux"] as const;
+type OS = (typeof OSES)[number];
 
-// Secondary install methods, for teams that prefer a script or a package
-// manager over npm. Shown quietly, below the featured command.
-const alt: Array<{ label: string; cmd: string }> = [
-  { label: "curl", cmd: "curl -fsSL https://sim-api.vercel.app/install.sh | sh" },
-  { label: "PowerShell", cmd: "irm https://sim-api.vercel.app/install.ps1 | iex" },
-  { label: "Homebrew", cmd: "brew install TaxCollector23/tap/simapi" },
-];
-
-// A `simapi --help` excerpt rendered as a man page: flag on the left,
-// description on the right, hairline between rows. No icons, no card chrome.
-const flags = [
-  { flag: "simapi", desc: "global command, installed on PATH" },
-  { flag: "--fail-on warning", desc: "exit non-zero for CI; also supports failed" },
-  { flag: "--json", desc: "machine-readable output for pipelines" },
-  { flag: "--conditions k=v", desc: "declared conditions, comma-separated" },
-];
+const INSTALL: Record<OS, { cmd: string; note: string }> = {
+  macOS: { cmd: "npm install -g simapi-cli", note: "Requires Node 18 or newer." },
+  Windows: { cmd: "npm install -g simapi-cli", note: "Requires Node 18 or newer." },
+  Linux: { cmd: "brew install TaxCollector23/tap/simapi", note: "Requires Homebrew." },
+};
 
 function useCopy() {
   const [copied, setCopied] = useState<string | null>(null);
@@ -37,8 +27,9 @@ function useCopy() {
 }
 
 export function CodeSection() {
-  const [os, setOs] = useState<(typeof OSES)[number]>(OSES[0]);
+  const [os, setOs] = useState<OS>(OSES[0]);
   const { copied, copy } = useCopy();
+  const { cmd, note } = INSTALL[os];
 
   return (
     <section className="relative border-b border-white/[0.06] py-24 sm:py-28">
@@ -46,85 +37,54 @@ export function CodeSection() {
         <SectionHeader
           align="left"
           title={<>Install once. Validate every run.</>}
-          lede="Use the hosted API from a terminal, CI job, or Node workflow. The npm package installs as simapi-cli and puts the simapi command on your PATH."
+          lede="Pick your platform and run one command. The CLI puts the simapi command on your PATH and talks to the hosted API — from a terminal, a CI job, or a Node workflow."
         />
 
         <div className="mt-12 grid gap-px overflow-hidden border border-white/10 bg-white/10 lg:grid-cols-[0.9fr_1.1fr]">
-          {/* ── Install panel ─────────────────────────────────────────── */}
-          <div className="bg-ink-900">
-            {/* OS tabs — every OS runs the exact same npm command. */}
+          {/* ── Install panel — OS selector, one command per platform ──── */}
+          <div className="flex flex-col bg-ink-900">
             <div className="flex items-center border-b border-white/[0.06]">
               {OSES.map((o) => (
                 <button
                   key={o}
                   onClick={() => setOs(o)}
+                  aria-pressed={o === os}
                   className={cn(
                     "relative px-4 py-2.5 text-[13px] font-medium transition-colors",
                     o === os ? "text-white" : "text-white/40 hover:text-white/70",
                   )}
                 >
                   {o}
-                  {o === os && (
-                    <span className="absolute inset-x-3 -bottom-px h-px bg-accent-blue" />
-                  )}
+                  {o === os && <span className="absolute inset-x-3 -bottom-px h-px bg-accent-blue" />}
                 </button>
               ))}
             </div>
 
-            {/* Featured npm command */}
-            <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] px-4 py-4">
+            {/* The command for the selected OS */}
+            <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] px-4 py-5">
               <code className="min-w-0 truncate font-mono text-[13.5px] text-white/90">
                 <span className="select-none text-accent-blueSoft">$ </span>
-                {NPM}
+                {cmd}
               </code>
               <button
-                onClick={() => copy("npm", NPM)}
-                aria-label="Copy npm install command"
+                onClick={() => copy(os, cmd)}
+                aria-label={`Copy ${os} install command`}
                 className="flex shrink-0 items-center gap-1.5 text-xs text-white/45 hover:text-white"
               >
-                {copied === "npm" ? (
-                  <Check className="h-3.5 w-3.5 text-pass" />
-                ) : (
-                  <Copy className="h-3.5 w-3.5" />
-                )}
-                <span className="hidden sm:inline">{copied === "npm" ? "Copied" : "Copy"}</span>
+                {copied === os ? <Check className="h-3.5 w-3.5 text-pass" /> : <Copy className="h-3.5 w-3.5" />}
+                <span className="hidden sm:inline">{copied === os ? "Copied" : "Copy"}</span>
               </button>
             </div>
-            <p className="border-b border-white/[0.06] px-4 py-2.5 text-xs text-white/45">
-              Same command on macOS, Windows, and Linux. Requires Node 18 or newer.
-            </p>
 
-            {/* Secondary methods */}
-            <div className="divide-y divide-white/[0.06]">
-              {alt.map(({ label, cmd }) => (
-                <div key={label} className="grid grid-cols-[5.5rem_1fr_auto] items-center gap-3 px-4 py-2.5">
-                  <span className="font-mono text-[11px] uppercase tracking-wide text-white/35">
-                    {label}
-                  </span>
-                  <code className="min-w-0 truncate font-mono text-[12px] text-white/60">{cmd}</code>
-                  <button
-                    onClick={() => copy(label, cmd)}
-                    aria-label={`Copy ${label} command`}
-                    className="text-white/35 hover:text-white"
-                  >
-                    {copied === label ? (
-                      <Check className="h-3.5 w-3.5 text-pass" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </div>
-              ))}
-            </div>
+            <p className="px-4 py-3 text-xs text-white/45">{note}</p>
 
-            {/* Man-page flag list */}
-            <div className="divide-y divide-white/[0.06] border-t border-white/[0.06]">
-              {flags.map(({ flag, desc }) => (
-                <div key={flag} className="grid grid-cols-[minmax(8.5rem,auto)_1fr] gap-4 px-4 py-3">
-                  <code className="font-mono text-[12.5px] text-accent-blueSoft">{flag}</code>
-                  <span className="text-[13px] leading-relaxed text-white/55">{desc}</span>
-                </div>
-              ))}
+            {/* Verify step — the natural next line, no flag dump */}
+            <div className="mt-auto border-t border-white/[0.06] px-4 py-4">
+              <p className="text-[11px] uppercase tracking-wide text-white/30">Then</p>
+              <code className="mt-1.5 block font-mono text-[12.5px] text-white/60">
+                <span className="select-none text-accent-blueSoft">$ </span>
+                simapi validate output.csv
+              </code>
             </div>
           </div>
 
