@@ -1,195 +1,149 @@
 /**
- * Demo scenarios for the interactive validation experience.
+ * Built-in demo datasets for the validation playground.
  *
- * Each scenario mirrors the real SimAPI response shape (status / scores /
- * anomalies / AI summary) plus lightweight chart series so the dashboard can
- * render pressure, velocity, and residual-timeline visuals entirely client-side.
+ * These are NOT fixtures — each generator returns a plain array of trial
+ * records that is fed through the real deterministic engine
+ * (lib/rich-validate.ts) by POST /api/v1/demo. What the dashboard renders is
+ * whatever that engine actually detects, so a visitor clicking a demo watches a
+ * genuine physics/statistics violation get caught, with a real explanation.
+ *
+ * Every dataset is deterministic (seeded) so the demo is stable across reloads.
  */
 
-export type Verdict = "pass" | "warning" | "fail";
+export type SimulationType = "aerodynamics" | "fluid_dynamics";
 
-export interface Anomaly {
-  trial: number;
-  field: string;
-  value: string;
-  reason: string;
-  severity: "critical" | "warning";
-}
-
-export interface Scenario {
+export interface DemoCase {
   id: string;
   label: string;
+  /** One-line description of what the visitor should expect to see. */
   blurb: string;
-  verdict: Verdict;
-  physicsScore: number; // 0-100
-  statisticalScore: number; // 0-100
-  aiConfidence: number; // 0-100
+  simulationType: SimulationType;
+  /** What the engine returns for this dataset — for UI labelling only. */
+  expected: "passed" | "failed";
+  /** The corruption the engine is expected to surface (empty for the clean case). */
+  detects: string;
   trials: number;
-  excluded: number;
-  checksRun: number;
-  processingMs: number;
-  anomalies: Anomaly[];
-  warnings: string[];
-  fixes: string[];
-  aiSummary: string;
-  // Chart series
-  pressure: number[]; // pressure coefficient along chord
-  velocity: number[]; // boundary-layer velocity profile
-  residuals: number[]; // solver convergence (log residual per iteration)
-  heatmap: number[][]; // small field grid, 0..1
+  generate: () => Record<string, unknown>[];
 }
 
-function grid(seed: number, hot: boolean): number[][] {
-  const rows = 8;
-  const cols = 14;
-  const out: number[][] = [];
-  for (let r = 0; r < rows; r++) {
-    const row: number[] = [];
-    for (let c = 0; c < cols; c++) {
-      const base =
-        Math.sin((c / cols) * Math.PI * 1.4 + seed) * 0.5 +
-        0.5 -
-        Math.abs(r - rows / 2) / rows;
-      const spike = hot && r === 3 && c === 10 ? 0.9 : 0;
-      row.push(Math.max(0, Math.min(1, base * 0.8 + 0.15 + spike)));
-    }
-    out.push(row);
+/** Small, fast, deterministic PRNG (mulberry32) so demos never drift. */
+function rng(seed: number) {
+  let s = seed >>> 0;
+  return () => {
+    s |= 0;
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const N = 200;
+
+/**
+ * A well-converged subsonic aerodynamics sweep. Every value sits inside its
+ * physical envelope and the cross-variable relationships hold, so the engine
+ * returns PASSED with zero exclusions.
+ */
+export function cleanAeroDataset(): Record<string, unknown>[] {
+  const r = rng(12345);
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < N; i++) {
+    const v = 15 + (r() - 0.5) * 0.6;
+    rows.push({
+      drag_coefficient: round(0.31 + (r() - 0.5) * 0.02, 5),
+      lift_coefficient: round(0.84 + (r() - 0.5) * 0.03, 5),
+      reynolds_number: Math.round(415000 + (r() - 0.5) * 20000),
+      mach_number: round(v / 343 + (r() - 0.5) * 0.001, 5), // stays consistent with velocity
+      velocity: round(v, 3),
+    });
   }
-  return out;
+  return rows;
 }
 
-const chord = Array.from({ length: 40 }, (_, i) => i / 39);
+/**
+ * A diverged CFD/aero run: the solver blew up on a handful of trials, producing
+ * a saturated drag value, a NaN target, an impossible negative lift, and a
+ * supersonic Mach number inside a subsonic sweep. The engine excludes each and
+ * returns FAILED.
+ */
+export function divergedAeroDataset(): Record<string, unknown>[] {
+  const rows = cleanAeroDataset();
+  rows.forEach((row, i) => {
+    if (i % 23 === 0) row.drag_coefficient = 999.0;          // saturated / out of bounds
+    else if (i % 31 === 0) row.drag_coefficient = NaN;       // non-finite target
+    else if (i % 37 === 0) row.lift_coefficient = -50.0;     // impossible lift
+    else if (i % 41 === 0) row.mach_number = 1.42;           // supersonic in a subsonic sweep
+  });
+  return rows;
+}
 
-export const scenarios: Scenario[] = [
+/**
+ * The subtle one. A clean CFD dataset where ~12% of rows had their pressure
+ * logged in kPa instead of Pa. Every individual pressure value is physically
+ * plausible on its own — only the anchored gas constant P/(rho*T) reveals the
+ * error: it reads ~0.287 instead of 287 J/(kg*K). The engine excludes exactly
+ * those rows and returns FAILED, with a root-cause explanation.
+ */
+export function unitErrorDataset(): Record<string, unknown>[] {
+  const r = rng(6789);
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < N; i++) {
+    const pressurePa = 101325 + (r() - 0.5) * 400;
+    const density = round(1.225 + (r() - 0.5) * 0.01, 5);
+    const temperature = round(288 + (r() - 0.5) * 2, 3);
+    const unitError = i % 8 === 0; // ~12.5% of rows recorded in kPa
+    rows.push({
+      pressure: round(unitError ? pressurePa / 1000 : pressurePa, 3),
+      density,
+      temperature,
+      velocity: round(30 + (r() - 0.5) * 1.2, 3),
+      reynolds_number: Math.round(2.0e6 + (r() - 0.5) * 5e4),
+    });
+  }
+  return rows;
+}
+
+export const DEMO_CASES: DemoCase[] = [
   {
-    id: "good",
+    id: "clean",
     label: "Clean run",
-    blurb: "A well-converged aerodynamics sweep.",
-    verdict: "pass",
-    physicsScore: 98,
-    statisticalScore: 96,
-    aiConfidence: 94,
-    trials: 200,
-    excluded: 0,
-    checksRun: 287,
-    processingMs: 23,
-    anomalies: [],
-    warnings: [],
-    fixes: [],
-    aiSummary:
-      "Distributions are physically coherent for the stated Reynolds number. Drag and lift coefficients fall within realistic envelopes, residuals converge monotonically, and there is no evidence of synthetic artifacts. Dataset is training-ready.",
-    pressure: chord.map((x) => -3.1 * Math.exp(-14 * x) + 0.9 * x - 0.15),
-    velocity: chord.map((y) => 1 - Math.exp(-6.2 * y)),
-    residuals: Array.from({ length: 24 }, (_, i) => -1 - i * 0.28 + Math.random() * 0.08),
-    heatmap: grid(0.4, false),
+    blurb: "A well-converged subsonic sweep — expect PASSED, no exclusions.",
+    simulationType: "aerodynamics",
+    expected: "passed",
+    detects: "",
+    trials: N,
+    generate: cleanAeroDataset,
   },
   {
-    id: "broken",
-    label: "Broken run",
-    blurb: "Diverged solver with unphysical outputs.",
-    verdict: "fail",
-    physicsScore: 34,
-    statisticalScore: 41,
-    aiConfidence: 88,
-    trials: 200,
-    excluded: 37,
-    checksRun: 287,
-    processingMs: 29,
-    anomalies: [
-      { trial: 15, field: "drag_coefficient", value: "999.0", reason: "Exceeds physical bound (0.0005–3.5)", severity: "critical" },
-      { trial: 42, field: "drag_coefficient", value: "NaN", reason: "Non-finite value in target column", severity: "critical" },
-      { trial: 87, field: "lift_coefficient", value: "-50.0", reason: "Outside plausible lift envelope", severity: "critical" },
-      { trial: 133, field: "mach_number", value: "1.42", reason: "Supersonic value in subsonic sweep", severity: "warning" },
-    ],
-    warnings: [
-      "Residuals plateau above 1e-2 — solver did not converge.",
-      "18.5% of trials excluded — dataset not training-ready.",
-    ],
-    fixes: [
-      "Re-run trials 15, 42, 87 with a tighter CFL number.",
-      "Add a convergence gate before export (residual < 1e-4).",
-      "Clamp or reject non-finite target values at the source.",
-    ],
-    aiSummary:
-      "This run shows clear signs of solver divergence: a saturated drag value (999), a NaN target, and a negative lift far outside any realistic envelope. The residual trace never drops below 1e-2. Do not use for design decisions or ML training until re-run.",
-    pressure: chord.map((x) => -3.1 * Math.exp(-14 * x) + 0.9 * x - 0.15 + (x > 0.5 ? Math.sin(x * 60) * 0.6 : 0)),
-    velocity: chord.map((y) => 1 - Math.exp(-6.2 * y) + Math.sin(y * 40) * 0.12),
-    residuals: Array.from({ length: 24 }, (_, i) => -1 - Math.min(i, 6) * 0.18 + Math.random() * 0.2),
-    heatmap: grid(1.1, true),
+    id: "diverged",
+    label: "Diverged solver",
+    blurb: "Saturated drag (999), a NaN target, negative lift, a supersonic Mach — expect FAILED.",
+    simulationType: "aerodynamics",
+    expected: "failed",
+    detects: "solver divergence · out-of-bounds · non-finite values",
+    trials: N,
+    generate: divergedAeroDataset,
   },
   {
-    id: "edge",
-    label: "Edge case",
-    blurb: "Valid but near physical limits.",
-    verdict: "warning",
-    physicsScore: 82,
-    statisticalScore: 79,
-    aiConfidence: 76,
-    trials: 200,
-    excluded: 4,
-    checksRun: 287,
-    processingMs: 25,
-    anomalies: [
-      { trial: 55, field: "velocity", value: "14.2", reason: "Velocity/Mach mismatch vs. stated conditions", severity: "warning" },
-      { trial: 178, field: "angle_of_attack", value: "34.8°", reason: "Approaching stall boundary", severity: "warning" },
-    ],
-    warnings: [
-      "Narrow parameter coverage — single flow regime.",
-      "Two trials sit within 5% of a hard physical bound.",
-    ],
-    fixes: [
-      "Broaden the angle-of-attack sweep to improve generalization.",
-      "Verify the conditions block matches trial 55's velocity.",
-    ],
-    aiSummary:
-      "The data is physically valid but operates close to the stall boundary and covers a narrow regime. Usable for validation, but an ML model trained here may not generalize beyond this envelope. Consider expanding the sweep.",
-    pressure: chord.map((x) => -2.6 * Math.exp(-12 * x) + 1.1 * x - 0.2),
-    velocity: chord.map((y) => 1 - Math.exp(-5.4 * y)),
-    residuals: Array.from({ length: 24 }, (_, i) => -1 - i * 0.22 + Math.random() * 0.1),
-    heatmap: grid(0.8, false),
-  },
-  {
-    id: "noise",
-    label: "Noise corrupted",
-    blurb: "Sensor noise and quantization artifacts.",
-    verdict: "warning",
-    physicsScore: 71,
-    statisticalScore: 58,
-    aiConfidence: 83,
-    trials: 200,
-    excluded: 9,
-    checksRun: 287,
-    processingMs: 27,
-    anomalies: [
-      { trial: 12, field: "pressure", value: "±quantized", reason: "Suspicious round-number clustering (sensor quantization)", severity: "warning" },
-      { trial: 96, field: "drag_coefficient", value: "high CV", reason: "Coefficient of variation 3× expected", severity: "warning" },
-    ],
-    warnings: [
-      "High-frequency noise detected in pressure channel.",
-      "Distribution kurtosis suggests measurement artifacts.",
-    ],
-    fixes: [
-      "Apply a low-pass filter to the pressure channel before export.",
-      "Increase sensor resolution or averaging window.",
-    ],
-    aiSummary:
-      "Statistical fingerprints point to sensor noise and quantization rather than a modeling error — the underlying physics is plausible but the signal is corrupted. Filtering the pressure channel should recover a clean, training-ready dataset.",
-    pressure: chord.map((x) => -3.0 * Math.exp(-14 * x) + 0.9 * x - 0.15 + (Math.random() - 0.5) * 0.5),
-    velocity: chord.map((y) => 1 - Math.exp(-6.2 * y) + (Math.random() - 0.5) * 0.18),
-    residuals: Array.from({ length: 24 }, (_, i) => -1 - i * 0.24 + (Math.random() - 0.5) * 0.3),
-    heatmap: grid(1.6, false),
+    id: "unit_error",
+    label: "Unit error (Pa vs kPa)",
+    blurb: "Pressure logged in kPa on ~1 in 8 rows — caught by the anchored gas constant P/(ρT).",
+    simulationType: "fluid_dynamics",
+    expected: "failed",
+    detects: "unit conversion error via P/(ρT) ≈ 287 J/(kg·K)",
+    trials: N,
+    generate: unitErrorDataset,
   },
 ];
 
-export const verdictMeta: Record<Verdict, { label: string; color: string; ring: string }> = {
-  pass: { label: "PASS", color: "text-pass", ring: "ring-pass/30 bg-pass/10" },
-  warning: { label: "WARNING", color: "text-warn", ring: "ring-warn/30 bg-warn/10" },
-  fail: { label: "FAIL", color: "text-fail", ring: "ring-fail/30 bg-fail/10" },
-};
+/** Resolve a demo case id to its dataset. Defaults to the diverged case. */
+export function demoData(caseId?: string): { data: Record<string, unknown>[]; case: DemoCase } {
+  const c = DEMO_CASES.find((d) => d.id === caseId) ?? DEMO_CASES[1];
+  return { data: c.generate(), case: c };
+}
 
-export const pipelineStages = [
-  { key: "parse", label: "Parsing dataset", detail: "Detecting format · normalizing 24 column aliases" },
-  { key: "physics", label: "Running deterministic validation", detail: "287 physics checks across 21 domains" },
-  { key: "ai", label: "Running AI analysis", detail: "Second-pass reasoning over full distributions" },
-  { key: "report", label: "Generating report", detail: "Scoring · anomalies · recommendations" },
-] as const;
+function round(v: number, digits: number): number {
+  const f = 10 ** digits;
+  return Math.round(v * f) / f;
+}

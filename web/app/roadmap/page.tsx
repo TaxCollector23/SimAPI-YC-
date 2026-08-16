@@ -32,9 +32,9 @@ const items: Item[] = [
 ];
 
 const statusMeta: Record<Status, { label: string; className: string }> = {
-  shipped: { label: "Shipped", className: "bg-pass/15 text-pass" },
-  "in-progress": { label: "In progress", className: "bg-warn/15 text-warn" },
-  planned: { label: "Planned", className: "bg-white/10 text-white/60" },
+  shipped: { label: "Shipped", className: "border border-pass/40 text-pass" },
+  "in-progress": { label: "In progress", className: "border border-warn/40 text-warn" },
+  planned: { label: "Planned", className: "border border-white/15 text-white/55" },
 };
 
 export default function RoadmapPage() {
@@ -57,7 +57,7 @@ export default function RoadmapPage() {
                     <div className="rounded-2xl border border-white/[0.07] bg-ink-900/40 p-5">
                       <div className="flex items-start justify-between gap-3">
                         <h3 className="text-sm font-medium text-white">{item.title}</h3>
-                        <span className={cn("shrink-0 rounded-full px-2.5 py-0.5 text-[11px]", statusMeta[status].className)}>
+                        <span className={cn("shrink-0 px-2 py-0.5 text-[11px]", statusMeta[status].className)}>
                           {statusMeta[status].label}
                         </span>
                       </div>

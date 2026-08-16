@@ -1,0 +1,9 @@
+{
+  "simulation_type": "aerodynamics",
+  "conditions": { "velocity": 15.0, "altitude": 120.0 },
+  "data": [
+    { "velocity": 15.0, "lift": 210.4, "drag": 12.1, "angle_of_attack": 4.0, "reynolds": 1.2e6 },
+    { "velocity": 18.0, "lift": 305.7, "drag": 15.9, "angle_of_attack": 5.0, "reynolds": 1.5e6 },
+    { "velocity": 22.0, "lift": 455.2, "drag": 22.3, "angle_of_attack": 6.0, "reynolds": 1.9e6 }
+  ]
+}

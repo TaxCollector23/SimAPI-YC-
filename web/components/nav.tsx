@@ -75,9 +75,12 @@ export function Nav() {
           ))}
         </div>
 
-        <div className="hidden items-center gap-2 md:flex">
-          <Link href="/dashboard" className="btn-primary">
-            Get API Key
+        <div className="hidden items-center gap-4 md:flex">
+          <Link href="/docs" className="text-sm text-white/60 transition-colors hover:text-white">
+            Docs
+          </Link>
+          <Link href="/dashboard" className="btn-accent">
+            Get API key
           </Link>
         </div>
 
@@ -121,8 +124,8 @@ export function Nav() {
                 )}
               </div>
             ))}
-            <Link href="/dashboard" onClick={() => setOpen(false)} className="btn-primary mt-2">
-              Get API Key
+            <Link href="/dashboard" onClick={() => setOpen(false)} className="btn-accent mt-3 w-fit">
+              Get API key
             </Link>
           </div>
         </div>

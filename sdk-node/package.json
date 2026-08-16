@@ -1,25 +1,51 @@
 {
   "name": "simapi-cli",
-  "version": "1.0.0",
-  "description": "Node.js SDK and CLI for SimAPI — validate simulation results against physical laws.",
+  "version": "1.1.0",
+  "description": "CLI and Node.js SDK for SimAPI — validate engineering simulation results against physical laws. Install globally for the `simapi` command.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "bin": {
     "simapi": "bin/simapi.js"
   },
   "files": ["dist", "bin", "README.md"],
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "prepublishOnly": "tsc"
   },
   "engines": {
     "node": ">=18"
   },
-  "keywords": ["simulation", "validation", "cfd", "fea", "physics", "simapi"],
+  "keywords": [
+    "simapi",
+    "simulation",
+    "validation",
+    "physics",
+    "cfd",
+    "fea",
+    "aerodynamics",
+    "engineering",
+    "cli",
+    "ci"
+  ],
   "license": "MIT",
+  "author": "SimAPI",
+  "homepage": "https://sim-api.vercel.app",
+  "bugs": {
+    "url": "https://github.com/TaxCollector23/SimAPI-YC-/issues"
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/TaxCollector23/SimAPI-YC-"
+    "url": "git+https://github.com/TaxCollector23/SimAPI-YC-.git"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "devDependencies": {
     "typescript": "^5.7.3",

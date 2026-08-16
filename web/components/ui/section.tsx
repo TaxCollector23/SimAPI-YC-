@@ -2,9 +2,14 @@ import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { Reveal } from "./reveal";
 
-/** A titled page section with an eyebrow, heading, and lede. */
+/**
+ * A titled page section: heading and lede.
+ *
+ * `eyebrow` is retained in the prop type for backward compatibility with
+ * the many pages that still pass it, but it is intentionally NOT rendered
+ * — the visual system has no uppercase mono kicker labels.
+ */
 export function SectionHeader({
-  eyebrow,
   title,
   lede,
   align = "center",
@@ -21,7 +26,6 @@ export function SectionHeader({
         align === "center" ? "items-center text-center" : "items-start text-left",
       )}
     >
-      {eyebrow && <span className="eyebrow">{eyebrow}</span>}
       <h2 className="w-full max-w-2xl text-balance text-3xl font-semibold tracking-tight text-white sm:text-4xl">
         {title}
       </h2>

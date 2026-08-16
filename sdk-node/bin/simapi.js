@@ -5,7 +5,7 @@
  * Zero runtime dependencies (Node 18+ built-ins only). The hosted API is
  * open by default -- no account or sign-in required. An API key is only
  * relevant if you're running your own deployment with SIMAPI_API_KEYS set.
- *   init · validate · watch · usage ·
+ *   init · validate · ci · watch · usage ·
  *   api-key {show,set,generate,delete} · config [set] · doctor · version · help
  */
 import { readFile, writeFile, mkdir, stat } from "node:fs/promises";
@@ -16,7 +16,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout, platform, env } from "node:process";
 import { exec } from "node:child_process";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 const WEB_BASE = env.SIMAPI_WEB_URL || "https://sim-api.vercel.app";
 const API_BASE = env.SIMAPI_BASE_URL || "https://sim-api.vercel.app/api";
 const CONFIG_DIR = join(homedir(), ".simapi");
@@ -161,6 +161,78 @@ const commands = {
     if (!file) return fail(`Usage: ${c.cyan("simapi validate <file>")}`);
     const key = await resolveKey();
     await runValidation(file, key, args);
+  },
+
+  // CI gate: validate a file and exit non-zero when the gate fails, so a
+  // pipeline step blocks a bad simulation from merging. `--json` prints a
+  // compact machine-readable verdict for downstream tooling; otherwise a
+  // terse pass/fail summary is printed. The file may be omitted when
+  // simapi.json declares a "files" entry.
+  async ci(args) {
+    const cfg = await readConfig();
+    const file = args._[0] || (Array.isArray(cfg.files) ? cfg.files[0] : cfg.files);
+    if (!file) {
+      return fail(`Usage: ${c.cyan("simapi ci <file>")} ${c.dim('(or set "files" in simapi.json)')}`);
+    }
+    const key = await resolveKey();
+    // A CI gate is strict by default: any non-passing status blocks. Override
+    // with --fail-on failed to allow warnings through, or set fail_on in config.
+    const level = args["fail-on"] || cfg.fail_on || "warning";
+
+    const out = await validateOnce(file, key, args);
+    if (!out.ok) {
+      if (args.json) {
+        stdout.write(JSON.stringify({ ok: false, gate: "error", file, error: stripAnsi(out.error) }, null, 2) + "\n");
+      } else {
+        fail(out.error);
+      }
+      process.exitCode = 1;
+      return;
+    }
+
+    const r = out.result;
+    const failCount = (r.issues || []).filter((i) => i.status === "failed").length;
+    const warnCount = (r.issues || []).filter((i) => i.status === "warning").length;
+    const gateFails = level === "failed" ? r.status === "failed" : r.status !== "passed";
+
+    if (args.json) {
+      stdout.write(JSON.stringify({
+        ok: !gateFails,
+        gate: gateFails ? "fail" : "pass",
+        file,
+        status: r.status,
+        fail_on: level,
+        trials_submitted: r.trials_submitted ?? null,
+        trials_valid: r.trials_valid ?? null,
+        failed: failCount,
+        warnings: warnCount,
+        training_ready: !!r.training_ready,
+        processing_ms: r.processing_ms ?? null,
+        job_id: r.job_id ?? null,
+      }, null, 2) + "\n");
+    } else {
+      const tone = gateFails ? c.red : c.green;
+      const mark = gateFails ? "✗" : "✓";
+      const label = gateFails ? "GATE FAILED" : "GATE PASSED";
+      stdout.write(`\n  ${tone(c.bold(`${mark} ${label}`))}  ${c.dim(file)}\n`);
+      row("Status", (r.status || "unknown").toUpperCase());
+      row("Trials", `${r.trials_valid ?? "—"} valid / ${r.trials_submitted ?? "—"}`);
+      row("Findings", `${failCount ? c.red(failCount + " failed") : "0 failed"}   ${warnCount ? c.amber(warnCount + " warnings") : "0 warnings"}`);
+      row("Fail-on", level);
+      row("Training ready", r.training_ready ? c.green("yes") : c.red("no"));
+      const blocking = (r.issues || []).filter((i) => (level === "failed" ? i.status === "failed" : true));
+      if (gateFails && blocking.length) {
+        stdout.write(`\n  ${c.bold("Blocking issues")}\n`);
+        for (const i of blocking.slice(0, 10)) {
+          const mk = i.status === "failed" ? c.red("✗") : c.amber("⚠");
+          stdout.write(`   ${mk} ${i.human_name || i.name}\n`);
+        }
+        if (blocking.length > 10) stdout.write(`   ${c.dim(`… and ${blocking.length - 10} more`)}\n`);
+      }
+      stdout.write("\n");
+    }
+
+    if (gateFails) process.exitCode = 1;
   },
 
   async dimensional(args) {
@@ -519,6 +591,11 @@ async function readRecords(file) {
 }
 
 async function loadPayload(file, key, args) {
+  const ext = file.toLowerCase().split(".").pop();
+  // CSV/TSV are parsed locally into a rows array — no server round-trip and
+  // no dependency on the AI text-parse endpoint, which the hosted API may
+  // not expose. The array is sent straight to /v1/validate as `data`.
+  if (ext === "csv" || ext === "tsv") return readRecords(file);
   const raw = await readFile(file, "utf8");
   try {
     return JSON.parse(raw);
@@ -535,14 +612,17 @@ async function loadPayload(file, key, args) {
   }
 }
 
-async function runValidation(file, key, args) {
-  if (!existsSync(file)) return fail(`File not found: ${file}`);
+// Load a file, POST it to /v1/validate, and return the parsed result without
+// printing anything. Shared by `validate`, `watch`, and `ci` so they stay in
+// lock-step. Returns { ok:true, result, simType } or { ok:false, error }.
+async function validateOnce(file, key, args) {
+  if (!existsSync(file)) return { ok: false, error: `File not found: ${file}` };
   const cfg = await readConfig();
   let payload;
   try {
     payload = await loadPayload(file, key, args);
   } catch (e) {
-    return fail(e.message);
+    return { ok: false, error: e.message };
   }
   const body = Array.isArray(payload)
     ? { data: payload, simulation_type: args.type || cfg.simulation_type || "aerodynamics" }
@@ -558,19 +638,26 @@ async function runValidation(file, key, args) {
   try {
     res = await api("/v1/validate", { method: "POST", body, key });
   } catch (e) {
-    return fail(`Request failed: ${e.message} ${c.dim(`(is ${API_BASE} reachable?)`)}`);
+    return { ok: false, error: `Request failed: ${e.message} ${c.dim(`(is ${API_BASE} reachable?)`)}` };
   }
   await trackUsage(Date.now() - t0);
 
   if (!res.ok) {
     const err = res.json?.error || {};
-    return fail(`[${err.code || res.status}] ${err.message || "validation error"}`);
+    return { ok: false, error: `[${err.code || res.status}] ${err.message || "validation error"}` };
   }
   const r = res.json;
   await writeJson(LAST_RUN_PATH, { file, t: Date.now(), result: r });
+  return { ok: true, result: r, simType: body.simulation_type };
+}
+
+async function runValidation(file, key, args) {
+  const out = await validateOnce(file, key, args);
+  if (!out.ok) return fail(out.error);
+  const r = out.result;
   if (args.json) return stdout.write(JSON.stringify(r, null, 2) + "\n");
 
-  renderReport(r, file, body.simulation_type);
+  renderReport(r, file, out.simType);
 
   if (args["fail-on"] === "warning" && r.status !== "passed") process.exitCode = 1;
   if (args["fail-on"] === "failed" && r.status === "failed") process.exitCode = 1;
@@ -699,7 +786,8 @@ function renderDimensionalReport(r, file) {
 // ── Help ──────────────────────────────────────────────────────────────────────
 const HELP = {
   init: { usage: "simapi init", desc: "Create a simapi.json config in the current project." },
-  validate: { usage: "simapi validate <file>", desc: "Validate a .json or .txt simulation file and print the report. Plain-text/log files are converted to JSON with AI.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--no-ai", "skip the AI second pass"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate simulations.txt --type aerodynamics", "simapi validate run.json --fail-on warning"] },
+  validate: { usage: "simapi validate <file>", desc: "Validate a .json, .csv/.tsv, or .txt simulation file and print the report. CSV/TSV are parsed locally; plain-text/log files are converted to JSON with AI.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--no-ai", "skip the AI second pass"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate simulation.csv --type aerodynamics", "simapi validate run.json --fail-on warning"] },
+  ci: { usage: "simapi ci [file]", desc: "CI gate: validate a file and exit non-zero when the gate fails. Reads the file from simapi.json \"files\" when omitted. Strict by default (any non-passing status blocks).", opts: [["--json", "machine-readable verdict (ok, gate, status, counts)"], ["--fail-on <level>", "warning (default) blocks warnings+failures; failed blocks only failures"], ["--type <domain>", "simulation domain"], ["--no-ai", "skip the AI second pass"]], ex: ["simapi ci simulation.json", "simapi ci run.csv --fail-on failed", "simapi ci --json"] },
   dimensional: { usage: "simapi dimensional <file.csv|file.json>", desc: "Run the dimensional-analysis engine (Buckingham-π groups, anchored physical constants, bimodal-split detection, temporal drift, semantic bounds). Prints laws discovered and row-level findings.", opts: [["--conditions k=v,k=v", "declared conditions (e.g. altitude_m=11000,velocity=45)"], ["--json", "raw JSON output"], ["--fail-on <level>", "exit non-zero on warning|failed (default: exit 1 on any impossible row)"]], ex: ["simapi dimensional simulation.csv", "simapi dimensional run.csv --conditions altitude_m=11000", "simapi dimensional data.json --json > report.json"] },
   domains: { usage: "simapi domains", desc: "List the supported simulation types." },
   doctor: { usage: "simapi doctor [--fix]", desc: "Diagnose config, connectivity, and project setup." },
@@ -720,7 +808,8 @@ function printHelp() {
   stdout.write(`  ${c.bold("Commands")}\n`);
   const items = [
     ["init", "Create a simapi.json config"],
-    ["validate <file>", "Validate a .json or .txt simulation file"],
+    ["validate <file>", "Validate a .json/.csv/.txt simulation file"],
+    ["ci [file]", "CI gate — non-zero exit when validation fails"],
     ["dimensional <file>", "Run the dimensional-analysis engine on a CSV/JSON"],
     ["watch <file>", "Re-validate on file change"],
     ["domains", "List supported simulation types"],
@@ -767,6 +856,10 @@ function info(msg) {
 function fail(msg) {
   stdout.write(`  ${c.red("✗")} ${msg}\n`);
   process.exitCode = 1;
+}
+// Strip ANSI color codes so error strings are clean inside --json output.
+function stripAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;]*m/g, "");
 }
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────────

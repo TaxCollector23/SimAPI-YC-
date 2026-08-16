@@ -13,6 +13,7 @@ import { HistoryPanel } from "./history-panel";
 import { DimensionalResultPanel } from "./dimensional-result-panel";
 import { recordRun } from "@/lib/run-history";
 import { touchKey } from "@/lib/dashboard-store";
+import { DEMO_CASES } from "@/lib/demo-data";
 import {
   validate, runDemo, validateDimensional, pollAI, generateKey,
   DEMO_KEY, healthCheck,
@@ -377,8 +378,8 @@ export function ValidationDashboard() {
     setPhase("idle"); setResult(null);
   }
 
-  async function run(demo = false) {
-    if (!serverUp) { setError("API server offline. Run: python launch.py"); return; }
+  async function run(demo = false, demoCase?: string) {
+    if (serverUp === false) { setError("Validation API is unreachable — check your connection and try again."); return; }
     stopPoll(); setPhase("running"); setError(null); setResult(null); setDimResult(null); setShowAll(false);
     setUnitOverrides({});
     try {
@@ -398,7 +399,7 @@ export function ValidationDashboard() {
 
       let res: ValidationResult;
       if (demo) {
-        res = await runDemo();
+        res = await runDemo(demoCase);
       } else {
         let data: Record<string, unknown>[];
         try { data = JSON.parse(rawInput); }
@@ -743,13 +744,40 @@ export function ValidationDashboard() {
                 ? <><Loader2 className="h-4 w-4 animate-spin" /> Running validation...</>
                 : <><Play className="h-4 w-4" /> Run Validation</>}
             </button>
-            <button onClick={() => run(true)} disabled={phase === "running"}
-              className="btn-ghost w-full flex items-center justify-center gap-2 text-sm">
-              <RefreshCw className="h-4 w-4" />
-              {engineMode === "dimensional"
-                ? `Run example dataset (${selectedSim.example.length || "N/A"} trials)`
-                : "Load demo dataset (200 trials, 5 corruption types)"}
-            </button>
+
+            {engineMode === "dimensional" ? (
+              <button onClick={() => run(true)} disabled={phase === "running"}
+                className="btn-ghost w-full flex items-center justify-center gap-2 text-sm">
+                <RefreshCw className="h-4 w-4" />
+                {`Run example dataset (${selectedSim.example.length || "N/A"} trials)`}
+              </button>
+            ) : (
+              <div className="border border-white/[0.08] bg-black/20">
+                <p className="border-b border-white/[0.08] px-3 py-2 text-[11px] text-white/40">
+                  Or run a built-in dataset through the real engine
+                </p>
+                <div className="divide-y divide-white/[0.06]">
+                  {DEMO_CASES.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => run(true, c.id)}
+                      disabled={phase === "running"}
+                      className="flex w-full items-start gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03] disabled:opacity-50"
+                    >
+                      <span className={cn("mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
+                        c.expected === "passed" ? "bg-pass" : "bg-fail")} />
+                      <span className="min-w-0">
+                        <span className="flex items-center gap-2 text-sm text-white/85">
+                          {c.label}
+                          <span className="font-mono text-[10px] text-white/30">{c.trials} trials</span>
+                        </span>
+                        <span className="block text-[11px] leading-snug text-white/40">{c.blurb}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Info box */}

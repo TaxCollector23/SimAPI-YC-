@@ -9,31 +9,31 @@ import { cn } from "@/lib/utils";
 const faqs = [
   {
     q: "What exactly does SimAPI validate?",
-    a: "Two layers. A deterministic engine runs 287 physics and statistical checks — plausibility bounds, conservation laws, dimensional and cross-variable consistency, outlier and distribution analysis — across 21 simulation domains. An optional AI layer then reasons over the full distributions to catch subtler issues the rules can't encode.",
+    a: "Two deterministic engines run on every request. The physics rule engine checks per-domain plausibility bounds, conservation laws, and cross-variable relations (Re = ρvL/μ, Ma = v/c, P = ρRT) across 21 simulation domains. The dimensional-analysis cascade resolves each column to an SI dimension, discovers the dimensionless (Buckingham-π) groups in the data itself, anchors them to known physical constants, and tests the data against them. An optional AI layer clusters and narrates findings — it never re-derives physics.",
   },
   {
     q: "Which simulation formats and tools are supported?",
-    a: "CSV, JSON, VTK, NumPy, and OpenFOAM post-processing output, with aggressive column-alias normalization so results from ANSYS, OpenFOAM, STAR-CCM+, Fluent, COMSOL, SU2, and Abaqus validate without renaming columns.",
+    a: "CSV, JSON, YAML, TOML, TXT/Markdown, VTK, NumPy, and OpenFOAM. An aggressive column-alias map normalizes names across ANSYS, OpenFOAM, STAR-CCM+, Fluent, COMSOL, SU2, Abaqus, and MATLAB conventions, so checks fire without renaming columns. The report lists exactly which aliases were applied.",
   },
   {
     q: "How fast is it?",
-    a: "The deterministic layer returns in under 30ms for typical runs. The AI layer runs asynchronously and is polled separately, so your pipeline never blocks on it.",
+    a: "The pre-flight mesh/setup check runs in well under 200ms with no external calls. Full output validation depends on row count and which layers fire — the published benchmark runs the entire dimensional cascade over ~9,300 rows in a few seconds on a CPU-only container. The optional AI layer runs asynchronously and is polled separately, so your pipeline never blocks on it.",
   },
   {
     q: "Do I have to send my data to your servers?",
-    a: "For enterprise, no. SimAPI ships as a container and supports private, in-VPC, and fully air-gapped deployments so proprietary simulation data never leaves your infrastructure.",
+    a: "No. The default path is entirely deterministic Python and the engine is MIT-licensed, so you can self-host the container — including fully air-gapped — and data never leaves your infrastructure. The hosted API is a convenience, not a requirement.",
   },
   {
     q: "How does it fit into CI/CD?",
-    a: "Call the API from any pipeline step and branch on the returned status — passed, warning, or failed. GitHub Actions, GitLab CI, and Jenkins examples are in the docs.",
+    a: "Run the CLI in any pipeline step and branch on the verdict — passed, warning, or failed. A ready-to-copy GitHub Action wrapping the CLI's exit-code gate ships in integrations/github-action, and the same simapi --fail-on pattern works in GitLab CI or Jenkins.",
   },
   {
     q: "Is the AI layer required?",
-    a: "No. It's fully optional. Without an AI key configured, the deterministic engine runs exactly the same and the AI section reports as disabled — physics validation is never affected.",
+    a: "No — it is opt-in and off by default. It only runs when an OpenRouter key is configured and you pass run_ai=true. Without a key it reports as disabled and the deterministic engines run exactly the same. Every AI phase fails down, never out: the physics result is always complete and standalone.",
   },
   {
     q: "What happens to invalid trials?",
-    a: "They're excluded with a per-trial reason and severity, and the response reports an exclusion rate plus a training_ready flag so you know instantly whether the dataset is safe for ML.",
+    a: "Each row is classified: impossible (violates a definition or hard physical bound), inconsistent (contradicts a discovered law, an anchored constant, or a declared condition), or unsuitable_for_training. The response carries an exclusion_rate and a training_ready flag, plus a per-row reason — so you know instantly whether the dataset is safe for ML, and why any row was excluded.",
   },
 ];
 

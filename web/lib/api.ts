@@ -126,8 +126,12 @@ export async function validate(req: ValidationRequest, apiKey: string): Promise<
   return r.json();
 }
 
-export async function runDemo(): Promise<ValidationResult> {
-  const r = await fetch(`${API_BASE}/v1/demo`, { method: "POST" });
+export async function runDemo(demoCase?: string): Promise<ValidationResult> {
+  const r = await fetch(`${API_BASE}/v1/demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ case: demoCase ?? "diverged" }),
+  });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }

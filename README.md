@@ -383,6 +383,27 @@ deployment. The Python SDK also exposes `result.to_dataframe()` and
 
 ## Using the CLI
 
+### Install
+
+The recommended CLI ships on npm and works the same on macOS, Windows, and Linux
+(Node 18+):
+
+```bash
+npm install -g simapi-cli      # provides the `simapi` command
+```
+
+It talks to the hosted API (open by default — no account required) and adds a
+`simapi ci` exit-code gate for pipelines. See `sdk-node/README.md` for the full
+command reference, or drop it into CI with the GitHub Action in
+`integrations/github-action/`.
+
+For a fully-local, offline CLI that runs the engine on your own machine (no
+network), install the Python package instead:
+
+```bash
+pip install ./python-pkg       # also provides `simapi`
+```
+
 `python-pkg/simapi/cli.py` — a self-contained local CLI. The full engine runs
 locally; data does not leave the machine unless you use `--upload`.
 

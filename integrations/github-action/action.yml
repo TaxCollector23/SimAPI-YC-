@@ -1,0 +1,113 @@
+name: "SimAPI — Physics Validation"
+description: >
+  Validate engineering simulation output (CFD / FEA / robotics / multiphysics)
+  against physical law, dimensional consistency, and conservation principles.
+  Fails the build when physics violations are found. Wraps the `simapi-cli`
+  npm package and gates on its exit code.
+author: "SimAPI"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  file:
+    description: "Path to the simulation output file to validate (.csv, .json, or .txt)."
+    required: true
+  engine:
+    description: >
+      Which engine to run: "validate" (both engines via the hosted API, works
+      without a key) or "dimensional" (dimensional-analysis cascade only,
+      requires api-key). Default: validate.
+    required: false
+    default: "validate"
+  simulation-type:
+    description: "Declared simulation domain, e.g. aerodynamics, structural, robotics. Optional."
+    required: false
+    default: ""
+  conditions:
+    description: >
+      Declared operating conditions as comma-separated key=value pairs, e.g.
+      "velocity=15,altitude=120". Used by the dimensional engine. Optional.
+    required: false
+    default: ""
+  fail-on:
+    description: >
+      Gate policy:
+        failed  (default) — fail the build on impossible rows (verdict "failed")
+        warning           — fail on any impossible OR inconsistent row
+        never             — never fail; collect results only
+    required: false
+    default: "failed"
+  api-key:
+    description: >
+      API key for a deployment that enforces auth (set as the SIMAPI_API_KEY
+      env var for the CLI). Not needed for the open hosted API with the
+      "validate" engine; required for the "dimensional" engine.
+    required: false
+    default: ""
+  base-url:
+    description: >
+      Base URL of the SimAPI deployment (SIMAPI_BASE_URL). Defaults to the
+      hosted API. Point this at your own deployment for private / air-gapped runs.
+    required: false
+    default: ""
+  cli-version:
+    description: "Version of the simapi-cli npm package to install (default: latest)."
+    required: false
+    default: "latest"
+  upload-report:
+    description: "Upload the JSON result as a workflow artifact."
+    required: false
+    default: "true"
+
+outputs:
+  status:
+    description: "Top-level verdict: passed | warning | failed."
+    value: ${{ steps.gate.outputs.status }}
+  training-ready:
+    description: "Whether the dataset is safe for ML training (true/false)."
+    value: ${{ steps.gate.outputs.training-ready }}
+  impossible:
+    description: "Count of rows that are physically impossible."
+    value: ${{ steps.gate.outputs.impossible }}
+  inconsistent:
+    description: "Count of rows that are internally inconsistent."
+    value: ${{ steps.gate.outputs.inconsistent }}
+  result-path:
+    description: "Path to the raw JSON result file."
+    value: ${{ steps.gate.outputs.result-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: "20"
+
+    - name: Install simapi-cli
+      shell: bash
+      run: npm install -g "simapi-cli@${{ inputs.cli-version }}"
+
+    - name: Validate and gate
+      id: gate
+      shell: bash
+      env:
+        SIMAPI_API_KEY: ${{ inputs.api-key }}
+        SIMAPI_BASE_URL: ${{ inputs.base-url }}
+      run: |
+        bash "${{ github.action_path }}/run.sh" \
+          --file "${{ inputs.file }}" \
+          --engine "${{ inputs.engine }}" \
+          --type "${{ inputs.simulation-type }}" \
+          --conditions "${{ inputs.conditions }}" \
+          --fail-on "${{ inputs.fail-on }}"
+
+    - name: Upload result artifact
+      if: always() && inputs.upload-report == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: simapi-result
+        path: ${{ steps.gate.outputs.result-path }}
+        if-no-files-found: ignore
+        retention-days: 30

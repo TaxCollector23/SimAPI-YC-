@@ -60,7 +60,7 @@ export function Features() {
     <section id="features" className="relative py-24 sm:py-32">
       <div className="container-tight">
         <SectionHeader
-          eyebrow="Platform"
+          align="left"
           title={<>Everything you need to trust a simulation</>}
           lede="A complete validation layer — deterministic where it can be, intelligent where it must be."
         />

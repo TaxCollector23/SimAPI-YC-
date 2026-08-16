@@ -76,6 +76,81 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+
+# ── Numerical-robustness helpers ────────────────────────────────────────────────
+# scipy's higher-moment estimators (skew/kurtosis) and numpy's correlation both
+# divide by a measure of spread. On a constant or near-constant column that
+# divisor collapses toward zero, producing either a NaN or a
+# "catastrophic cancellation" / "invalid value encountered in divide"
+# RuntimeWarning and an unreliable result. For simulation output a column with
+# no meaningful variance simply carries no distribution-shape or correlation
+# signal, so the physically correct answer is a defined 0.0 rather than a noisy
+# NaN. These guards detect the degenerate case up front and skip the unstable
+# computation entirely, keeping the engine deterministic and warning-free.
+
+def _is_near_constant(s: np.ndarray, rel_tol: float = 1e-9, abs_tol: float = 1e-12) -> bool:
+    """True when ``s`` has effectively no spread relative to its own scale.
+
+    Moment calculations lose all precision once the standard deviation falls
+    below ~1e-9 of the data's magnitude (the point at which mean-subtraction
+    cancels the signal), which is exactly the regime scipy warns about.
+    """
+    if s.size < 2:
+        return True
+    finite = s[np.isfinite(s)]
+    if finite.size < 2:
+        return True
+    std = float(np.std(finite))
+    scale = float(np.mean(np.abs(finite)))
+    return std <= max(abs_tol, rel_tol * scale)
+
+
+def safe_skew(s: np.ndarray) -> float:
+    """Skewness that returns 0.0 for constant/near-constant input instead of
+    emitting a precision-loss RuntimeWarning and an unreliable value."""
+    arr = np.asarray(s, dtype=float)
+    if _is_near_constant(arr):
+        return 0.0
+    try:
+        val = float(stats.skew(arr, nan_policy="omit"))
+    except Exception:
+        return 0.0
+    return val if np.isfinite(val) else 0.0
+
+
+def safe_kurtosis(s: np.ndarray) -> float:
+    """Excess kurtosis with the same near-constant guard as :func:`safe_skew`."""
+    arr = np.asarray(s, dtype=float)
+    if _is_near_constant(arr):
+        return 0.0
+    try:
+        val = float(stats.kurtosis(arr, nan_policy="omit"))
+    except Exception:
+        return 0.0
+    return val if np.isfinite(val) else 0.0
+
+
+def safe_corrcoef(a: np.ndarray, b: np.ndarray) -> float:
+    """Pearson correlation that returns 0.0 when either input has (near-)zero
+    variance, instead of triggering a divide-by-zero RuntimeWarning and NaN.
+
+    Only finite, pairwise-complete observations are used.
+    """
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    if a.shape != b.shape:
+        return 0.0
+    mask = np.isfinite(a) & np.isfinite(b)
+    if mask.sum() < 2:
+        return 0.0
+    a, b = a[mask], b[mask]
+    if _is_near_constant(a) or _is_near_constant(b):
+        return 0.0
+    with np.errstate(all="ignore"):
+        c = np.corrcoef(a, b)[0, 1]
+    return float(c) if np.isfinite(c) else 0.0
+
+
 # ── AI configuration ──────────────────────────────────────────────────────────
 OPENROUTER_API_KEY = os.environ.get("SIMAPI_OPENROUTER_API_KEY", "")
 OPENROUTER_URL = os.environ.get("SIMAPI_OPENROUTER_URL",
@@ -734,10 +809,8 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
             s = data[col].dropna().values.astype(float)
             if len(s) < 4: continue
             mu, sig = float(np.mean(s)), float(np.std(s))
-            try: sk = float(stats.skew(s))
-            except: sk = 0.0
-            try: ku = float(stats.kurtosis(s))
-            except: ku = 0.0
+            sk = safe_skew(s)
+            ku = safe_kurtosis(s)
             mad = float(np.median(np.abs(s - np.median(s)))) * 1.4826
             no = int((np.abs(s - mu) > 3*sig).sum()) if sig > 0 else 0
             col_stats[col] = (mu, sig, sk, ku, mad, no)
@@ -800,7 +873,7 @@ def compute_fingerprint(data: pd.DataFrame, domain: str,
                 clip_lo = med_s - 5 * max(mad_s, abs(med_s)*0.01, 1e-10)
                 clip_hi = med_s + 5 * max(mad_s, abs(med_s)*0.01, 1e-10)
                 s_clip = np.clip(s, clip_lo, clip_hi)
-                lag1[col] = float(np.corrcoef(s_clip[:-1], s_clip[1:])[0,1])
+                lag1[col] = safe_corrcoef(s_clip[:-1], s_clip[1:])
             except: lag1[col] = 0.0
 
     # Copy-paste (bidirectional)
@@ -1457,8 +1530,7 @@ class FilterBank:
         X_in = np.stack([a[inl], b[inl]], axis=1); mu = X_in.mean(0)
         sa = max(float(np.median(np.abs(X_in[:,0]-mu[0])))*1.4826, 1e-12)
         sb = max(float(np.median(np.abs(X_in[:,1]-mu[1])))*1.4826, 1e-12)
-        try: corr = float(np.corrcoef(X_in[:,0], X_in[:,1])[0,1])
-        except: corr = 0.0
+        corr = safe_corrcoef(X_in[:,0], X_in[:,1])
         # Near-collinear pairs (|r|>0.992) cannot form a stable 2D ellipse
         # and generate massive FPs. Use 0.992 (not 0.98) to allow Cd/Cl (r≈0.987)
         # while still skipping stress/von_mises (r≈0.999) and similarly tight pairs.
@@ -1516,11 +1588,7 @@ class FilterBank:
         # We use inlier-only residuals: these reflect the true clean distribution.
         inl_resid = res_ridge[inl]
         inl_resid_centered = inl_resid - float(np.median(inl_resid))
-        try:
-            from scipy.stats import kurtosis as _kurt
-            resid_kurt = float(_kurt(inl_resid_centered))
-        except Exception:
-            resid_kurt = 0.0
+        resid_kurt = safe_kurtosis(inl_resid_centered)
         # Only inflate when inlier kurtosis is genuinely high (structural nonlinearity)
         # Cap at 2× threshold to prevent over-suppression
         if resid_kurt > 8.0:

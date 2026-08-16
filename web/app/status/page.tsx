@@ -56,13 +56,20 @@ export default function StatusPage() {
         </div>
 
         <div className="mt-6 grid grid-cols-3 gap-4">
-          {[["99.9%", "target uptime"], ["<30ms", "median physics latency"], ["21", "domains covered"]].map(([v, l]) => (
-            <div key={l} className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4 text-center">
-              <p className="font-mono text-xl font-semibold text-accent-cyan">{v}</p>
+          {[["21", "simulation domains"], ["2", "deterministic engines"], ["MIT", "open source"]].map(([v, l]) => (
+            <div key={l} className="border border-white/10 bg-white/[0.02] p-4 text-center">
+              <p className="font-mono text-xl font-semibold text-accent-blue">{v}</p>
               <p className="mt-0.5 text-[11px] text-white/40">{l}</p>
             </div>
           ))}
         </div>
+        <p className="mt-4 text-xs leading-relaxed text-white/35">
+          These checks run live from your browser against each public component. SimAPI does not yet
+          publish a formal uptime SLA — the hosted API is provided best-effort for evaluation, and
+          production teams should run the self-hosted container. See the{" "}
+          <a href="/roadmap" className="text-accent-blue underline underline-offset-2">roadmap</a>{" "}
+          for what durable, production-grade operation still requires.
+        </p>
       </div>
     </div>
   );

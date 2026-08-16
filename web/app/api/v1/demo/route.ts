@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { richValidate, demoDataset } from "@/lib/rich-validate";
+import { richValidate } from "@/lib/rich-validate";
+import { demoData } from "@/lib/demo-data";
 import { aiReview, type AiReview } from "@/lib/ai-review";
 
 /**
@@ -42,16 +43,32 @@ function mapAi(review: AiReview): Record<string, unknown> | null {
   };
 }
 
-export async function POST() {
+export async function POST(req: Request) {
   const requestId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+
+  // Optional { case } body selects which built-in dataset to run. Missing or
+  // malformed bodies fall back to the default (diverged) case.
+  let demoCase: string | undefined;
+  try {
+    const body = await req.json();
+    if (body && typeof body.case === "string") demoCase = body.case;
+  } catch {
+    /* no body — use the default case */
+  }
+  const { data: dataset, case: chosen } = demoData(demoCase);
+
   const PYTHON_API = process.env.PYTHON_API_URL;
   let result;
   let engineSource: "python" | "typescript" = "typescript";
 
   if (PYTHON_API) {
     try {
-      const upstream = await fetch(`${PYTHON_API}/v1/demo`, {
+      // Route the chosen demo dataset through the backend's real validate
+      // endpoint so the selected case is honored on Python deployments too.
+      const upstream = await fetch(`${PYTHON_API}/v1/validate`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: dataset, simulation_type: chosen.simulationType, conditions: {}, run_ai: false }),
         signal: AbortSignal.timeout(35_000),
       });
       if (upstream.ok) {
@@ -92,7 +109,7 @@ export async function POST() {
   }
 
   if (!result) {
-    result = richValidate(demoDataset(), "aerodynamics", requestId.slice(0, 8));
+    result = richValidate(dataset, chosen.simulationType, requestId.slice(0, 8));
   }
 
   const failedIssues = result.issues.filter((i: { status: string }) => i.status === "failed");
@@ -109,7 +126,7 @@ export async function POST() {
       recommendations: result.exclusions
         .slice(0, 6)
         .map((e: { trial_number: number; reason: string }) => `Trial ${e.trial_number}: ${e.reason}`),
-      simulationType: "aerodynamics",
+      simulationType: chosen.simulationType,
       checks: failedIssues.map((i: { name: string; detail: string; category?: string }) => ({
         name: i.name,
         category: i.category ?? "physics",

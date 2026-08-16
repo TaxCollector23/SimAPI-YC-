@@ -2,103 +2,275 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * SimAPI — visual system.
+ *
+ * Near-black canvas, white text at graded opacity, one blue accent
+ * (#2563eb). Geist + Geist Mono self-hosted via next/font (see
+ * layout.tsx) and bound to --font-sans / --font-mono here.
+ *
+ * Design constraints: no eyebrows, no gradient text or backgrounds,
+ * no glow blobs, no pill badges, no floating translucent cards. Flat
+ * sections, 1px hairlines, real tables and lists, tight typography.
+ */
+
 :root {
   color-scheme: dark;
+  /* Geist arrives through next/font; alias the legacy names to it so
+   * every component keeps rendering in the same typeface. */
+  --font-geist: var(--font-sans), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-geist-mono: var(--font-mono), ui-monospace, "SF Mono", Menlo, monospace;
 }
 
 html {
   scroll-behavior: smooth;
   overflow-x: hidden;
+  font-family: var(--font-geist);
 }
 
 body {
-  @apply bg-ink-950 text-white/80 antialiased;
+  @apply bg-ink-950 text-white/85 antialiased;
   overflow-x: hidden;
-  background-image:
-    radial-gradient(50% 40% at 50% -8%, rgba(59, 130, 246, 0.16), transparent 60%),
-    radial-gradient(38% 30% at 88% 6%, rgba(139, 92, 246, 0.12), transparent 55%);
-  background-attachment: fixed;
+  background-color: #000;
+  font-family: var(--font-geist);
+  font-feature-settings: "ss01", "cv11";
+  letter-spacing: -0.005em;
 }
 
-::selection {
-  background: rgba(59, 130, 246, 0.35);
-  color: #fff;
+h1, h2, h3, h4, h5, h6,
+p, a, button, input, textarea, select, label, span, div, li, td, th {
+  font-family: var(--font-geist);
 }
+code, pre, kbd, samp,
+.font-mono, [class*="font-mono"] {
+  font-family: var(--font-geist-mono) !important;
+}
+[class*="font-serif"] { font-family: var(--font-geist) !important; }
 
-/* Thin, quiet scrollbar */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
+::selection { background: rgba(37, 99, 235, 0.45); color: #fff; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.18);
-  background-clip: content-box;
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.16); background-clip: content-box; }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v4 — TYPOGRAPHY
+ * ───────────────────────────────────────────────────────────────────── */
+
+h1 {
+  font-size: clamp(2rem, 4vw, 2.75rem) !important;
+  line-height: 1.1 !important;
+  letter-spacing: -0.02em !important;
+  font-weight: 600 !important;
+}
+h2 {
+  font-size: clamp(1.5rem, 2.75vw, 2rem) !important;
+  line-height: 1.15 !important;
+  letter-spacing: -0.015em !important;
+  font-weight: 600 !important;
+}
+h3 { font-weight: 500 !important; letter-spacing: -0.01em !important; }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v4 — LAYOUT
+ * ───────────────────────────────────────────────────────────────────── */
+
+section .text-center,
+section [class*="items-center"][class*="text-center"] {
+  text-align: left !important;
+  align-items: flex-start !important;
+  margin-left: 0 !important;
+  margin-right: auto !important;
+}
+section .justify-center { justify-content: flex-start !important; }
+nav .justify-center { justify-content: center !important; }
+
+section > svg[aria-hidden],
+section > .grid-bg,
+section > div > svg[aria-hidden],
+section > div > .grid-bg,
+[class*="hero-background"],
+[class*="HeroBackground"] {
+  display: none !important;
 }
 
+.container-tight {
+  @apply mx-auto w-full px-6;
+  max-width: 960px !important;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v4 — REMOVE THE BADGE ROWS (unchanged from v3)
+ * ───────────────────────────────────────────────────────────────────── */
+
+/* These marketing de-slop rules must never reach the product UI (dashboard,
+ * playground). Everything under `.app-ui` is exempt. */
+section [class*="text-white\\/42"]:not(.app-ui *),
+section [class*="text-white/42"]:not(.app-ui *) { display: none !important; }
+section .rounded-full[class*="border"]:not(.app-ui *),
+main    .rounded-full[class*="border"]:not(.app-ui *) { display: none !important; }
+section .flex.flex-wrap.items-center[class*="justify-center"][class*="text-xs"]:not(.app-ui *),
+section .flex.flex-wrap.items-center[class*="text-xs"][class*="text-white"]:not(.app-ui *) { display: none !important; }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v4 — CTA REWORK
+ *
+ * v2/v3 CTAs were rectangles: solid blue + bordered outline. That
+ * pairing is still template-shaped ("primary" + "secondary" pill).
+ * v4 replaces the ghost button with a link-with-sliding-arrow — the
+ * pattern real product pages actually use (Stripe, Linear, Vercel
+ * docs, Fly.io machines) — and keeps ONE saturated rectangle as
+ * the single primary action.
+ *
+ * .btn-accent  -> solid blue rectangle (single accent surface on the
+ *                 page; reserve for the one most-important CTA)
+ * .btn-primary -> link with a sliding "→" arrow, no border, no fill
+ * .btn-ghost   -> quieter link with a sliding "→" arrow
+ * ───────────────────────────────────────────────────────────────────── */
+
 @layer components {
-  .container-tight {
-    @apply mx-auto w-full max-w-6xl px-6;
-  }
-
-  /* Glass panel used sparingly for elevated surfaces */
-  .glass {
-    @apply border border-white/10 bg-white/[0.03] backdrop-blur-xl;
-  }
-
-  .card {
-    @apply min-w-0 rounded-lg border border-white/[0.08] bg-ink-900/60 backdrop-blur-sm;
-  }
-
-  .hairline {
-    @apply border-white/[0.08];
-  }
-
+  .container-tight { @apply mx-auto w-full px-6; }
+  .glass  { @apply border border-white/10 bg-ink-900; }
+  .card   { @apply min-w-0 border border-white/10 bg-ink-900; }
+  .hairline { @apply border-white/10; }
+  /* De-sloped: no gradient text anywhere. Any element still tagged
+   * .text-gradient (on pages this system doesn't own) renders as plain
+   * white text instead of a clipped gradient. */
   .text-gradient {
-    @apply bg-accent-gradient bg-clip-text text-transparent;
+    background: none !important;
+    color: #fff !important;
+    -webkit-text-fill-color: currentColor !important;
   }
 
+  /* Shared base — kept small on purpose so links don't LOOK like buttons */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-sm font-medium
-      transition-all duration-200 focus-visible:outline-none focus-visible:ring-2
-      focus-visible:ring-accent-blue/60 disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex items-center gap-2 text-sm font-medium
+      transition-colors duration-150 focus-visible:outline-none
+      focus-visible:ring-2 focus-visible:ring-accent-blue/60
+      focus-visible:ring-offset-2 focus-visible:ring-offset-ink-950
+      disabled:pointer-events-none disabled:opacity-50;
+    font-family: var(--font-geist);
+    letter-spacing: -0.005em;
+    border-radius: 0;
   }
+
+  /*
+   * PRIMARY  =  link + sliding arrow.
+   * No border, no fill, no icon-based padding — just a white link
+   * with a "→" arrow after the label that slides 4px right on hover.
+   */
   .btn-primary {
-    @apply btn bg-white text-ink-950 hover:bg-white/90 hover:shadow-[0_8px_30px_rgba(255,255,255,0.15)];
+    @apply btn text-white bg-transparent border-0 px-0 py-1;
+    position: relative;
   }
+  .btn-primary::after {
+    content: "→";
+    display: inline-block;
+    margin-left: 0.35rem;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    font-weight: 400;
+  }
+  .btn-primary:hover::after { transform: translateX(4px); }
+  .btn-primary:hover {
+    color: #fff;
+    text-decoration: underline;
+    text-underline-offset: 0.35em;
+    text-decoration-thickness: 1px;
+  }
+
+  /*
+   * GHOST  =  quieter version of primary. Grey text, same sliding
+   * arrow, brighter on hover.
+   */
   .btn-ghost {
-    @apply btn border border-white/[0.12] bg-white/[0.02] text-white/90 hover:border-white/25 hover:bg-white/[0.05];
+    @apply btn text-white/60 bg-transparent border-0 px-0 py-1;
+    position: relative;
   }
+  .btn-ghost::after {
+    content: "→";
+    display: inline-block;
+    margin-left: 0.35rem;
+    transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+    font-weight: 400;
+  }
+  .btn-ghost:hover::after { transform: translateX(4px); }
+  .btn-ghost:hover {
+    color: rgba(255,255,255,0.95);
+    text-decoration: underline;
+    text-underline-offset: 0.35em;
+    text-decoration-thickness: 1px;
+  }
+
+  /*
+   * ACCENT  =  the one solid rectangle. Small, dense, monospace-hint.
+   * Reserve for the single most-important call to action on any page
+   * (nav Get API Key, hero Get API Key).
+   */
   .btn-accent {
-    @apply btn bg-accent-gradient text-white shadow-[0_8px_30px_rgba(59,130,246,0.35)] hover:brightness-110;
+    @apply btn text-white px-4 py-2;
+    background: #2563eb;
+    border: 1px solid #2563eb;
+  }
+  .btn-accent:hover {
+    background: #1d4ed8;
+    border-color: #1d4ed8;
   }
 
-  .eyebrow {
-    @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03]
-      max-w-full justify-center px-3 py-1 text-center text-xs font-medium uppercase
-      tracking-[0.14em] text-white/[0.55];
-  }
+  /* Icons inside link-style CTAs shrink so the label carries meaning.
+   * Icons inside the solid accent stay slightly larger for weight. */
+  .btn-primary svg,
+  .btn-ghost svg { width: 0.75rem !important; height: 0.75rem !important; opacity: 0.6; }
+  .btn-accent svg { width: 0.875rem !important; height: 0.875rem !important; }
 
-  /* Engineering grid backdrop */
+  /* Eyebrows are gone from the visual system. The shared SectionHeader /
+   * PageHero components no longer render their `eyebrow` prop, and this
+   * rule removes any inline `.eyebrow` still present on pages this system
+   * doesn't own — no uppercase mono kicker survives anywhere. */
+  .eyebrow { display: none !important; }
+
   .grid-bg {
     background-image:
-      linear-gradient(to right, rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+      linear-gradient(to right,  rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
     background-size: 44px 44px;
     mask-image: radial-gradient(circle at 50% 40%, black 30%, transparent 78%);
+  }
+
+  /* Static hairline grid for the homepage hero. Monochrome, no glow, no
+   * animation — a faint blueprint texture that fades to pure black at the
+   * edges. Named distinctly so the legacy hero-background hide-sweep below
+   * does not catch it. */
+  .hero-grid {
+    background-image:
+      linear-gradient(to right,  rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+    background-size: 64px 64px;
+    background-position: center top;
+    mask-image: linear-gradient(to bottom, black 0%, black 42%, transparent 88%);
+    -webkit-mask-image: linear-gradient(to bottom, black 0%, black 42%, transparent 88%);
   }
 }
 
 @layer utilities {
-  .shadow-glow {
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 20px 60px -20px rgba(59, 130, 246, 0.4);
-  }
+  .shadow-glow { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08); }
   .divider {
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.12), transparent);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.10), transparent);
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────
+ * v4 — FINAL SWEEPS
+ * ───────────────────────────────────────────────────────────────────── */
+
+nav .rounded-full:not(.app-ui *),
+section .rounded-full:not(.app-ui *),
+main .rounded-full:not(.app-ui *) { border-radius: 0 !important; }
+
+[class*="h-1.5"][class*="w-1.5"].rounded-full,
+[class*="h-2"][class*="w-2"].rounded-full,
+[class*="h-3"][class*="w-3"].rounded-full { border-radius: 9999px !important; }

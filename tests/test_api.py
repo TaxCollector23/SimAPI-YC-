@@ -99,6 +99,22 @@ def test_demo_runs(client):
     assert body["trials_excluded"] <= 12
 
 
+def test_unparseable_upload_returns_400_not_500(client):
+    """A malformed file is the caller's mistake -> a clean 400 with the error
+    envelope, never a 500 with a leaked internal message."""
+    r = client.post(
+        "/v1/validate/upload",
+        files={"file": ("empty.txt", "", "text/plain")},
+        data={"simulation_type": "aerodynamics"},
+    )
+    assert r.status_code == 400
+    err = r.json()["error"]
+    assert err["code"] == "bad_request"
+    assert "request_id" in err
+    # The catch-all 500 handler must not have been reached.
+    assert err["code"] != "internal_error"
+
+
 def test_unsupported_simulation_type_upload(client):
     r = client.post(
         "/v1/validate/upload",

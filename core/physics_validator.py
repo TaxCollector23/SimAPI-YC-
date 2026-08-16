@@ -1658,7 +1658,16 @@ class PhysicsValidator:
                 try:
                     sl,ic,r,p,se=stats.linregress(x.loc[idx],y.loc[idx])
                     fit=sl*x.loc[idx]+ic; res=y.loc[idx]-fit
-                    rc=abs(float(np.corrcoef(fit,res**2)[0,1]))
+                    res_sq=(res**2).to_numpy(); fit_arr=fit.to_numpy()
+                    # A (near-)perfect fit leaves residuals ~constant, collapsing
+                    # the correlation denominator and emitting a divide warning.
+                    # No spread -> no heteroscedastic signal -> rc=0.
+                    if np.std(fit_arr)<1e-12 or np.std(res_sq)<1e-12:
+                        rc=0.0
+                    else:
+                        with np.errstate(all="ignore"):
+                            _c=np.corrcoef(fit_arr,res_sq)[0,1]
+                        rc=abs(float(_c)) if np.isfinite(_c) else 0.0
                     C.append(self._w(f"regr_homo_{cx[:12]}_{cy[:12]}",rc<0.5,f"Homoscedasticity {cy}~{cx}",f"corr={rc:.3f}",float(rc),0.5,cat))
                     # Check for systematic pattern in residuals
                     resid_ac=abs(float(pd.Series(res.values).autocorr(lag=1))) if len(res)>4 else 0

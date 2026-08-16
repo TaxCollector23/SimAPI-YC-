@@ -1,60 +1,56 @@
 #!/bin/sh
 # SimAPI CLI installer (macOS / Linux)
 #   curl -fsSL https://sim-api.vercel.app/install.sh | sh
+#
+# This is a thin wrapper around npm — the canonical install is:
+#   npm install -g simapi-cli
 set -e
 
-REPO="https://raw.githubusercontent.com/TaxCollector23/SimAPI-YC-/main"
-DEST="$HOME/.simapi"
-BIN="$DEST/bin"
-SRC="$REPO/sdk-node/bin/simapi.js"
+PKG="simapi-cli"
 
-printf '\n  Installing the SimAPI CLI…\n'
+red()   { printf '\033[31m%s\033[0m' "$1"; }
+green() { printf '\033[32m%s\033[0m' "$1"; }
+cyan()  { printf '\033[36m%s\033[0m' "$1"; }
 
+printf '\n  Installing the SimAPI CLI…\n\n'
+
+# ── Require Node.js 18+ ─────────────────────────────────────────────────────
 if ! command -v node >/dev/null 2>&1; then
-  printf '  \033[31m✗\033[0m Node.js 18+ is required but was not found.\n'
-  printf '    Install it with:  brew install node   (or from https://nodejs.org)\n'
-  printf '    Then re-run this installer.\n\n'
+  printf '  %s Node.js 18+ is required but was not found.\n' "$(red '✗')"
+  printf '    Install it, then re-run this installer:\n'
+  printf '      macOS:  brew install node\n'
+  printf '      Linux:  use your package manager, or https://nodejs.org\n\n'
   exit 1
 fi
+
 NODE_MAJOR=$(node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0)
 if [ "$NODE_MAJOR" -lt 18 ]; then
-  printf '  \033[31m✗\033[0m Node 18+ required (found %s).\n\n' "$(node -v)"
+  printf '  %s Node 18+ is required (found %s).\n' "$(red '✗')" "$(node -v)"
+  printf '    Upgrade Node from https://nodejs.org and re-run this installer.\n\n'
   exit 1
 fi
 
-mkdir -p "$BIN"
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$SRC" -o "$BIN/simapi.js"
-else
-  wget -qO "$BIN/simapi.js" "$SRC"
+# ── Require npm ─────────────────────────────────────────────────────────────
+if ! command -v npm >/dev/null 2>&1; then
+  printf '  %s npm was not found (it normally ships with Node.js).\n' "$(red '✗')"
+  printf '    Reinstall Node.js from https://nodejs.org, then re-run this installer.\n\n'
+  exit 1
 fi
 
-# Wrapper lives next to the script, in a single stable location we control.
-printf '#!/bin/sh\nexec node "%s/simapi.js" "$@"\n' "$BIN" > "$BIN/simapi"
-chmod +x "$BIN/simapi"
+# ── Install via npm ─────────────────────────────────────────────────────────
+printf '  Running: %s\n\n' "$(cyan "npm install -g $PKG")"
+if npm install -g "$PKG"; then
+  :
+else
+  printf '\n  %s Global install failed — this is usually a permissions issue.\n' "$(red '✗')"
+  printf '    Try one of:\n'
+  printf '      • A Node version manager (nvm, fnm, volta) so npm -g needs no root\n'
+  printf '      • %s\n' "$(cyan "sudo npm install -g $PKG")"
+  printf '      • Run it on demand without installing: %s\n\n' "$(cyan "npx $PKG <command>")"
+  exit 1
+fi
 
-printf '  \033[32m✓\033[0m Installed to %s/simapi\n' "$BIN"
-
-# Ensure ~/.simapi/bin is on PATH — add it to the user's shell profiles.
-added=""
-add_path() {
-  rc="$1"
-  [ -f "$rc" ] || return 0
-  if ! grep -qs '.simapi/bin' "$rc" 2>/dev/null; then
-    printf '\n# SimAPI CLI\nexport PATH="$HOME/.simapi/bin:$PATH"\n' >> "$rc"
-    added="$added $rc"
-  fi
-}
-case ":$PATH:" in
-  *":$BIN:"*) : ;;  # already on PATH
-  *)
-    add_path "$HOME/.zshrc"
-    add_path "$HOME/.bashrc"
-    add_path "$HOME/.profile"
-    [ -n "$added" ] && printf '  \033[32m✓\033[0m Added %s to your PATH (%s)\n' "$BIN" "$(echo $added | xargs)"
-    ;;
-esac
-
-printf '\n  Restart your terminal, or run this once now:\n'
-printf '    \033[36mexport PATH="$HOME/.simapi/bin:$PATH"\033[0m\n'
-printf '\n  Then get started:  \033[36msimapi login\033[0m\n\n'
+printf '\n  %s Installed the %s command.\n\n' "$(green '✓')" "$(cyan simapi)"
+printf '  Get started:\n'
+printf '    %s   %s\n' "$(cyan 'simapi doctor')" "check connectivity"
+printf '    %s   %s\n\n' "$(cyan 'simapi validate simulation.json')" "validate a file"

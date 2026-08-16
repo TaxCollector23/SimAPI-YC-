@@ -266,27 +266,3 @@ function nearDuplicates(
     }
   }
 }
-
-/** Deterministic demo dataset: 200 aerodynamics trials with several corruptions. */
-export function demoDataset(): Record<string, unknown>[] {
-  const rows: Record<string, unknown>[] = [];
-  let seed = 12345;
-  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-  for (let i = 0; i < 200; i++) {
-    const row: Record<string, number> = {
-      cd: 0.31 + (rnd() - 0.5) * 0.02,
-      cl: 0.84 + (rnd() - 0.5) * 0.03,
-      re: 415000 + (rnd() - 0.5) * 20000,
-      ma: 0.044 + (rnd() - 0.5) * 0.003,
-      p: 101325 + (rnd() - 0.5) * 800,
-      v: 15 + (rnd() - 0.5) * 0.6,
-    };
-    // Inject corruptions (~10%).
-    if (i % 23 === 0) row.cd = 999.0;              // out of bounds
-    else if (i % 31 === 0) row.cd = NaN;           // non-finite
-    else if (i % 37 === 0) row.cl = -50.0;         // implausible lift
-    else if (i % 41 === 0) row.ma = 1.42;          // supersonic in subsonic sweep
-    rows.push(row);
-  }
-  return rows;
-}

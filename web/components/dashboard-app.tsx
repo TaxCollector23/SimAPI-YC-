@@ -44,7 +44,7 @@ export function DashboardApp() {
   }
 
   return (
-    <div className="container-tight pt-28 pb-24">
+    <div className="app-ui container-tight pt-28 pb-24">
       <div className="grid gap-8 lg:grid-cols-[220px_1fr]">
         {/* Sidebar */}
         <aside className="lg:sticky lg:top-24 lg:self-start">

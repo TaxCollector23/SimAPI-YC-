@@ -31,8 +31,8 @@ export default function SecurityPage() {
           {practices.map((p, i) => (
             <Reveal key={p.title} delay={i * 0.04}>
               <div className="h-full rounded-2xl border border-white/[0.08] bg-ink-900/50 p-6">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-white/[0.03]">
-                  <p.icon className="h-5 w-5 text-accent-cyan" />
+                <div className="flex h-10 w-10 items-center justify-center border border-white/10 bg-white/[0.03]">
+                  <p.icon className="h-5 w-5 text-accent-blue" />
                 </div>
                 <h3 className="mt-4 text-[15px] font-semibold text-white">{p.title}</h3>
                 <p className="mt-2 text-sm leading-relaxed text-white/50">{p.body}</p>
@@ -41,7 +41,7 @@ export default function SecurityPage() {
           ))}
         </div>
         <div className="mt-8 rounded-2xl border border-white/[0.07] bg-white/[0.02] p-6 text-sm text-white/55">
-          <p><strong className="text-white/80">Reporting a vulnerability.</strong> Email <a className="text-accent-cyan" href="mailto:security@sim-api.dev">security@sim-api.dev</a> or open a private advisory on the <a className="text-accent-cyan" href="https://github.com/TaxCollector23/SimAPI-YC-/security">GitHub repo</a>. We aim to acknowledge within one business day. SOC 2 Type II is on the roadmap for Enterprise.</p>
+          <p><strong className="text-white/80">Reporting a vulnerability.</strong> Email <a className="text-accent-blue underline underline-offset-2" href="mailto:security@sim-api.dev">security@sim-api.dev</a> or open a private advisory on the <a className="text-accent-blue underline underline-offset-2" href="https://github.com/TaxCollector23/SimAPI-YC-/security">GitHub repo</a>. We aim to acknowledge within one business day. Formal certifications (e.g. SOC 2) are not in place yet — self-host the MIT-licensed container when your controls require it.</p>
         </div>
       </section>
       <Cta />

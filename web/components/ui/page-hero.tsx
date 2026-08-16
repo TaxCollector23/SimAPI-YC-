@@ -1,9 +1,13 @@
 import type { ReactNode } from "react";
 import { Reveal } from "./reveal";
 
-/** Consistent inner-page header with grid backdrop. */
+/**
+ * Consistent inner-page header. Flat black with a single hairline rule at
+ * the bottom — no glow, no radial fade. `eyebrow` is kept in the prop type
+ * for backward compatibility across the pages that pass it, but is not
+ * rendered: the system has no kicker labels.
+ */
 export function PageHero({
-  eyebrow,
   title,
   lede,
   children,
@@ -14,12 +18,9 @@ export function PageHero({
   children?: ReactNode;
 }) {
   return (
-    <section className="relative overflow-hidden pt-40 pb-16">
-      <div className="pointer-events-none absolute inset-0 grid-bg opacity-40" />
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-96 bg-radial-fade" />
+    <section className="relative overflow-hidden border-b border-white/[0.06] pt-40 pb-16">
       <div className="container-tight relative">
         <Reveal className="flex max-w-3xl flex-col gap-5">
-          {eyebrow && <span className="eyebrow w-fit">{eyebrow}</span>}
           <h1 className="text-balance text-4xl font-semibold tracking-tight text-white sm:text-5xl">
             {title}
           </h1>

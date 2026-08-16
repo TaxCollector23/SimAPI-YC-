@@ -1,0 +1,38 @@
+# Example: gate a pull request on simulation-output validation.
+#
+# Copy this into .github/workflows/ in your own repository. It validates a CFD
+# output file on every push and pull request and fails the build if the data
+# contains physically impossible rows.
+name: Validate simulation output
+
+on:
+  push:
+    paths:
+      - "data/**"
+      - ".github/workflows/validate.yml"
+  pull_request:
+    paths:
+      - "data/**"
+
+jobs:
+  physics-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: SimAPI physics validation
+        id: simapi
+        uses: TaxCollector23/SimAPI-YC-/integrations/github-action@main
+        with:
+          file: data/cfd_output.csv
+          simulation-type: aerodynamics
+          # Fail on physically impossible rows. Use `warning` to also fail on
+          # internally inconsistent rows.
+          fail-on: failed
+
+      - name: Report verdict
+        if: always()
+        run: |
+          echo "Verdict: ${{ steps.simapi.outputs.status }}"
+          echo "Training ready: ${{ steps.simapi.outputs.training-ready }}"
+          echo "Impossible rows: ${{ steps.simapi.outputs.impossible }}"

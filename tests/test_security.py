@@ -86,6 +86,30 @@ def test_auth_accepts_valid_key(monkeypatch):
     assert identity.startswith("key_")
 
 
+def test_rate_limiter_evicts_idle_buckets_to_bound_memory(monkeypatch):
+    """A caller rotating identities (e.g. spoofed X-Forwarded-For) must not be
+    able to grow the bucket table without bound -- idle buckets are evicted
+    once the table hits its ceiling."""
+    limiter = RateLimiter(rpm=60, burst=1)
+    monkeypatch.setattr(limiter, "_MAX_BUCKETS", 50, raising=False)
+    monkeypatch.setattr(limiter, "_IDLE_TTL_SECONDS", 0.0, raising=False)
+    for i in range(200):
+        limiter.check(f"ident_{i}")
+    # With a zero idle-TTL every prior bucket is stale on the next insert, so
+    # the table stays bounded near the ceiling instead of holding all 200.
+    assert len(limiter._buckets) <= 50
+
+
+def test_rate_limiter_eviction_preserves_active_isolation():
+    """Eviction must not merge distinct active identities into one bucket."""
+    limiter = RateLimiter(rpm=60, burst=1)
+    assert limiter.check("x")[0] is True
+    assert limiter.check("y")[0] is True
+    # x and y each consumed their single token independently.
+    assert limiter.check("x")[0] is False
+    assert limiter.check("y")[0] is False
+
+
 def test_enforce_rate_limit_can_raise(monkeypatch):
     from api import security
 

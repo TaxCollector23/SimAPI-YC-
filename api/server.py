@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from api.config import settings
 from api.errors import (
+    BadRequestError,
     ErrorCode,
     NotFoundError,
     PayloadTooLargeError,
@@ -56,6 +57,7 @@ from core.ingestion import DataIngester
 from core.mesh_validator import MeshValidator, humanize_mesh_check_name, predict_corruption_risks
 from core.physics_validator import PhysicsValidator, SimulationType
 from core.repair import analyze as repair_analyze
+from core.report_export import to_junit_xml, to_sarif
 
 API_VERSION = "3.1.0"
 
@@ -161,10 +163,15 @@ async def observability_middleware(request: Request, call_next):
         response.headers["X-Request-ID"] = rid
         response.headers["Server-Timing"] = f"app;dur={duration_ms:.1f}"
         route = request.scope.get("route")
+        # Use the ROUTE TEMPLATE (e.g. /v1/job/{job_id}), never the raw URL
+        # path, as a metric label. Labelling by raw path lets any client mint
+        # unbounded unique label values (/v1/job/<random>, 404 scans, ...) and
+        # blow up the metrics registry's cardinality -- a memory-exhaustion
+        # vector. Unmatched requests collapse to a single "unmatched" bucket.
         metrics.incr(
             "http_requests_total",
             method=request.method,
-            path=route.path if route else request.url.path,
+            path=route.path if route else "unmatched",
             status=str(response.status_code),
         )
         metrics.observe_latency(duration_ms)
@@ -827,6 +834,25 @@ except Exception:
     APIE_AVAILABLE = False
 
 
+def _ingest(data: Any, **kwargs: Any):
+    """Ingest user data, translating parser failures into a clean 400 instead
+    of an opaque 500.
+
+    ``DataIngester.ingest`` raises ``ValueError`` (and can surface ``KeyError``
+    / ``TypeError`` from malformed structures) on unparseable input. Left
+    unhandled these bubble to the catch-all handler and return 500 with an
+    internal message -- but a bad upload or a malformed record list is the
+    caller's mistake, not a server fault, so it must be a 4xx that clients can
+    branch on."""
+    try:
+        return ingester.ingest(data, **kwargs)
+    except (ValueError, KeyError, TypeError) as e:
+        raise BadRequestError(
+            f"Could not parse the submitted data: {e}",
+            details={"hint": "Check the file format / record structure."},
+        ) from e
+
+
 def _enforce_row_cap(rows: list[Any]) -> None:
     """Shared row-count guard. Previously only _validate_core enforced
     settings.max_rows -- the dimensional and repair endpoints ingested
@@ -842,7 +868,7 @@ def _enforce_row_cap(rows: list[Any]) -> None:
 async def _validate_core(req: ValidateRequest) -> dict[str, Any]:
     _enforce_row_cap(req.data)
 
-    df, ingest_meta = ingester.ingest(req.data, format_hint="json")
+    df, ingest_meta = _ingest(req.data, format_hint="json")
     # ``df.attrs`` is the pandas-sanctioned slot for user metadata (no warning).
     df.attrs["simapi_renamed"] = ingest_meta.get("columns_renamed", {})
 
@@ -1073,7 +1099,7 @@ async def validate_upload(
             status_code=415,  # Unsupported Media Type -- the actual HTTP contract for this
             details={"allowed": [s.value for s in SimulationType]},
         ) from e
-    df, _meta = await asyncio.to_thread(ingester.ingest, contents, filename=file.filename)
+    df, _meta = await asyncio.to_thread(_ingest, contents, filename=file.filename)
     req = ValidateRequest(
         data=df.to_dict(orient="records"),
         simulation_type=sim,
@@ -1088,6 +1114,47 @@ async def validate_upload(
 async def validate_physics_only(req: ValidateRequest, _: str = Depends(caller_identity)):
     req.run_ai = False
     return await _validate_core(req)
+
+
+@app.post("/v1/validate/report", tags=["validation"])
+async def validate_report(
+    req: ValidateRequest,
+    fmt: str = Query("junit", alias="format", description="junit | sarif"),
+    strict: bool = Query(
+        False,
+        description="Treat warning-level findings as build failures (gate on warnings too).",
+    ),
+    _: str = Depends(caller_identity),
+):
+    """
+    Run validation and return a machine-readable report for CI gating.
+
+    * ``format=junit`` (default) -> JUnit XML (``application/xml``): drop the
+      output into any CI system's test-report step and a non-zero ``failures``
+      count fails the build, blocking a merge on physically-invalid simulation
+      output.
+    * ``format=sarif`` -> SARIF 2.1.0 JSON for GitHub Code Scanning.
+
+    The AI reasoning layer is deliberately skipped so the export is fully
+    deterministic (no network, no clock) and safe to diff and gate on. Set
+    ``strict=true`` to fail the build on warnings as well as hard failures.
+    """
+    req.run_ai = False
+    result = await _validate_core(req)
+    fmt_norm = (fmt or "junit").strip().lower()
+    if fmt_norm == "junit":
+        return PlainTextResponse(
+            to_junit_xml(result, strict_warnings=strict),
+            media_type="application/xml",
+            headers={"Content-Disposition": 'inline; filename="simapi-report.xml"'},
+        )
+    if fmt_norm == "sarif":
+        return JSONResponse(to_sarif(result, strict_warnings=strict))
+    raise SimAPIError(
+        f"Unknown report format '{fmt}'.",
+        code=ErrorCode.BAD_REQUEST,
+        details={"allowed": ["junit", "sarif"]},
+    )
 
 
 @app.post("/v1/validate/dimensional", tags=["validation"])
@@ -1109,7 +1176,7 @@ async def validate_dimensional(req: ValidateRequest, _: str = Depends(caller_ide
     backward-compatible report.
     """
     _enforce_row_cap(req.data)
-    df, ingest_meta = ingester.ingest(req.data, format_hint="json")
+    df, ingest_meta = _ingest(req.data, format_hint="json")
     conditions_dict = dict(req.conditions or {})
     report = await asyncio.to_thread(
         dimensional_validate, df, conditions=conditions_dict, llm_resolver=openrouter_llm_resolver,
@@ -1266,7 +1333,7 @@ async def repair(req: RepairRequest, _: str = Depends(caller_identity)):
     `apply=true` to receive the repaired dataset in the response.
     """
     _enforce_row_cap(req.data)
-    df, _meta = await asyncio.to_thread(ingester.ingest, req.data, format_hint="json")
+    df, _meta = await asyncio.to_thread(_ingest, req.data, format_hint="json")
     report = await asyncio.to_thread(repair_analyze, df)
     result = _json_safe(report.to_dict())
     metrics.incr("repairs_total", proposals=str(len(report.proposals)))

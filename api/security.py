@@ -94,11 +94,40 @@ class RateLimiter:
     allowing short spikes above the average rate.
     """
 
+    # A bucket that has sat untouched for this long has necessarily refilled to
+    # full capacity, so discarding it is indistinguishable from keeping it --
+    # the caller starts fresh either way. Eviction is what bounds memory.
+    _IDLE_TTL_SECONDS = 600.0
+    # Hard ceiling on tracked identities. Without it, a caller rotating the
+    # X-Forwarded-For header (anonymous callers are keyed by client IP) can mint
+    # an unbounded number of buckets and exhaust the worker's memory -- a DoS
+    # that the rate limiter itself would otherwise enable.
+    _MAX_BUCKETS = 100_000
+
     def __init__(self, rpm: int, burst: int) -> None:
         self.rate_per_sec = rpm / 60.0
         self.capacity = float(burst)
         self._buckets: dict[str, _Bucket] = {}
         self._lock = threading.Lock()
+
+    def _evict_locked(self, now: float) -> None:
+        """Drop idle buckets (caller must hold the lock). Runs only when the
+        table is large enough to be worth scanning, keeping the amortised cost
+        of the common path at O(1)."""
+        if len(self._buckets) < self._MAX_BUCKETS:
+            return
+        cutoff = now - self._IDLE_TTL_SECONDS
+        stale = [k for k, b in self._buckets.items() if b.updated < cutoff]
+        for k in stale:
+            self._buckets.pop(k, None)
+        # If purging idle buckets was not enough (a burst of simultaneously
+        # active identities), evict the oldest to stay under the ceiling rather
+        # than grow without bound.
+        if len(self._buckets) >= self._MAX_BUCKETS:
+            for k, _b in sorted(self._buckets.items(), key=lambda kv: kv[1].updated)[
+                : len(self._buckets) - self._MAX_BUCKETS + 1
+            ]:
+                self._buckets.pop(k, None)
 
     def check(self, identity: str) -> tuple[bool, float]:
         """
@@ -111,6 +140,7 @@ class RateLimiter:
         with self._lock:
             bucket = self._buckets.get(identity)
             if bucket is None:
+                self._evict_locked(now)
                 bucket = _Bucket(self.capacity, now)
                 self._buckets[identity] = bucket
             # Refill proportional to elapsed time, capped at capacity.
