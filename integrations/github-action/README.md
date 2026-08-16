@@ -44,6 +44,7 @@ written to the job summary.
 | `base-url` | `""` | Sets `SIMAPI_BASE_URL`. Point at your own deployment for private / air-gapped runs. |
 | `cli-version` | `latest` | Version of `simapi-cli` to install. |
 | `upload-report` | `true` | Upload the JSON result as an artifact. |
+| `sarif` | `false` | Also generate a SARIF 2.1.0 report and upload it to GitHub code scanning. Requires `permissions: security-events: write` on the job and the Python backend on the target deployment. |
 
 ## Outputs
 

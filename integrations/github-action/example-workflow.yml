@@ -17,6 +17,11 @@ on:
 jobs:
   physics-gate:
     runs-on: ubuntu-latest
+    # Needed only if you enable `sarif: "true"` to publish findings to the
+    # repository's Security → Code scanning tab.
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +34,8 @@ jobs:
           # Fail on physically impossible rows. Use `warning` to also fail on
           # internally inconsistent rows.
           fail-on: failed
+          # Publish a SARIF report to GitHub code scanning (optional).
+          sarif: "true"
 
       - name: Report verdict
         if: always()

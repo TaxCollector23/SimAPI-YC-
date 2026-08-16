@@ -16,7 +16,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout, platform, env } from "node:process";
 import { exec } from "node:child_process";
 
-const VERSION = "1.1.0";
+const VERSION = "1.1.1";
 const WEB_BASE = env.SIMAPI_WEB_URL || "https://sim-api.vercel.app";
 const API_BASE = env.SIMAPI_BASE_URL || "https://sim-api.vercel.app/api";
 const CONFIG_DIR = join(homedir(), ".simapi");
@@ -195,6 +195,16 @@ const commands = {
     const warnCount = (r.issues || []).filter((i) => i.status === "warning").length;
     const gateFails = level === "failed" ? r.status === "failed" : r.status !== "passed";
 
+    // Write CI artifacts (SARIF/JUnit) if requested. Best-effort: a report
+    // failure is surfaced but never changes the gate's exit code, so a pipeline
+    // that only wants the gate is never broken by an export hiccup.
+    let reports = [];
+    let reportError = null;
+    if (args.sarif || args.junit) {
+      try { reports = await writeReports(out.body, key, args); }
+      catch (e) { reportError = stripAnsi(e.message); }
+    }
+
     if (args.json) {
       stdout.write(JSON.stringify({
         ok: !gateFails,
@@ -209,6 +219,8 @@ const commands = {
         training_ready: !!r.training_ready,
         processing_ms: r.processing_ms ?? null,
         job_id: r.job_id ?? null,
+        reports: reports.map((x) => ({ format: x.format, path: x.path })),
+        report_error: reportError,
       }, null, 2) + "\n");
     } else {
       const tone = gateFails ? c.red : c.green;
@@ -229,6 +241,8 @@ const commands = {
         }
         if (blocking.length > 10) stdout.write(`   ${c.dim(`… and ${blocking.length - 10} more`)}\n`);
       }
+      for (const rep of reports) row(rep.format.toUpperCase() + " report", c.dim(rep.path));
+      if (reportError) stdout.write(`   ${c.amber("⚠")} ${reportError}\n`);
       stdout.write("\n");
     }
 
@@ -648,7 +662,32 @@ async function validateOnce(file, key, args) {
   }
   const r = res.json;
   await writeJson(LAST_RUN_PATH, { file, t: Date.now(), result: r });
-  return { ok: true, result: r, simType: body.simulation_type };
+  return { ok: true, result: r, simType: body.simulation_type, body };
+}
+
+// Fetch a deterministic CI report (JUnit XML or SARIF 2.1.0) for the same
+// payload and write it to disk. Used by `ci` so a pipeline can upload the
+// artifact (e.g. github/codeql-action/upload-sarif). Returns a list of
+// { format, path } written, or throws with a helpful message. Never blocks the
+// gate: callers decide how to treat a report failure.
+async function writeReports(body, key, args) {
+  const wanted = [];
+  if (args.sarif) wanted.push({ format: "sarif", path: args.sarif });
+  if (args.junit) wanted.push({ format: "junit", path: args.junit });
+  const written = [];
+  for (const w of wanted) {
+    const res = await api(`/v1/validate/report?format=${w.format}`, { method: "POST", body, key });
+    if (!res.ok || !res.text) {
+      const err = res.json?.error;
+      throw new Error(
+        `${w.format.toUpperCase()} report failed: ${err ? `[${err.code}] ${err.message}` : `HTTP ${res.status}`}. ` +
+        `Report export requires the Python backend on the target deployment.`,
+      );
+    }
+    await writeFile(w.path, res.text);
+    written.push({ format: w.format, path: w.path });
+  }
+  return written;
 }
 
 async function runValidation(file, key, args) {
@@ -787,7 +826,7 @@ function renderDimensionalReport(r, file) {
 const HELP = {
   init: { usage: "simapi init", desc: "Create a simapi.json config in the current project." },
   validate: { usage: "simapi validate <file>", desc: "Validate a .json, .csv/.tsv, or .txt simulation file and print the report. CSV/TSV are parsed locally; plain-text/log files are converted to JSON with AI.", opts: [["--type <domain>", "simulation domain"], ["--json", "raw JSON output"], ["--no-ai", "skip the AI second pass"], ["--fail-on <level>", "exit non-zero on warning|failed"]], ex: ["simapi validate simulation.json", "simapi validate simulation.csv --type aerodynamics", "simapi validate run.json --fail-on warning"] },
-  ci: { usage: "simapi ci [file]", desc: "CI gate: validate a file and exit non-zero when the gate fails. Reads the file from simapi.json \"files\" when omitted. Strict by default (any non-passing status blocks).", opts: [["--json", "machine-readable verdict (ok, gate, status, counts)"], ["--fail-on <level>", "warning (default) blocks warnings+failures; failed blocks only failures"], ["--type <domain>", "simulation domain"], ["--no-ai", "skip the AI second pass"]], ex: ["simapi ci simulation.json", "simapi ci run.csv --fail-on failed", "simapi ci --json"] },
+  ci: { usage: "simapi ci [file]", desc: "CI gate: validate a file and exit non-zero when the gate fails. Reads the file from simapi.json \"files\" when omitted. Strict by default (any non-passing status blocks).", opts: [["--json", "machine-readable verdict (ok, gate, status, counts)"], ["--fail-on <level>", "warning (default) blocks warnings+failures; failed blocks only failures"], ["--type <domain>", "simulation domain"], ["--sarif <path>", "also write a SARIF 2.1.0 report (upload to code scanning)"], ["--junit <path>", "also write a JUnit XML report"], ["--no-ai", "skip the AI second pass"]], ex: ["simapi ci simulation.json", "simapi ci run.csv --fail-on failed", "simapi ci run.json --sarif simapi.sarif", "simapi ci --json"] },
   dimensional: { usage: "simapi dimensional <file.csv|file.json>", desc: "Run the dimensional-analysis engine (Buckingham-π groups, anchored physical constants, bimodal-split detection, temporal drift, semantic bounds). Prints laws discovered and row-level findings.", opts: [["--conditions k=v,k=v", "declared conditions (e.g. altitude_m=11000,velocity=45)"], ["--json", "raw JSON output"], ["--fail-on <level>", "exit non-zero on warning|failed (default: exit 1 on any impossible row)"]], ex: ["simapi dimensional simulation.csv", "simapi dimensional run.csv --conditions altitude_m=11000", "simapi dimensional data.json --json > report.json"] },
   domains: { usage: "simapi domains", desc: "List the supported simulation types." },
   doctor: { usage: "simapi doctor [--fix]", desc: "Diagnose config, connectivity, and project setup." },
@@ -864,7 +903,7 @@ function stripAnsi(s) {
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────────
 function parse(argv) {
-  const out = { _: [], type: undefined, json: false, "fail-on": undefined, help: false, fix: false, apply: false, conditions: undefined };
+  const out = { _: [], type: undefined, json: false, "fail-on": undefined, help: false, fix: false, apply: false, conditions: undefined, sarif: undefined, junit: undefined };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") out.help = true;
@@ -873,6 +912,10 @@ function parse(argv) {
     else if (a === "--apply") out.apply = true;
     else if (a === "--type") out.type = argv[++i];
     else if (a === "--fail-on") out["fail-on"] = argv[++i];
+    // CI artifacts: write a JUnit XML or SARIF 2.1.0 report the pipeline can
+    // upload (e.g. to GitHub code scanning). Both take a destination path.
+    else if (a === "--sarif") out.sarif = argv[++i];
+    else if (a === "--junit") out.junit = argv[++i];
     // Was missing: `--conditions` used by `simapi dimensional`. The
     // command site referenced args.conditions but the parser dropped
     // the token into args._ as a positional, so `--conditions altitude_m=11000`

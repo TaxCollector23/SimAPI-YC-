@@ -59,6 +59,13 @@ inputs:
     description: "Upload the JSON result as a workflow artifact."
     required: false
     default: "true"
+  sarif:
+    description: >
+      When "true", also generate a SARIF 2.1.0 report and upload it to GitHub
+      code scanning (Security tab). Requires `permissions: security-events: write`
+      on the calling job and the Python backend on the target deployment.
+    required: false
+    default: "false"
 
 outputs:
   status:
@@ -111,3 +118,29 @@ runs:
         path: ${{ steps.gate.outputs.result-path }}
         if-no-files-found: ignore
         retention-days: 30
+
+    # SARIF is generated in a separate, non-gating step so a code-scanning
+    # hiccup (permissions, no Python backend) never masks the gate's verdict.
+    - name: Generate SARIF
+      id: sarif
+      if: always() && inputs.sarif == 'true'
+      shell: bash
+      env:
+        SIMAPI_API_KEY: ${{ inputs.api-key }}
+        SIMAPI_BASE_URL: ${{ inputs.base-url }}
+      run: |
+        simapi ci "${{ inputs.file }}" \
+          ${{ inputs.simulation-type && format('--type {0}', inputs.simulation-type) || '' }} \
+          --fail-on never \
+          --sarif "${{ runner.temp }}/simapi.sarif" || true
+        if [ -f "${{ runner.temp }}/simapi.sarif" ]; then
+          echo "path=${{ runner.temp }}/simapi.sarif" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload SARIF to code scanning
+      if: always() && inputs.sarif == 'true' && steps.sarif.outputs.path != ''
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.sarif.outputs.path }}
+        category: simapi
